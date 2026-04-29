@@ -1,0 +1,12 @@
+[2026-04-25 13:37:22] [INFO] [PipelineRunner] === Pipeline Runner Started ===
+[2026-04-25 13:37:22] [INFO] [PipelineRunner] Step 1
+[2026-04-25 13:37:22] [INFO] [PipelineRunner] Current stage: long-running-task
+[2026-04-25 13:37:23] [INFO] [long-running-task] START stage="long-running-task" agent="kilo-optimizer"
+[2026-04-25 13:37:23] [INFO] [long-running-task] RUN heavy computation
+[2026-04-25 13:37:23] [INFO] [long-running-task]   Context:
+[2026-04-25 13:37:23] [INFO] [long-running-task]     ticket_id: IMPL-5
+[2026-04-25 13:37:23] [INFO] [long-running-task]     timeout_ms: 30000
+[2026-04-25 13:37:24] [INFO] [long-running-task] OUTPUT ↓
+[2026-04-25 13:37:24] [INFO] [long-running-task]   Processing...
+[2026-04-25 13:37:25] [INFO] [long-running-task]   Still working...
+[2026-04-25 13:37:26] [INFO] [long-running-task] OUTPUT ↑

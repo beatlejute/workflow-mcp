@@ -1,0 +1,24 @@
+{
+  "name": "workflow-mcp",
+  "type": "module",
+  "version": "1.2.0",
+  "main": "src/server.mjs",
+  "bin": {
+    "workflow-mcp": "bin/server.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "js-yaml": "^4.1.1",
+    "simple-git": "^3.27.0",
+    "workflow-ai": "^1.2.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.5",
+    "vitest": "^4.1.5"
+  },
+  "scripts": {
+    "test": "vitest",
+    "bench": "VITEST_BENCH=1 vitest"
+  }
+}

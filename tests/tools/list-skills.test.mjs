@@ -1,0 +1,130 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import { list_skills } from '../../src/tools/skills.mjs';
+
+// Helper to create test structure with global and project skills
+function createProjectWithSkills(basePath, projectName, skillNames = []) {
+  const projectPath = path.join(basePath, projectName);
+
+  // Create global skills directory (at basePath/src/skills)
+  const globalSkillsDir = path.join(basePath, 'src', 'skills');
+  fs.mkdirSync(globalSkillsDir, { recursive: true });
+
+  // Create .workflow directory for project structure
+  fs.mkdirSync(path.join(projectPath, '.workflow'), { recursive: true });
+
+  // Create skill directories in global location
+  for (const skillName of skillNames) {
+    const skillDir = path.join(globalSkillsDir, skillName);
+    fs.mkdirSync(skillDir, { recursive: true });
+
+    // Create SKILL.md file for each skill
+    const skillMd = `---
+name: ${skillName}
+description: Test skill ${skillName}
+---
+# ${skillName}
+Test skill content`;
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skillMd);
+  }
+
+  return projectPath;
+}
+
+// Helper to create a test project without skills directory
+function createProjectWithoutSkillsDir(basePath, projectName) {
+  const projectPath = path.join(basePath, projectName);
+
+  // Create only .workflow directory, but no src/skills at any level
+  fs.mkdirSync(path.join(projectPath, '.workflow'), { recursive: true });
+
+  return projectPath;
+}
+
+describe('list_skills', () => {
+  let testDir;
+  const originalCwd = process.cwd();
+
+  beforeEach(() => {
+    testDir = fs.mkdtempSync(path.join('/tmp', 'workflow-mcp-list-skills-'));
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    try {
+      fs.rmSync(testDir, { recursive: true, force: true });
+    } catch (err) {
+      // ignore
+    }
+  });
+
+  it('returns 3 skills with name and path fields when project has 3 skills', async () => {
+    const projectPath = createProjectWithSkills(testDir, 'testProject', ['skill1', 'skill2', 'skill3']);
+
+    const skills = await list_skills({ project: projectPath });
+
+    // Verify we got results
+    expect(skills).toHaveLength(3);
+
+    // Check each skill has required fields
+    for (const skill of skills) {
+      expect(skill).toHaveProperty('name');
+      expect(skill).toHaveProperty('path');
+      expect(typeof skill.name).toBe('string');
+      expect(typeof skill.path).toBe('string');
+    }
+
+    // Verify skill names
+    const skillNames = skills.map(s => s.name).sort();
+    expect(skillNames).toEqual(['skill1', 'skill2', 'skill3']);
+  });
+
+  it('returns empty array when src/skills directory does not exist', async () => {
+    const projectPath = createProjectWithoutSkillsDir(testDir, 'testProject');
+
+    const skills = await list_skills({ project: projectPath });
+
+    // Should return empty array, not error
+    expect(skills).toEqual([]);
+  });
+
+  it('throws INVALID_PROJECT error when project path does not exist', async () => {
+    // DoD: Non-existent project → INVALID_PROJECT
+    const nonExistentPath = path.join(testDir, 'nonexistent', 'project');
+
+    try {
+      await list_skills({ project: nonExistentPath });
+      expect.fail('Should have thrown INVALID_PROJECT error');
+    } catch (err) {
+      expect(err.code).toBe('INVALID_PROJECT');
+    }
+  });
+
+  it('includes source field for each skill', async () => {
+    const projectPath = createProjectWithSkills(testDir, 'testProject', ['skill1', 'skill2']);
+
+    const skills = await list_skills({ project: projectPath });
+
+    expect(skills).toHaveLength(2);
+
+    for (const skill of skills) {
+      expect(skill).toHaveProperty('source');
+      expect(['shared', 'ejected']).toContain(skill.source);
+    }
+  });
+
+  it('returns correct paths for skills', async () => {
+    const projectPath = createProjectWithSkills(testDir, 'testProject', ['skill1', 'skill2']);
+
+    const skills = await list_skills({ project: projectPath });
+
+    expect(skills).toHaveLength(2);
+
+    // Paths should point to skill directories
+    for (const skill of skills) {
+      expect(skill.path).toContain('skill');
+      expect(skill.path).toContain(skill.name);
+    }
+  });
+});

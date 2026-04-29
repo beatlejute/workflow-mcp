@@ -1,0 +1,18 @@
+[2026-04-25 13:37:22] [INFO] [PipelineRunner] === Pipeline Runner Started ===
+[2026-04-25 13:37:22] [INFO] [PipelineRunner] Step 1
+[2026-04-25 13:37:22] [INFO] [PipelineRunner] Current stage: test-stage
+[2026-04-25 13:37:23] [INFO] [test-stage] START stage="test-stage" agent="test-agent"
+[2026-04-25 13:37:23] [INFO] [test-stage] OUTPUT ↓
+[2026-04-25 13:37:23] [INFO] [test-stage]   \x1b[36m[2026-04-25 13:37:23] [INFO] Colored output\x1b[0m
+[2026-04-25 13:37:23] [INFO] [test-stage]   Line 1 of multiline output
+[2026-04-25 13:37:23] [INFO] [test-stage]   Line 2 of multiline output
+[2026-04-25 13:37:23] [INFO] [test-stage]   Line 3 of multiline output
+[2026-04-25 13:37:23] [INFO] [test-stage] OUTPUT ↑
+[2026-04-25 13:37:23] [INFO] [test-stage]   ---RESULT---
+[2026-04-25 13:37:23] [INFO] [test-stage]   \x1b[32mstatus: partial\x1b[0m
+[2026-04-25 13:37:23] [INFO] [test-stage]   result: incomplete
+[2026-04-25 13:37:24] [INFO] [PipelineRunner] Step 2
+[2026-04-25 13:37:24] [INFO] [another-stage] START stage="another-stage" agent="another-agent"
+[2026-04-25 13:37:24] [INFO] [another-stage]   ---RESULT---
+[2026-04-25 13:37:24] [INFO] [another-stage]   status: unclosed
+[2026-04-25 13:37:25] [INFO] [another-stage] COMPLETE stage="another-stage" status="partial" exitCode=0

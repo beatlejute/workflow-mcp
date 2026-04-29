@@ -1,0 +1,52 @@
+
+> workflow-mcp@0.1.0 test
+> vitest tests/tools/git-status.test.mjs
+
+
+ RUN  v4.1.5 D:/Dev/workflow-mcp
+
+ ❯ tests/tools/git-status.test.mjs (28 tests | 2 failed) 24909ms
+       × includes staged file in staged array 863ms
+       × handles repo with modified, staged, and untracked files simultaneously 1125ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/tools/git-status.test.mjs > git_status tool > Staged files > includes staged file in staged array
+AssertionError: expected [ 'file.txt' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "file.txt",
++ ]
+
+ ❯ tests/tools/git-status.test.mjs:153:36
+    151|       expect(result.ok).toBe(true);
+    152|       expect(result.data.staged).toContain('file.txt');
+    153|       expect(result.data.modified).toEqual([]);
+       |                                    ^
+    154|       expect(result.data.untracked).toEqual([]);
+    155|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/tools/git-status.test.mjs > git_status tool > Mixed state scenarios > handles repo with modified, staged, and untracked files simultaneously
+AssertionError: expected [ 'tracked1.txt', 'tracked2.txt' ] to not include 'tracked1.txt'
+ ❯ tests/tools/git-status.test.mjs:469:40
+    467|       expect(result.data.modified).toContain('tracked2.txt');
+    468|       expect(result.data.untracked).toContain('new1.txt');
+    469|       expect(result.data.modified).not.toContain('tracked1.txt'); // s…
+       |                                        ^
+    470|     });
+    471|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 26 passed (28)
+   Start at  21:55:46
+   Duration  25.84s (transform 130ms, setup 0ms, import 411ms, tests 24.91s, environment 0ms)
+

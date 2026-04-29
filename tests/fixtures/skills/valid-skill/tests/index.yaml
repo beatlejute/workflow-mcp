@@ -1,0 +1,11 @@
+tests:
+  - test_id: TC-VALID-001
+    description: Test case 1 description
+    expected_verdict: pass
+  - test_id: TC-VALID-002
+    description: Test case 2 description
+    expected_verdict: fail
+  - test_id: TC-VALID-003
+    description: Test case 3 description
+    expected_verdict: pass
+    source_path: src/module.mjs

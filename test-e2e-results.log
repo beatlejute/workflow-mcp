@@ -1,0 +1,59 @@
+
+> workflow-mcp@0.1.0 test
+> vitest tests/tools/human-flow-e2e.test.mjs
+
+
+ RUN  v4.1.5 D:/Dev/workflow-mcp
+
+ ❯ tests/tools/human-flow-e2e.test.mjs (7 tests | 3 failed) 209ms
+       × should execute full human ticket flow: queue → context → subscription → resolve 46ms
+       × should trigger notification when ticket is resolved 47ms
+       × should track multiple tickets in queue and reflect changes 38ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/tools/human-flow-e2e.test.mjs > Human Flow E2E > Complete HUMAN workflow > should execute full human ticket flow: queue → context → subscription → resolve
+AssertionError: expected undefined to be 'ready' // Object.is equality
+
+- Expected:
+"ready"
+
++ Received:
+undefined
+
+ ❯ tests/tools/human-flow-e2e.test.mjs:157:37
+    155|       expect(context.ticket.id).toBe(ticketId);
+    156|       expect(context.ticket.title).toContain('Full Human Flow');
+    157|       expect(context.ticket.status).toBe('ready');
+       |                                     ^
+    158|       expect(context.deps).toBeDefined();
+    159|       expect(Array.isArray(context.deps)).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/tools/human-flow-e2e.test.mjs > Human Flow E2E > Subscription notifications > should trigger notification when ticket is resolved
+{
+  code: 'INVALID_TRANSITION',
+  from: 'ready',
+  to: 'done',
+  id: null,
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/tools/human-flow-e2e.test.mjs > Human Flow E2E > Subscription notifications > should track multiple tickets in queue and reflect changes
+{
+  code: 'INVALID_TRANSITION',
+  from: 'ready',
+  to: 'done',
+  id: null,
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 4 passed (7)
+   Start at  13:24:32
+   Duration  1.12s (transform 204ms, setup 0ms, import 546ms, tests 209ms, environment 0ms)
+

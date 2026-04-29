@@ -1,0 +1,765 @@
+
+> workflow-mcp@0.1.0 test
+> vitest tests/cli/init-mcp-json.test.mjs --no-coverage
+
+
+[7m[1m[34m DEV [39m[22m[27m [34mv1.6.1[39m [90md:/Dev/workflow-mcp[39m
+
+ [33m❯[39m tests/cli/init-mcp-json.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/cli/init-mcp-json.test.mjs [2m[ tests/cli/init-mcp-json.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file D:/Dev/workflow-mcp/tests/cli/init-mcp-json.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 05:36:10
+[2m   Duration [22m 1.21s[2m (transform 92ms, setup 0ms, collect 294ms, tests 0ms, environment 0ms, prepare 237ms)[22m
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/init-mcp-json.test.mjs[22m [34mx1[39m
+
+ [33m❯[39m tests/init-mcp-json.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/init-mcp-json.test.mjs [2m[ tests/init-mcp-json.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/init-mcp-json.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 05:38:26
+[2m   Duration [22m 335ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x1[39m
+[2K[1A[2K[G       [90mrerun x1[39m
+[2K[1A[2K[G       [2m[90mrerun x1[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/init-mcp-json.test.mjs[22m [34mx2[39m
+
+ [33m❯[39m tests/init-mcp-json.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/init-mcp-json.test.mjs [2m[ tests/init-mcp-json.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/init-mcp-json.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 05:40:59
+[2m   Duration [22m 469ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x2[39m
+[2K[1A[2K[G       [90mrerun x2[39m
+[2K[1A[2K[G       [2m[90mrerun x2[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher.test.mjs[22m [34mx1[39m
+
+ [33m❯[39m tests/health/watcher.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher.test.mjs [2m[ tests/health/watcher.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/watcher.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 05:53:23
+[2m   Duration [22m 1.65s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x1[39m
+[2K[1A[2K[G       [90mrerun x1[39m
+[2K[1A[2K[G       [2m[90mrerun x1[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/tools/check-pipeline-health.test.mjs[22m [34mx1[39m
+
+ [33m❯[39m tests/tools/check-pipeline-health.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/tools/check-pipeline-health.test.mjs [2m[ tests/tools/check-pipeline-health.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/tools/check-pipeline-health.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 05:59:39
+[2m   Duration [22m 1.39s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x1[39m
+[2K[1A[2K[G       [90mrerun x1[39m
+[2K[1A[2K[G       [2m[90mrerun x1[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/retry-loop.test.mjs[22m [34mx1[39m
+
+ [33m❯[39m tests/health/retry-loop.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/retry-loop.test.mjs [2m[ tests/health/retry-loop.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/retry-loop.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 06:11:15
+[2m   Duration [22m 2.69s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x1[39m
+[2K[1A[2K[G       [90mrerun x1[39m
+[2K[1A[2K[G       [2m[90mrerun x1[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/detectors/blocked-accumulation.test.mjs[22m [34mx1[39m
+
+ [33m❯[39m tests/health/detectors/blocked-accumulation.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/detectors/blocked-accumulation.test.mjs [2m[ tests/health/detectors/blocked-accumulation.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/detectors/blocked-accumulation.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 06:20:56
+[2m   Duration [22m 885ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x1[39m
+[2K[1A[2K[G       [90mrerun x1[39m
+[2K[1A[2K[G       [2m[90mrerun x1[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/detectors/ghost-execution.test.mjs[22m [34mx1[39m
+
+ [33m❯[39m tests/health/detectors/ghost-execution.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/detectors/ghost-execution.test.mjs [2m[ tests/health/detectors/ghost-execution.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/detectors/ghost-execution.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 06:30:00
+[2m   Duration [22m 1.06s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x1[39m
+[2K[1A[2K[G       [90mrerun x1[39m
+[2K[1A[2K[G       [2m[90mrerun x1[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/detectors/crashed.test.mjs[22m [34mx1[39m
+
+ [33m❯[39m tests/health/detectors/crashed.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/detectors/crashed.test.mjs [2m[ tests/health/detectors/crashed.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/detectors/crashed.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 06:36:29
+[2m   Duration [22m 3.10s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x1[39m
+[2K[1A[2K[G       [90mrerun x1[39m
+[2K[1A[2K[G       [2m[90mrerun x1[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/detectors/stuck.test.mjs[22m [34mx1[39m
+
+ [33m❯[39m tests/health/detectors/stuck.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/detectors/stuck.test.mjs [2m[ tests/health/detectors/stuck.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/detectors/stuck.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 06:48:36
+[2m   Duration [22m 3.39s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x1[39m
+[2K[1A[2K[G       [90mrerun x1[39m
+[2K[1A[2K[G       [2m[90mrerun x1[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/detectors/stuck.test.mjs[22m [34mx2[39m
+
+ [33m❯[39m tests/health/detectors/stuck.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/detectors/stuck.test.mjs [2m[ tests/health/detectors/stuck.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/detectors/stuck.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 06:59:28
+[2m   Duration [22m 2.42s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x2[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/detectors/stuck.test.mjs[22m [34mx3[39m
+
+ [33m❯[39m tests/health/detectors/stuck.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/detectors/stuck.test.mjs [2m[ tests/health/detectors/stuck.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/detectors/stuck.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 06:59:35
+[2m   Duration [22m 2.29s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x3[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/detectors/stuck.test.mjs[22m [34mx4[39m
+
+ [33m❯[39m tests/health/detectors/stuck.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/detectors/stuck.test.mjs [2m[ tests/health/detectors/stuck.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/detectors/stuck.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 06:59:40
+[2m   Duration [22m 1.82s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x4[39m
+[2K[1A[2K[G       [90mrerun x4[39m
+[2K[1A[2K[G       [2m[90mrerun x4[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/detectors/stage-error.test.mjs[22m [34mx1[39m
+
+ [33m❯[39m tests/health/detectors/stage-error.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/detectors/stage-error.test.mjs [2m[ tests/health/detectors/stage-error.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/detectors/stage-error.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 07:03:23
+[2m   Duration [22m 566ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x1[39m
+[2K[1A[2K[G       [90mrerun x1[39m
+[2K[1A[2K[G       [2m[90mrerun x1[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/detectors/stage-error.test.mjs[22m [34mx2[39m
+
+ [33m❯[39m tests/health/detectors/stage-error.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/detectors/stage-error.test.mjs [2m[ tests/health/detectors/stage-error.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/detectors/stage-error.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 07:06:40
+[2m   Duration [22m 1.59s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x2[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/detectors/stage-error.test.mjs[22m [34mx3[39m
+
+ [33m❯[39m tests/health/detectors/stage-error.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/detectors/stage-error.test.mjs [2m[ tests/health/detectors/stage-error.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/detectors/stage-error.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 07:06:44
+[2m   Duration [22m 2.50s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x3[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/detectors/stage-error.test.mjs[22m [34mx4[39m
+
+ [33m❯[39m tests/health/detectors/stage-error.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/detectors/stage-error.test.mjs [2m[ tests/health/detectors/stage-error.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/detectors/stage-error.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 07:06:49
+[2m   Duration [22m 1.49s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x4[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/detectors/stage-error.test.mjs[22m [34mx5[39m
+
+ [33m❯[39m tests/health/detectors/stage-error.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/detectors/stage-error.test.mjs [2m[ tests/health/detectors/stage-error.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/detectors/stage-error.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 07:06:55
+[2m   Duration [22m 395ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x5[39m
+[2K[1A[2K[G       [90mrerun x5[39m
+[2K[1A[2K[G       [2m[90mrerun x5[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/publisher.test.mjs[22m [34mx1[39m
+
+ [33m❯[39m tests/health/publisher.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/publisher.test.mjs [2m[ tests/health/publisher.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/publisher.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 07:40:01
+[2m   Duration [22m 1.22s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x1[39m
+[2K[1A[2K[G       [90mrerun x1[39m
+[2K[1A[2K[G       [2m[90mrerun x1[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/publisher.test.mjs[22m [34mx2[39m
+
+ [33m❯[39m tests/health/publisher.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/publisher.test.mjs [2m[ tests/health/publisher.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/publisher.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 07:41:03
+[2m   Duration [22m 1.02s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x2[39m
+[2K[1A[2K[G       [90mrerun x2[39m
+[2K[1A[2K[G       [2m[90mrerun x2[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs[22m [34mx1[39m
+
+ [33m❯[39m tests/health/watcher-integration.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-integration.test.mjs [2m[ tests/health/watcher-integration.test.mjs ][22m
+[31m[1mError[22m: Failed to load url ../../src/health/detectors/index.mjs (resolved id: ../../src/health/detectors/index.mjs) in D:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs. Does the file exist?[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:[2m51969:17[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:10:21
+[2m   Duration [22m 0ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x1[39m
+[2K[1A[2K[G       [90mrerun x1[39m
+[2K[1A[2K[G       [2m[90mrerun x1[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs[22m [34mx2[39m
+
+ [33m❯[39m tests/health/watcher-integration.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-integration.test.mjs [2m[ tests/health/watcher-integration.test.mjs ][22m
+[31m[1mError[22m: Failed to load url ../../src/health/detectors/index.mjs (resolved id: ../../src/health/detectors/index.mjs) in D:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs. Does the file exist?[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:[2m51969:17[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:10:32
+[2m   Duration [22m 0ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x2[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs[22m [34mx3[39m
+
+ [33m❯[39m tests/health/watcher-integration.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-integration.test.mjs [2m[ tests/health/watcher-integration.test.mjs ][22m
+[31m[1mError[22m: Failed to load url ../../src/health/detectors/index.mjs (resolved id: ../../src/health/detectors/index.mjs) in D:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs. Does the file exist?[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:[2m51969:17[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:10:37
+[2m   Duration [22m 0ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x3[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs[22m [34mx4[39m
+
+ [33m❯[39m tests/health/watcher-integration.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-integration.test.mjs [2m[ tests/health/watcher-integration.test.mjs ][22m
+[31m[1mError[22m: Failed to load url ../../src/health/detectors/index.mjs (resolved id: ../../src/health/detectors/index.mjs) in D:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs. Does the file exist?[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:[2m51969:17[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:10:49
+[2m   Duration [22m 0ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x4[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs[22m [34mx5[39m
+
+ [33m❯[39m tests/health/watcher-integration.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-integration.test.mjs [2m[ tests/health/watcher-integration.test.mjs ][22m
+[31m[1mError[22m: Failed to load url ../../src/health/detectors/index.mjs (resolved id: ../../src/health/detectors/index.mjs) in D:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs. Does the file exist?[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:[2m51969:17[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:10:53
+[2m   Duration [22m 0ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x5[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs[22m [34mx6[39m
+
+ [33m❯[39m tests/health/watcher-integration.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-integration.test.mjs [2m[ tests/health/watcher-integration.test.mjs ][22m
+[31m[1mError[22m: Failed to load url ../../src/health/detectors/index.mjs (resolved id: ../../src/health/detectors/index.mjs) in D:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs. Does the file exist?[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:[2m51969:17[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:10:57
+[2m   Duration [22m 0ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x6[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs[22m [34mx7[39m
+
+ [33m❯[39m tests/health/watcher-integration.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-integration.test.mjs [2m[ tests/health/watcher-integration.test.mjs ][22m
+[31m[1mError[22m: Failed to load url ../../src/health/detectors/index.mjs (resolved id: ../../src/health/detectors/index.mjs) in D:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs. Does the file exist?[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:[2m51969:17[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:11:03
+[2m   Duration [22m 0ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x7[39m
+[2K[1A[2K[G       [90mrerun x7[39m
+[2K[1A[2K[G       [2m[90mrerun x7[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs[22m [34mx8[39m
+
+ [33m❯[39m tests/health/watcher-integration.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-integration.test.mjs [2m[ tests/health/watcher-integration.test.mjs ][22m
+[31m[1mError[22m: Failed to load url ../../src/health/detectors/index.mjs (resolved id: ../../src/health/detectors/index.mjs) in D:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs. Does the file exist?[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:[2m51969:17[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:11:25
+[2m   Duration [22m 0ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x8[39m
+[2K[1A[2K[G       [90mrerun x8[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs[22m [34mx9[39m
+
+ [33m❯[39m tests/health/watcher-integration.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-integration.test.mjs [2m[ tests/health/watcher-integration.test.mjs ][22m
+[31m[1mError[22m: Failed to load url ../../src/health/detectors/index.mjs (resolved id: ../../src/health/detectors/index.mjs) in D:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs. Does the file exist?[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:[2m51969:17[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:11:28
+[2m   Duration [22m 0ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x9[39m
+[2K[1A[2K[G       [90mrerun x9[39m
+[2K[1A[2K[G       [2m[90mrerun x9[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs[22m [34mx10[39m
+
+ [33m❯[39m tests/health/watcher-integration.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-integration.test.mjs [2m[ tests/health/watcher-integration.test.mjs ][22m
+[31m[1mError[22m: Failed to load url ../../src/health/detectors/index.mjs (resolved id: ../../src/health/detectors/index.mjs) in D:/Dev/workflow-mcp/tests/health/watcher-integration.test.mjs. Does the file exist?[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:[2m51969:17[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:17:31
+[2m   Duration [22m 0ms
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x10[39m
+[2K[1A[2K[G       [90mrerun x10[39m
+[2K[1A[2K[G       [2m[90mrerun x10[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-e2e.test.mjs[22m [34mx1[39m
+
+ [33m❯[39m tests/health/watcher-e2e.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-e2e.test.mjs [2m[ tests/health/watcher-e2e.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/watcher-e2e.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:33:44
+[2m   Duration [22m 1.81s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x1[39m
+[2K[1A[2K[G       [90mrerun x1[39m
+[2K[1A[2K[G       [2m[90mrerun x1[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-e2e.test.mjs[22m [34mx2[39m
+
+ [33m❯[39m tests/health/watcher-e2e.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-e2e.test.mjs [2m[ tests/health/watcher-e2e.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/watcher-e2e.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:36:28
+[2m   Duration [22m 5.47s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x2[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-e2e.test.mjs[22m [34mx3[39m
+
+ [33m❯[39m tests/health/watcher-e2e.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-e2e.test.mjs [2m[ tests/health/watcher-e2e.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/watcher-e2e.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:36:38
+[2m   Duration [22m 1.99s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x3[39m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/tests/health/watcher-e2e.test.mjs[22m [34mx4[39m
+
+ [33m❯[39m tests/health/watcher-e2e.test.mjs [2m ([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[1m[7m Failed Suites 1 [27m[22m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[31m[1m[7m FAIL [27m[22m[39m tests/health/watcher-e2e.test.mjs [2m[ tests/health/watcher-e2e.test.mjs ][22m
+[31m[1mError[22m: No test suite found in file d:/Dev/workflow-mcp/tests/health/watcher-e2e.test.mjs[39m
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 08:36:42
+[2m   Duration [22m 1.13s
+
+
+[1m[7m[31m FAIL [39m[27m[22m[31m Tests failed. Watching for file changes...[39m
+       [2mpress [22m[1mh[22m[2m to show help[22m[2m, [22m[2mpress [22m[1mq[22m[2m to quit[22m
+       [34mrerun x4[39m
+[2K[1A[2K[G       [90mrerun x4[39m
+[2K[1A[2K[G       [2m[90mrerun x4[39m[22m
+[2K[1A[2K[G[3Jc
+[7m[1m[34m RERUN [39m[22m[27m[2m d:/Dev/workflow-mcp/package.json[22m
+
+
+node:internal/event_target:1118
+  process.nextTick(() => { throw err; });
+                           ^
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'd:\Dev\workflow-mcp\node_modules\tinypool\dist\esm\entry\worker.js' imported from C:\Users\Denis\AppData\Local\nvm\v25.5.0\node_modules\workflow-ai\node_modules\
+    at finalizeResolution (node:internal/modules/esm/resolve:275:11)
+    at moduleResolve (node:internal/modules/esm/resolve:865:10)
+    at defaultResolve (node:internal/modules/esm/resolve:991:11)
+    at nextResolve (node:internal/modules/esm/hooks:769:28)
+    at resolve (data:text/javascript,%0A%20%20%20%20import%20%7B%20pathToFileURL%20%7D%20from%20'node%3Aurl'%3B%0A%20%20%20%20const%20base%20%3D%20%22file%3A%2F%2F%2FC%3A%2FUsers%2FDenis%2FAppData%2FLocal%2Fnvm%2Fv25.5.0%2Fnode_modules%2Fworkflow-ai%2Fnode_modules%2F%22%3B%0A%0A%20%20%20%20export%20async%20function%20resolve(specifier%2C%20context%2C%20nextResolve)%20%7B%0A%20%20%20%20%20%20try%20%7B%0A%20%20%20%20%20%20%20%20return%20await%20nextResolve(specifier%2C%20context)%3B%0A%20%20%20%20%20%20%7D%20catch%20(err)%20%7B%0A%20%20%20%20%20%20%20%20if%20(err.code%20%3D%3D%3D%20'ERR_MODULE_NOT_FOUND'%20%26%26%20!specifier.startsWith('.')%20%26%26%20!specifier.startsWith('%2F'))%20%7B%0A%20%20%20%20%20%20%20%20%20%20return%20nextResolve(specifier%2C%20%7B%20...context%2C%20parentURL%3A%20base%20%7D)%3B%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20throw%20err%3B%0A%20%20%20%20%20%20%7D%0A%20%20%20%20%7D%0A%20%20:10:18)
+    at async nextResolve (node:internal/modules/esm/hooks:769:22)
+    at async AsyncLoaderHooksOnLoaderHookWorker.resolve (node:internal/modules/esm/hooks:265:24)
+    at async handleMessage (node:internal/modules/esm/worker:251:18) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///d:/Dev/workflow-mcp/node_modules/tinypool/dist/esm/entry/worker.js'
+}
+
+Node.js v25.5.0

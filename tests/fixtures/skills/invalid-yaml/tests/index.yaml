@@ -1,0 +1,7 @@
+tests:
+  - test_id: TC-INVALID-001
+    description: Test case
+    expected_verdict: pass
+  - test_id: TC-INVALID-002  # This is intentionally broken YAML
+    description: Test case with missing colon
+    expected_verdict pass  # Missing colon - invalid YAML

@@ -1,0 +1,18 @@
+[2026-04-25 13:37:22] [INFO] [PipelineRunner] === Pipeline Runner Started ===
+[2026-04-25 13:37:22] [INFO] [PipelineRunner] Step 1
+[2026-04-25 13:37:22] [INFO] [PipelineRunner] Current stage: pick-first-task
+[2026-04-25 13:37:23] [INFO] [pick-first-task] START stage="pick-first-task" agent="script-pick"
+[2026-04-25 13:37:23] [INFO] [pick-first-task] RUN node .workflow/src/scripts/pick-next-task.js
+[2026-04-25 13:37:23] [INFO] [pick-first-task]   Context:
+[2026-04-25 13:37:23] [INFO] [pick-first-task]     mcp_require_for: qa
+[2026-04-25 13:37:23] [INFO] [pick-first-task]     ticket_id: IMPL-1
+[2026-04-25 13:37:23] [INFO] [pick-first-task] OUTPUT ↓
+[2026-04-25 13:37:24] [INFO] [pick-first-task]   Picked next task
+[2026-04-25 13:37:24] [INFO] [pick-first-task]   Task: IMPL-1 (ready)
+[2026-04-25 13:37:24] [INFO] [pick-first-task] OUTPUT ↑
+[2026-04-25 13:37:24] [INFO] [pick-first-task]   ---RESULT---
+[2026-04-25 13:37:24] [INFO] [pick-first-task]   status: found
+[2026-04-25 13:37:24] [INFO] [pick-first-task]   ticket_id: IMPL-1
+[2026-04-25 13:37:24] [INFO] [pick-first-task]   ---RESULT---
+[2026-04-25 13:37:24] [INFO] [pick-first-task] COMPLETE stage="pick-first-task" status="success" exitCode=0
+[2026-04-25 13:37:24] [INFO] [pick-first-task] GOTO pick-first-task → move-to-in-progress status="success"
