@@ -1,0 +1,11 @@
+
+# Workflow AI specific
+.workflow-state/
+.cache/
+.workflow/
+
+# AI
+QWEN.md
+CLAUDE.md
+.kilocode/
+.kilocodemodes
