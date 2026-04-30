@@ -32,16 +32,16 @@ export function detectApprovalPending(projectPath, config) {
         const content = readFileSync(filePath, 'utf8');
         try {
           const approval = JSON.parse(content);
-          if (approval.status === 'pending') {
-            const ageSec = (now - new Date(approval.pending_since).getTime()) / 1000;
-            if (ageSec > threshold / 2) {
-              return {
-                fingerprint: `approval_pending:${projectPath.split('/').pop()}:${file}`,
-                type: 'approval_pending',
-                severity: ageSec > threshold ? 'warning' : 'info',
-                project: projectPath.split('/').pop(),
-                step_id: file.replace('.json', ''),
-                message: `Approval pending for ${file} since ${new Date(approval.pending_since).toISOString()}`,
+           if (approval.status === 'pending') {
+             const ageSec = (now - new Date(approval.created_at).getTime()) / 1000;
+             if (ageSec > threshold / 2) {
+               return {
+                 fingerprint: `approval_pending:${projectPath.split('/').pop()}:${file}`,
+                 type: 'approval_pending',
+                 severity: ageSec > threshold ? 'warning' : 'info',
+                 project: projectPath.split('/').pop(),
+                 step_id: file.replace('.json', ''),
+                 message: `Approval pending for ${file} since ${new Date(approval.created_at).toISOString()}`,
                 detected_at: now,
                 suggested_actions: ['approve_step', 'list_running_pipelines']
               };

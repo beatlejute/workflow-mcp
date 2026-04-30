@@ -83,14 +83,14 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
     it('should return warning alert when pending is older than threshold', () => {
       const now = Date.now();
       const threshold = 600; // 10 minutes
-      const pending_since = new Date(now - (threshold + 100) * 1000).toISOString(); // 100 sec older than threshold
+      const created_at = new Date(now - (threshold + 100) * 1000).toISOString(); // 100 sec older than threshold
 
       const approval = {
         step_id: 'step-1',
         ticket_id: 'IMPL-10',
         stage: 'manual-gate',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -107,7 +107,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       expect(result.severity).toBe('warning');
       expect(result.step_id).toBe('step-1');
       expect(result.message).toContain('step-1.json');
-      expect(result.message).toContain(pending_since);
+      expect(result.message).toContain(created_at);
       expect(result.suggested_actions).toEqual(['approve_step', 'list_running_pipelines']);
     });
 
@@ -120,7 +120,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const approval1 = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since: old_pending,
+        created_at: old_pending,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -130,7 +130,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const approval2 = {
         step_id: 'step-2',
         status: 'pending',
-        pending_since: old_pending,
+        created_at: old_pending,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -155,14 +155,14 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const now = Date.now();
       const threshold = 600; // 10 minutes
       const half_threshold = threshold / 2; // 5 minutes
-      const pending_since = new Date(now - (half_threshold + 30) * 1000).toISOString(); // 30 sec older than half
+      const created_at = new Date(now - (half_threshold + 30) * 1000).toISOString(); // 30 sec older than half
 
       const approval = {
         step_id: 'step-1',
         ticket_id: 'IMPL-10',
         stage: 'manual-gate',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -184,14 +184,14 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const now = Date.now();
       const threshold = 600; // 10 minutes
       const half_threshold = threshold / 2; // 5 minutes
-      const pending_since = new Date(now - (half_threshold - 10) * 1000).toISOString(); // 10 sec younger than half
+      const created_at = new Date(now - (half_threshold - 10) * 1000).toISOString(); // 10 sec younger than half
 
       const approval = {
         step_id: 'step-1',
         ticket_id: 'IMPL-10',
         stage: 'manual-gate',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -218,7 +218,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
         ticket_id: 'IMPL-10',
         stage: 'manual-gate',
         status: 'approved', // Not pending
-        pending_since: old_pending,
+        created_at: old_pending,
         decided_at: new Date(now - 100).toISOString(),
         decision: 'approve',
         decided_by: 'mcp-client',
@@ -243,7 +243,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
         ticket_id: 'IMPL-10',
         stage: 'manual-gate',
         status: 'rejected', // Not pending
-        pending_since: old_pending,
+        created_at: old_pending,
         decided_at: new Date(now - 100).toISOString(),
         decision: 'reject',
         decided_by: 'mcp-client',
@@ -269,7 +269,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
         ticket_id: 'IMPL-10',
         stage: 'manual-gate',
         status: 'pending',
-        pending_since: old_pending,
+        created_at: old_pending,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -289,7 +289,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
         ticket_id: 'IMPL-10',
         stage: 'manual-gate',
         status: 'approved',
-        pending_since: old_pending,
+        created_at: old_pending,
         decided_at: new Date(now).toISOString(),
         decision: 'approve',
         decided_by: 'mcp-client',
@@ -307,14 +307,14 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
     it('should generate consistent fingerprint across multiple calls', () => {
       const now = Date.now();
       const threshold = 600;
-      const pending_since = new Date(now - (threshold + 100) * 1000).toISOString();
+      const created_at = new Date(now - (threshold + 100) * 1000).toISOString();
 
       const approval = {
         step_id: 'step-1',
         ticket_id: 'IMPL-10',
         stage: 'manual-gate',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -340,12 +340,12 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
     it('should include project name and step_id in fingerprint', () => {
       const now = Date.now();
       const threshold = 600;
-      const pending_since = new Date(now - (threshold + 100) * 1000).toISOString();
+      const created_at = new Date(now - (threshold + 100) * 1000).toISOString();
 
       const approval = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -385,7 +385,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const approval1 = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since: old_pending,
+        created_at: old_pending,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -397,7 +397,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const approval2 = {
         step_id: 'step-2',
         status: 'pending',
-        pending_since: old_pending,
+        created_at: old_pending,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -444,7 +444,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const approval = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since: old_pending,
+        created_at: old_pending,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -468,14 +468,14 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
     it('should include correct alert object structure', () => {
       const now = Date.now();
       const threshold = 600;
-      const pending_since = new Date(now - (threshold + 100) * 1000).toISOString();
+      const created_at = new Date(now - (threshold + 100) * 1000).toISOString();
 
       const approval = {
         step_id: 'step-1',
         ticket_id: 'IMPL-10',
         stage: 'manual-gate',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -500,12 +500,12 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
     it('should include detected_at timestamp in reasonable range', () => {
       const now = Date.now();
       const threshold = 600;
-      const pending_since = new Date(now - (threshold + 100) * 1000).toISOString();
+      const created_at = new Date(now - (threshold + 100) * 1000).toISOString();
 
       const approval = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -532,12 +532,12 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
 
       const now = Date.now();
       const threshold = 600;
-      const pending_since = new Date(now - (threshold + 100) * 1000).toISOString();
+      const created_at = new Date(now - (threshold + 100) * 1000).toISOString();
 
       const approval = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -556,15 +556,15 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       fs.rmSync(customProjectPath, { recursive: true, force: true });
     });
 
-    it('should include message with step_id and pending_since timestamp', () => {
+    it('should include message with step_id and created_at timestamp', () => {
       const now = Date.now();
       const threshold = 600;
-      const pending_since = new Date(now - (threshold + 100) * 1000).toISOString();
+      const created_at = new Date(now - (threshold + 100) * 1000).toISOString();
 
       const approval = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -578,18 +578,18 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
 
       expect(result).not.toBeNull();
       expect(result.message).toContain('step-1.json');
-      expect(result.message).toContain(pending_since);
+      expect(result.message).toContain(created_at);
     });
 
     it('should include correct suggested_actions', () => {
       const now = Date.now();
       const threshold = 600;
-      const pending_since = new Date(now - (threshold + 100) * 1000).toISOString();
+      const created_at = new Date(now - (threshold + 100) * 1000).toISOString();
 
       const approval = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -617,7 +617,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
     it('should ignore approval files without status field', () => {
       const approval = {
         step_id: 'step-1',
-        pending_since: new Date().toISOString()
+        created_at: new Date().toISOString()
         // Missing status field
       };
 
@@ -628,11 +628,11 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       expect(result).toBeNull();
     });
 
-    it('should ignore approval files without pending_since field', () => {
+    it('should ignore approval files without created_at field', () => {
       const approval = {
         step_id: 'step-1',
         status: 'pending'
-        // Missing pending_since field
+        // Missing created_at field
       };
 
       fs.writeFileSync(path.join(approvalsDir, 'step-1.json'), JSON.stringify(approval), 'utf8');
@@ -644,12 +644,12 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
     it('should handle exactly at threshold boundary (age === threshold)', () => {
       const now = Date.now();
       const threshold = 600;
-      const pending_since = new Date(now - threshold * 1000).toISOString(); // Exactly at threshold
+      const created_at = new Date(now - threshold * 1000).toISOString(); // Exactly at threshold
 
       const approval = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -671,12 +671,12 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const now = Date.now();
       const threshold = 600;
       const half_threshold = threshold / 2;
-      const pending_since = new Date(now - half_threshold * 1000).toISOString(); // Exactly at threshold/2
+      const created_at = new Date(now - half_threshold * 1000).toISOString(); // Exactly at threshold/2
 
       const approval = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -706,7 +706,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
         const approval = {
           step_id: `step-${i}`,
           status: 'pending',
-          pending_since: old_pending,
+          created_at: old_pending,
           decided_at: null,
           decision: null,
           decided_by: null,
@@ -730,12 +730,12 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
     it('DoD 1: pending старше threshold → warning alert', () => {
       const now = Date.now();
       const threshold = 600;
-      const pending_since = new Date(now - (threshold + 100) * 1000).toISOString();
+      const created_at = new Date(now - (threshold + 100) * 1000).toISOString();
 
       const approval = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -756,12 +756,12 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const now = Date.now();
       const threshold = 600;
       const half_threshold = threshold / 2;
-      const pending_since = new Date(now - (half_threshold + 30) * 1000).toISOString();
+      const created_at = new Date(now - (half_threshold + 30) * 1000).toISOString();
 
       const approval = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -787,7 +787,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const approval = {
         step_id: 'step-1',
         status: 'approved',
-        pending_since: old_pending,
+        created_at: old_pending,
         decided_at: new Date(now).toISOString(),
         decision: 'approve',
         decided_by: 'mcp-client',
@@ -805,12 +805,12 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
     it('DoD 4: fingerprint стабилен между тиками', () => {
       const now = Date.now();
       const threshold = 600;
-      const pending_since = new Date(now - (threshold + 100) * 1000).toISOString();
+      const created_at = new Date(now - (threshold + 100) * 1000).toISOString();
 
       const approval = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since,
+        created_at,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -842,7 +842,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const approval1 = {
         step_id: 'step-1',
         status: 'pending',
-        pending_since: old_pending,
+        created_at: old_pending,
         decided_at: null,
         decision: null,
         decided_by: null,
@@ -852,7 +852,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const approval2 = {
         step_id: 'step-2',
         status: 'pending',
-        pending_since: old_pending,
+        created_at: old_pending,
         decided_at: null,
         decision: null,
         decided_by: null,
