@@ -46,8 +46,8 @@ export const run_skill = {
   inputSchema: z.object({
     project: z.string().describe('Project path or name'),
     skill_name: z.string().describe('Name of the skill to run (lowercase, alphanumeric and hyphens only)'),
-    args: z.record(z.any()).optional().describe('Optional arguments to pass to the skill'),
-    context: z.record(z.any()).optional().describe('Optional context object for the skill'),
+    args: z.record(z.string(), z.any()).optional().describe('Optional arguments to pass to the skill'),
+    context: z.record(z.string(), z.any()).optional().describe('Optional context object for the skill'),
     timeout_sec: z.number().min(1).max(1800).optional().describe('Timeout in seconds (default 300, max 1800)')
   }),
   async execute(args) {

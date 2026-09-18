@@ -12,8 +12,6 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
 import semver from 'semver';
-import { list_ghost_executions } from './tools/diagnostics.mjs';
-import { start_pipeline, get_pipeline_log, pause_pipeline, list_running_pipelines } from './tools/pipeline.mjs';
 import { resolveStateDir, ensureStateDir } from './paths/state-dir.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
