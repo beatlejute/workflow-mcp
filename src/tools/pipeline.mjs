@@ -1,7 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
-import { validateMarker, readMarker, removeMarker } from '../process/marker.mjs';
+import { spawn } from 'child_process';
+import { createRequire } from 'module';
+import { validateMarker, readMarker, removeMarker, writeMarker } from '../process/marker.mjs';
 import { kill, pause, resume, abort } from '../process/control.mjs';
 import { notify_workflow_pipeline_state } from '../resources/index.mjs';
 import { get_workflow_pipeline_state } from '../resources/pipeline-state.mjs';
@@ -14,17 +16,205 @@ function getMcpInstanceId() {
 }
 
 /**
+ * Разрешить путь до CLI workflow-ai (bin/workflow.mjs).
+ *
+ * Тот же приём, что в startup-guard: package.json пакета не объявлен в exports,
+ * поэтому якоримся на экспортируемый подпуть и поднимаемся до корня пакета.
+ *
+ * @returns {{ok: true, bin: string} | {ok: false, code: string, hint: string}}
+ */
+function resolveWorkflowAiBin() {
+  if (process.env.WORKFLOW_AI_BIN) {
+    const bin = process.env.WORKFLOW_AI_BIN;
+    if (!fs.existsSync(bin)) {
+      return { ok: false, code: 'RUNNER_NOT_FOUND', hint: `WORKFLOW_AI_BIN points to a missing file: ${bin}` };
+    }
+    return { ok: true, bin };
+  }
+
+  try {
+    const require = createRequire(import.meta.url);
+    const resolveOpts = process.env.WORKFLOW_AI_RESOLVE_PATH
+      ? { paths: [process.env.WORKFLOW_AI_RESOLVE_PATH] }
+      : undefined;
+    let dir = path.dirname(require.resolve('workflow-ai/lib/find-root.mjs', resolveOpts));
+
+    while (dir !== path.dirname(dir)) {
+      const pkgPath = path.join(dir, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkg.name === 'workflow-ai') {
+          const bin = path.join(dir, 'bin', 'workflow.mjs');
+          if (!fs.existsSync(bin)) {
+            return { ok: false, code: 'RUNNER_NOT_FOUND', hint: `workflow-ai found at ${dir}, but bin/workflow.mjs is missing` };
+          }
+          return { ok: true, bin };
+        }
+      }
+      dir = path.dirname(dir);
+    }
+    return { ok: false, code: 'RUNNER_NOT_FOUND', hint: 'workflow-ai package root not found' };
+  } catch (err) {
+    return { ok: false, code: 'RUNNER_NOT_FOUND', hint: err.message };
+  }
+}
+
+/**
+ * Прочитать lock раннера (.workflow/logs/.pipeline.lock).
+ * @param {string} projectRoot
+ * @returns {{pid: number, timestamp: string|null}|null}
+ */
+function readPipelineLock(projectRoot) {
+  try {
+    const data = JSON.parse(fs.readFileSync(path.join(projectRoot, '.workflow', 'logs', '.pipeline.lock'), 'utf-8'));
+    const pid = typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10);
+    if (!pid || Number.isNaN(pid) || pid <= 0) return null;
+    return { pid, timestamp: typeof data.timestamp === 'string' ? data.timestamp : null };
+  } catch {
+    return null;
+  }
+}
+
+function isPipelineProcessAlive(pid) {
+  if (!pid || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+/**
+ * Pipeline-логи проекта, новые первыми.
+ * @param {string} logsDir
+ * @returns {string[]}
+ */
+function listPipelineLogs(logsDir) {
+  try {
+    return fs.readdirSync(logsDir)
+      .filter(n => n.startsWith('pipeline_') && n.endsWith('.log'))
+      .map(n => ({ n, m: fs.statSync(path.join(logsDir, n)).mtime.getTime() }))
+      .sort((a, b) => b.m - a.m)
+      .map(x => x.n);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Дождаться появления нового лог-файла запуска.
+ *
+ * Раннер сам именует лог `pipeline_<timestamp>.log` при старте, поэтому run_id
+ * узнаём по факту, а не выдумываем.
+ *
+ * @param {string} logsDir
+ * @param {Set<string>} before - логи, существовавшие до spawn
+ * @param {number} timeoutMs
+ * @returns {Promise<string|null>}
+ */
+async function waitForNewLog(logsDir, before, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const fresh = listPipelineLogs(logsDir).find(n => !before.has(n));
+    if (fresh) return fresh;
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return null;
+}
+
+/**
  * Start a pipeline for a project.
- * Not yet fully implemented — stub for IMPL-49+.
+ *
+ * Запускает настоящий раннер workflow-ai (`workflow run`) detached-процессом.
+ * Синглтон обеспечивает сам раннер через .pipeline.lock (workflow-ai PLAN-011);
+ * здесь мы проверяем занятость и снимаем протухший lock мёртвого процесса.
  */
 export const start_pipeline = {
   name: 'start_pipeline',
-  description: 'Start a pipeline for a project',
+  description: 'Start a pipeline for a project by spawning the workflow-ai runner detached. Returns {run_id, pid, started_at, log_path}',
   inputSchema: z.object({
-    project: z.string().describe('Project path or name')
+    project: z.string().describe('Project path or name'),
+    plan: z.string().optional().describe('Plan ID to execute (e.g. PLAN-017); omit to let the pipeline pick work itself'),
+    config: z.string().optional().describe('Path to pipeline.yaml (default: .workflow/config/pipeline.yaml)')
   }),
-  async execute({ project }) {
-    return { ok: false, code: 'NOT_IMPLEMENTED', hint: 'start_pipeline tool not yet implemented' };
+  async execute({ project, plan, config }) {
+    const cwd = process.env.MCP_CWD || process.cwd();
+    const projectRoot = path.isAbsolute(project) ? project : path.join(cwd, project);
+
+    if (!fs.existsSync(path.join(projectRoot, '.workflow'))) {
+      return { ok: false, code: 'INVALID_PROJECT', hint: `Project not found: ${project}` };
+    }
+
+    // Занятость: живой lock — отказ; протухший — снимаем, иначе раннер упадёт на EEXIST.
+    const lock = readPipelineLock(projectRoot);
+    if (lock) {
+      if (isPipelineProcessAlive(lock.pid)) {
+        return {
+          ok: false,
+          code: 'ALREADY_RUNNING',
+          pid: lock.pid,
+          started_at: lock.timestamp,
+          hint: `Pipeline is already running for ${project} (pid ${lock.pid})`
+        };
+      }
+      try {
+        fs.unlinkSync(path.join(projectRoot, '.workflow', 'logs', '.pipeline.lock'));
+      } catch (err) {
+        if (err.code !== 'ENOENT') {
+          return { ok: false, code: 'STALE_LOCK', hint: `Failed to remove stale lock: ${err.message}` };
+        }
+      }
+    }
+
+    const binResult = resolveWorkflowAiBin();
+    if (!binResult.ok) return binResult;
+
+    const logsDir = path.join(projectRoot, '.workflow', 'logs');
+    const before = new Set(listPipelineLogs(logsDir));
+
+    const argv = [binResult.bin, 'run', '--project', projectRoot];
+    if (plan) argv.push('--plan', plan);
+    if (config) argv.push('--config', config);
+
+    let child;
+    try {
+      child = spawn(process.execPath, argv, {
+        cwd: projectRoot,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      });
+      child.unref();
+    } catch (err) {
+      return { ok: false, code: 'SPAWN_FAILED', hint: err.message };
+    }
+
+    if (!child.pid) {
+      return { ok: false, code: 'SPAWN_FAILED', hint: 'Runner process has no pid' };
+    }
+
+    const started_at = new Date().toISOString();
+
+    // Владение: помечаем запуск своим, чтобы pause/abort отличали чужие пайплайны.
+    writeMarker(projectRoot, { pid: child.pid, run_id: null, started_at });
+
+    const logName = await waitForNewLog(logsDir, before);
+    if (!logName) {
+      return {
+        ok: false,
+        code: 'RUNNER_NO_LOG',
+        pid: child.pid,
+        started_at,
+        hint: 'Runner was spawned but produced no pipeline log within 10s — check that workflow-ai is installed and the config is valid'
+      };
+    }
+
+    const run_id = logName.replace(/\.log$/, '');
+    writeMarker(projectRoot, { pid: child.pid, run_id, started_at });
+
+    return {
+      ok: true,
+      run_id,
+      pid: child.pid,
+      started_at,
+      log_path: path.join(logsDir, logName)
+    };
   }
 };
 

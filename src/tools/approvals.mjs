@@ -4,7 +4,7 @@
  */
 
 import { discoverProjects } from '../discovery.mjs';
-import { readApproval, writeDecision } from '../approvals/model.mjs';
+import { readApproval, writeDecision, resolvePendingStepId } from '../approvals/model.mjs';
 import path from 'path';
 import fs from 'fs';
 import { z } from 'zod';
@@ -159,13 +159,37 @@ async function approve_step({ project, step_id, decision, comment, decided_by })
 
     // === Approval File Validation ===
 
-    const existingApproval = readApproval(projectPath, step_id);
-    if (!existingApproval.ok) {
+    // step_id раннера композитный (<ticket>_<stage>_<attempt>); если клиент передал
+    // короткий — находим файл сканом каталога, независимо от того, кто запустил пайплайн.
+    const resolved = resolvePendingStepId(projectPath, step_id);
+    if (!resolved.ok) {
+      if (resolved.code === 'AMBIGUOUS') {
+        return {
+          ok: false,
+          code: 'AMBIGUOUS_STEP_ID',
+          message: `Several pending approvals match step: ${step_id}`,
+          step_id,
+          candidates: resolved.candidates
+        };
+      }
       return {
         ok: false,
         code: 'NO_PENDING_APPROVAL',
         message: `No pending approval found for step: ${step_id}`,
         step_id
+      };
+    }
+
+    const resolvedStepId = resolved.step_id;
+
+    const existingApproval = readApproval(projectPath, resolvedStepId);
+    if (!existingApproval.ok) {
+      // Файл есть, но не читается/не проходит схему — это не "нет approval'а".
+      return {
+        ok: false,
+        code: 'INVALID_APPROVAL_FILE',
+        message: existingApproval.error,
+        step_id: resolvedStepId
       };
     }
 
@@ -175,8 +199,8 @@ async function approve_step({ project, step_id, decision, comment, decided_by })
       return {
         ok: false,
         code: 'ALREADY_DECIDED',
-        message: `Step ${step_id} already has a decision: ${existingApproval.data.decision}`,
-        step_id,
+        message: `Step ${resolvedStepId} already has a decision: ${existingApproval.data.decision}`,
+        step_id: resolvedStepId,
         previous_decision: existingApproval.data.decision,
         decided_at: existingApproval.data.decided_at,
         decided_by: existingApproval.data.decided_by
@@ -189,7 +213,7 @@ async function approve_step({ project, step_id, decision, comment, decided_by })
     const decidedByValue = decided_by || 'mcp-client';
 
     // Write the decision
-    const result = writeDecision(projectPath, step_id, {
+    const result = writeDecision(projectPath, resolvedStepId, {
       decision,
       comment: comment || null,
       decided_by: decidedByValue
@@ -208,7 +232,7 @@ async function approve_step({ project, step_id, decision, comment, decided_by })
     return {
       ok: true,
       code: 'APPROVAL_RECORDED',
-      step_id,
+      step_id: resolvedStepId,
       project,
       decision,
       comment: comment || null,
@@ -217,7 +241,7 @@ async function approve_step({ project, step_id, decision, comment, decided_by })
       // Notification payload: pipeline-state should reflect decision
       notification: {
         type: 'approval_decision',
-        step_id,
+        step_id: resolvedStepId,
         decision,
         decided_by: decidedByValue,
         decided_at: result.data.decided_at,

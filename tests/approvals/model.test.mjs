@@ -372,7 +372,10 @@ describe('Approval Model', () => {
       expect(fs.existsSync(filePath)).toBe(true);
       const fileContent = JSON.parse(fs.readFileSync(filePath, 'utf8'));
       expect(fileContent.decision).toBe('approve');
-      expect(fileContent.status).toBe('decided');
+      // На диске лежит словарь раннера: manual-gate в workflow-ai поллит
+      // status === 'approved'|'rejected', а не 'decided' (FIX-002).
+      expect(fileContent.status).toBe('approved');
+      expect(fileContent.stage).toBe('approved');
     });
 
     it('should handle mixed race conditions - approve and reject attempt in parallel', async () => {

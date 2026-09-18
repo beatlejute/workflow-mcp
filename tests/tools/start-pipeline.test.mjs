@@ -1,6 +1,9 @@
 /**
- * Tests for start_pipeline MCP tool
- * Tests successful spawn, ALREADY_RUNNING check, spawn failures, marker creation, and log file extraction
+ * start_pipeline: реальный запуск раннера workflow-ai detached-процессом.
+ *
+ * Синглтон держит сам раннер через .pipeline.lock (workflow-ai PLAN-011),
+ * поэтому здесь проверяем контракт tool'а: валидацию проекта, отказ при живом
+ * запуске, снятие протухшего lock и формат ответа.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -8,272 +11,149 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
+import { start_pipeline } from '../../src/tools/pipeline.mjs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Since start_pipeline is currently a stub, we'll test the expected behavior
-// by importing the actual implementation once IMPL-35 is completed
-// For now, testing the structure and expected behavior
+/** PID, которого заведомо нет в системе. */
+const DEAD_PID = 999999;
 
-describe('start_pipeline tool', () => {
-  let testDir;
+const LOCK_REL = ['.workflow', 'logs', '.pipeline.lock'];
+
+function createProject(workspaceDir, name = 'start-project') {
+  const projectPath = path.join(workspaceDir, name);
+  fs.mkdirSync(path.join(projectPath, '.workflow', 'logs'), { recursive: true });
+  fs.mkdirSync(path.join(projectPath, '.workflow', 'config'), { recursive: true });
+  return projectPath;
+}
+
+function writeLock(projectPath, pid) {
+  fs.writeFileSync(
+    path.join(projectPath, ...LOCK_REL),
+    JSON.stringify({ pid, timestamp: new Date().toISOString() }, null, 2)
+  );
+}
+
+/**
+ * Подставной «раннер»: пишет лог в формате pipeline_<ts>.log и завершается.
+ * Позволяет проверить контракт start_pipeline, не гоняя настоящий пайплайн.
+ */
+function writeFakeRunner(dir) {
+  const binDir = path.join(dir, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  const bin = path.join(binDir, 'workflow.mjs');
+  fs.writeFileSync(bin, [
+    "import fs from 'fs';",
+    "import path from 'path';",
+    "const argv = process.argv.slice(2);",
+    "const projectRoot = argv[argv.indexOf('--project') + 1];",
+    "const ts = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').substring(0, 19);",
+    "const logsDir = path.join(projectRoot, '.workflow', 'logs');",
+    "fs.mkdirSync(logsDir, { recursive: true });",
+    "fs.writeFileSync(path.join(logsDir, `pipeline_${ts}.log`), '[start] pipeline\\n');",
+  ].join('\n'));
+  return bin;
+}
+
+describe('start_pipeline', () => {
+  let workspaceDir;
   let projectPath;
-  let workflowDir;
-  let logsDir;
-  let stateDir;
+  let originalCwd;
+  let originalBin;
 
   beforeEach(() => {
-    // Create temporary test directory structure
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'start-pipeline-test-'));
-    projectPath = testDir;
-    workflowDir = path.join(projectPath, '.workflow');
-    logsDir = path.join(workflowDir, 'logs');
-    stateDir = path.join(workflowDir, 'state');
-
-    // Create directory structure
-    fs.mkdirSync(logsDir, { recursive: true });
-    fs.mkdirSync(stateDir, { recursive: true });
+    originalCwd = process.cwd();
+    originalBin = process.env.WORKFLOW_AI_BIN;
+    workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'start-pipeline-'));
+    projectPath = createProject(workspaceDir);
+    process.env.MCP_CWD = workspaceDir;
+    process.chdir(workspaceDir);
   });
 
   afterEach(() => {
-    // Clean up test directory
+    delete process.env.MCP_CWD;
+    if (originalBin === undefined) delete process.env.WORKFLOW_AI_BIN;
+    else process.env.WORKFLOW_AI_BIN = originalBin;
     try {
-      if (fs.existsSync(testDir)) {
-        fs.rmSync(testDir, { recursive: true, force: true });
-      }
-    } catch (err) {
-      // Ignore cleanup errors
+      process.chdir(originalCwd);
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+    } catch {
+      // ignore
     }
   });
 
-  describe('TC-001: Successful start on fixture project with mock workflow binary', () => {
-    it('should spawn workflow run detached and return run_id from log file', async () => {
-      // Create mock workflow binary (stub shell script that creates log file)
-      const mockBinaryPath = path.join(projectPath, 'mock-workflow');
-      const mockScript = `#!/bin/bash
-# Mock workflow binary that creates a pipeline log
-logsDir="${logsDir}"
-mkdir -p "$logsDir"
+  it('отказывает для каталога без .workflow', async () => {
+    const result = await start_pipeline.execute({ project: 'no-such-project' });
 
-# Create pipeline_*.log with ISO timestamp
-timestamp=$(date '+%Y-%m-%d_%H-%M-%S')
-logFile="$logsDir/pipeline_$timestamp.log"
-echo "Pipeline started at $(date -Iseconds)" > "$logFile"
-
-# Keep process running for a bit then exit
-sleep 0.5
-exit 0
-`;
-
-      fs.writeFileSync(mockBinaryPath, mockScript);
-      fs.chmodSync(mockBinaryPath, 0o755);
-
-      // Expected behavior when start_pipeline is called:
-      // 1. Check no pipeline is running
-      // 2. Spawn with detached: true, stdio: 'ignore', unref()
-      // 3. Poll for pipeline_*.log creation (up to 2 sec)
-      // 4. Extract run_id from log filename
-      // 5. Write marker with PID
-      // 6. Return {ok: true, run_id, pid, started_at, log_path}
-
-      // For now, verify the expected test structure
-      expect(logsDir).toBeDefined();
-      expect(fs.existsSync(logsDir)).toBe(true);
-
-      // Test would call start_pipeline and verify:
-      // - result.ok === true
-      // - result.run_id matches pipeline_YYYY-MM-DD_HH-MM-SS format
-      // - result.pid is a number
-      // - result.log_path exists and contains logs
-      // - Marker file created at .workflow/.mcp-started-by
-    });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('INVALID_PROJECT');
   });
 
-  describe('TC-002: Repeated start → ALREADY_RUNNING', () => {
-    it('should return ALREADY_RUNNING when pipeline is already running', async () => {
-      // Simulate existing running pipeline by creating:
-      // 1. .runner-pids file with current PID
-      // 2. A recent pipeline_*.log file
+  it('не стартует поверх живого пайплайна', async () => {
+    writeLock(projectPath, process.pid);
 
-      const runnerPidsPath = path.join(logsDir, '.runner-pids');
-      const currentPid = process.pid;
-      fs.writeFileSync(runnerPidsPath, JSON.stringify({ snapshot: [currentPid] }));
+    const result = await start_pipeline.execute({ project: 'start-project' });
 
-      // Create recent log file
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const logPath = path.join(logsDir, `pipeline_${timestamp}.log`);
-      fs.writeFileSync(logPath, 'Pipeline running...\n');
-
-      // Test would call start_pipeline and verify:
-      // - result.ok === false
-      // - result.code === 'ALREADY_RUNNING'
-      // - result.pid === existing PID
-
-      expect(fs.existsSync(runnerPidsPath)).toBe(true);
-      expect(fs.existsSync(logPath)).toBe(true);
-
-      const runnerPids = JSON.parse(fs.readFileSync(runnerPidsPath, 'utf-8'));
-      expect(runnerPids.snapshot).toContain(currentPid);
-    });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('ALREADY_RUNNING');
+    expect(result.pid).toBe(process.pid);
   });
 
-  describe('TC-003: Spawn fail (binary not found) → SPAWN_FAILED', () => {
-    it('should return SPAWN_FAILED with errno when binary is not found', async () => {
-      // Test would use non-existent binary path
-      // Expected error handling:
-      // - Spawn fails with ENOENT
-      // - Catch error and return:
-      //   {ok: false, code: 'SPAWN_FAILED', errno: 'ENOENT', hint: '...'}
+  it('снимает протухший lock и запускается', async () => {
+    writeLock(projectPath, DEAD_PID);
+    process.env.WORKFLOW_AI_BIN = writeFakeRunner(workspaceDir);
 
-      const nonExistentBinary = path.join(projectPath, 'non-existent-workflow');
+    const result = await start_pipeline.execute({ project: 'start-project' });
 
-      // Verify binary doesn't exist
-      expect(fs.existsSync(nonExistentBinary)).toBe(false);
-
-      // Test would call start_pipeline with non-existent binary and verify:
-      // - result.ok === false
-      // - result.code === 'SPAWN_FAILED'
-      // - result.errno includes 'ENOENT' or 'EACCES'
-    });
+    expect(result.ok).toBe(true);
+    expect(result.run_id).toMatch(/^pipeline_/);
+    expect(result.pid).toBeGreaterThan(0);
+    expect(fs.existsSync(result.log_path)).toBe(true);
   });
 
-  describe('TC-004: Marker is created correctly with PID and run_id', () => {
-    it('should write .mcp-started-by marker with PID and run_id', async () => {
-      const markerPath = path.join(workflowDir, '.mcp-started-by');
+  it('возвращает run_id, pid, started_at и log_path', async () => {
+    process.env.WORKFLOW_AI_BIN = writeFakeRunner(workspaceDir);
 
-      // Test would call start_pipeline which writes marker:
-      // marker content: {pid, run_id, mcp_instance_id, created_at}
+    const result = await start_pipeline.execute({ project: 'start-project' });
 
-      // Simulate what the tool should do:
-      const mockPid = 12345;
-      const mockRunId = 'pipeline_2026-04-28_12-30-45';
-      const markerContent = {
-        pid: mockPid,
-        run_id: mockRunId,
-        mcp_instance_id: 'workflow-mcp@abcd1234',
-        created_at: new Date().toISOString()
-      };
-
-      fs.writeFileSync(markerPath, JSON.stringify(markerContent, null, 2));
-
-      // Verify marker was created
-      expect(fs.existsSync(markerPath)).toBe(true);
-
-      const marker = JSON.parse(fs.readFileSync(markerPath, 'utf-8'));
-      expect(marker.pid).toBe(mockPid);
-      expect(marker.run_id).toBe(mockRunId);
-      expect(marker.pid).toBeDefined();
-      expect(marker.run_id).toBeDefined();
-      expect(marker.created_at).toBeDefined();
-    });
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      run_id: expect.stringMatching(/^pipeline_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/),
+      pid: expect.any(Number),
+      started_at: expect.any(String),
+      log_path: expect.any(String)
+    }));
   });
 
-  describe('TC-005: Log file appears and its name is extracted into run_id', () => {
-    it('should extract run_id from pipeline_*.log filename via polling', async () => {
-      // Test polling mechanism: poll every 100ms, up to 2 seconds for log creation
-      const startTime = Date.now();
-      const maxWaitTime = 2000;
-      const pollMs = 100;
-      let foundLog = null;
+  it('помечает запуск своим маркером владения', async () => {
+    process.env.WORKFLOW_AI_BIN = writeFakeRunner(workspaceDir);
 
-      // Simulate async log creation after a delay
-      setTimeout(() => {
-        const timestamp = new Date().toISOString()
-          .replace(/T/, '_')
-          .replace(/:/g, '-')
-          .slice(0, 19);
-        const logPath = path.join(logsDir, `pipeline_${timestamp}.log`);
-        fs.writeFileSync(logPath, 'Pipeline execution started\n');
-      }, 200);
+    const result = await start_pipeline.execute({ project: 'start-project' });
 
-      // Poll for log file (as start_pipeline should do)
-      const pollPromise = new Promise((resolve) => {
-        const intervalId = setInterval(() => {
-          if (Date.now() - startTime > maxWaitTime) {
-            clearInterval(intervalId);
-            resolve(foundLog);
-            return;
-          }
+    const marker = JSON.parse(fs.readFileSync(
+      path.join(projectPath, '.workflow', 'logs', '.mcp-started-by'),
+      'utf8'
+    ));
 
-          const logFiles = fs.readdirSync(logsDir)
-            .filter(f => f.startsWith('pipeline_') && f.endsWith('.log'));
-
-          if (logFiles.length > 0) {
-            // Extract run_id from latest log file
-            const logFile = logFiles.sort().reverse()[0];
-            const runIdMatch = logFile.match(/pipeline_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})/);
-            if (runIdMatch) {
-              foundLog = `pipeline_${runIdMatch[1]}`;
-              clearInterval(intervalId);
-              resolve(foundLog);
-            }
-          }
-        }, pollMs);
-      });
-
-      // Verify log extraction
-      const extractedRunId = await pollPromise;
-
-      expect(extractedRunId).toBeDefined();
-      expect(extractedRunId).toMatch(/^pipeline_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/);
-
-      // Verify log file exists
-      const logPath = path.join(logsDir, `${extractedRunId}.log`);
-      expect(fs.existsSync(logPath)).toBe(true);
-    });
+    expect(marker.pid).toBe(result.pid);
+    expect(marker.run_id).toBe(result.run_id);
+    expect(marker.version).toBe(1);
   });
 
-  describe('Integration: Full start_pipeline workflow', () => {
-    it('should complete full workflow: check, spawn, poll, write marker, return result', async () => {
-      // Full integration test combining all scenarios
-      // 1. Verify no pipeline running
-      // 2. Spawn mock process with detached mode
-      // 3. Poll for log file
-      // 4. Extract run_id
-      // 5. Write marker
-      // 6. Return success response
+  it('сообщает RUNNER_NOT_FOUND, если CLI не найден', async () => {
+    process.env.WORKFLOW_AI_BIN = path.join(workspaceDir, 'missing', 'workflow.mjs');
 
-      const runnerPidsPath = path.join(logsDir, '.runner-pids');
+    const result = await start_pipeline.execute({ project: 'start-project' });
 
-      // Initially no PIDs should exist
-      expect(fs.existsSync(runnerPidsPath)).toBe(false);
-
-      // Create marker path
-      const markerPath = path.join(workflowDir, '.mcp-started-by');
-      expect(fs.existsSync(markerPath)).toBe(false);
-
-      // After execution, these should be created
-      // Test would verify:
-      // 1. Marker file exists
-      // 2. Marker contains valid PID and run_id
-      // 3. Log file exists with matching run_id
-      // 4. Response contains {ok: true, run_id, pid, started_at, log_path}
-    });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('RUNNER_NOT_FOUND');
   });
 
-  describe('Error handling', () => {
-    it('should handle project resolution errors', async () => {
-      const nonExistentProject = path.join(testDir, 'non-existent-project');
+  it('принимает абсолютный путь проекта', async () => {
+    process.env.WORKFLOW_AI_BIN = writeFakeRunner(workspaceDir);
 
-      // Test would call start_pipeline with non-existent project
-      // Expected: return error like {ok: false, code: 'PROJECT_NOT_FOUND'}
-      expect(fs.existsSync(nonExistentProject)).toBe(false);
-    });
+    const result = await start_pipeline.execute({ project: projectPath });
 
-    it('should handle filesystem permission errors', async () => {
-      // Test would attempt to write marker in read-only directory
-      // Expected: structured error response
-
-      // Make directory read-only (if OS supports it)
-      try {
-        fs.chmodSync(stateDir, 0o444);
-        expect(fs.statSync(stateDir).mode & 0o777).toBe(0o444);
-        fs.chmodSync(stateDir, 0o755); // Restore for cleanup
-      } catch (err) {
-        // Some environments may not support chmod
-      }
-    });
+    expect(result.ok).toBe(true);
   });
 });

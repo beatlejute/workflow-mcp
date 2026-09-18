@@ -103,6 +103,60 @@ function getApprovalPath(projectPath, stepId) {
 }
 
 /**
+ * Runner (workflow-ai) и MCP описывают один и тот же файл разным словарём:
+ * runner пишет status: pending|approved|rejected + created_at/updated_at,
+ * MCP оперирует status: pending|decided + stage + decision + pending_since.
+ * Приводим прочитанное к канону MCP, сохраняя остальные поля файла как есть.
+ * @param {Object} raw
+ * @param {string} [mtimeIso] - fallback для pending_since
+ * @returns {Object}
+ */
+function normalizeApprovalData(raw, mtimeIso) {
+  if (typeof raw !== 'object' || raw === null) return raw;
+
+  const data = { ...raw };
+  const decisionFromStatus = { approved: 'approve', rejected: 'reject' }[raw.status];
+
+  if (decisionFromStatus) {
+    data.status = 'decided';
+    data.stage = raw.stage || raw.status;
+    data.decision = raw.decision || decisionFromStatus;
+  } else if (raw.status === 'pending') {
+    data.stage = raw.stage || 'pending';
+    if (data.decision === undefined) data.decision = null;
+  }
+
+  if (typeof data.pending_since !== 'string') {
+    data.pending_since = raw.created_at || mtimeIso || null;
+  }
+  if (data.decided_at === undefined || data.decided_at === null) {
+    data.decided_at = data.status === 'decided'
+      ? (raw.decided_at || raw.updated_at || null)
+      : null;
+  }
+  if (data.ticket_id === undefined) data.ticket_id = '';
+  if (data.decided_by === undefined) data.decided_by = null;
+  if (data.comment === undefined) data.comment = null;
+
+  return data;
+}
+
+/**
+ * Read an approval file without normalization — нужен writeDecision,
+ * чтобы не потерять поля раннера (stage_id, attempt, context_snapshot).
+ * @param {string} projectPath
+ * @param {string} stepId
+ * @returns {Object|null}
+ */
+function readApprovalRaw(projectPath, stepId) {
+  try {
+    return JSON.parse(fs.readFileSync(getApprovalPath(projectPath, stepId), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read an approval file with schema validation.
  * @param {string} projectPath
  * @param {string} stepId
@@ -114,7 +168,9 @@ export function readApproval(projectPath, stepId) {
   try {
     const content = fs.readFileSync(filePath, 'utf8');
     const parsed = JSON.parse(content);
-    const validation = validateApprovalFile(parsed);
+    let mtimeIso;
+    try { mtimeIso = fs.statSync(filePath).mtime.toISOString(); } catch { mtimeIso = undefined; }
+    const validation = validateApprovalFile(normalizeApprovalData(parsed, mtimeIso));
     if (!validation.valid) {
       return { ok: false, error: `Invalid approval file: ${validation.error}` };
     }
@@ -163,11 +219,10 @@ export function writeDecision(projectPath, stepId, params) {
   const now = new Date().toISOString();
   const stage = decision === 'approve' ? 'approved' : 'rejected';
 
-  let baseData = {};
-  if (existing.ok) {
-    baseData = existing.data;
-  } else {
-    // Create fresh approval file
+  // Базой берём СЫРОЙ файл, а не нормализованный: у manual-gate раннера есть
+  // свои поля (stage_id, attempt, context_snapshot), которые нельзя терять.
+  let baseData = readApprovalRaw(projectPath, stepId);
+  if (!baseData) {
     baseData = {
       step_id: stepId,
       ticket_id: '',
@@ -191,15 +246,22 @@ export function writeDecision(projectPath, stepId, params) {
     return { ok: false, error: `Failed to create approvals directory: ${err.message}` };
   }
 
+  // Раннер (workflow-ai) в manual-gate поллит именно status === 'approved'|'rejected'
+  // (runner.mjs executeManualGate). Пишем его словарь в status, а канон MCP
+  // (stage/decision/decided_at) — рядом; readApproval нормализует обратно.
   const newData = {
     ...baseData,
     stage,
-    status: 'decided',
+    status: stage,
     decided_at: now,
+    updated_at: now,
     decision,
     decided_by,
     comment,
   };
+  if (!newData.step_id) newData.step_id = stepId;
+  if (newData.ticket_id === undefined) newData.ticket_id = '';
+  if (!newData.pending_since) newData.pending_since = baseData.created_at || now;
 
   const tempFile = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
 
@@ -219,7 +281,49 @@ export function writeDecision(projectPath, stepId, params) {
     return { ok: false, error: `Failed to commit approval file: ${err.message}` };
   }
 
-  return { ok: true, decided: true, data: newData };
+  return { ok: true, decided: true, data: normalizeApprovalData(newData) };
+}
+
+/**
+ * Найти реальное имя approval-файла по step_id.
+ *
+ * Раннер именует файл композитным step_id (`<ticket>_<stage>_<attempt>.json`,
+ * runner.mjs computeStepId), поэтому точное совпадение имени работает только
+ * если клиент передал полный id. Если файла нет — сканируем каталог и ищем
+ * pending по полю step_id или по префиксу имени.
+ *
+ * @param {string} projectPath
+ * @param {string} stepId
+ * @returns {{ ok: true, step_id: string } | { ok: false, code: string, candidates?: string[] }}
+ */
+export function resolvePendingStepId(projectPath, stepId) {
+  const approvalsDir = path.join(projectPath, '.workflow', 'approvals');
+
+  if (fs.existsSync(getApprovalPath(projectPath, stepId))) {
+    return { ok: true, step_id: stepId };
+  }
+
+  let files;
+  try {
+    files = fs.readdirSync(approvalsDir).filter(file => file.endsWith('.json'));
+  } catch {
+    return { ok: false, code: 'NOT_FOUND' };
+  }
+
+  const matches = [];
+  for (const file of files) {
+    const base = path.basename(file, '.json');
+    const raw = readApprovalRaw(projectPath, base);
+    if (!raw) continue;
+    if (raw.status !== 'pending') continue;
+    if (raw.step_id === stepId || base === stepId || base.startsWith(`${stepId}_`)) {
+      matches.push(base);
+    }
+  }
+
+  if (matches.length === 1) return { ok: true, step_id: matches[0] };
+  if (matches.length > 1) return { ok: false, code: 'AMBIGUOUS', candidates: matches };
+  return { ok: false, code: 'NOT_FOUND' };
 }
 
 /**

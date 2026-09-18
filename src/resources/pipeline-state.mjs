@@ -22,6 +22,28 @@ function isProcessAlive(pid) {
 }
 
 /**
+ * Прочитать lock-файл пайплайна.
+ *
+ * Раннер workflow-ai пишет `.workflow/logs/.pipeline.lock` ({pid, timestamp})
+ * при любом запуске — из CLI, из VS Code или из MCP. Это единственный признак
+ * "пайплайн идёт", общий для всех способов старта.
+ *
+ * @param {string} projectRoot
+ * @returns {{pid: number, timestamp: string|null}|null}
+ */
+function readPipelineLock(projectRoot) {
+  try {
+    const raw = fs.readFileSync(path.join(projectRoot, '.workflow', 'logs', '.pipeline.lock'), 'utf-8');
+    const data = JSON.parse(raw);
+    const pid = typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10);
+    if (!pid || Number.isNaN(pid) || pid <= 0) return null;
+    return { pid, timestamp: typeof data.timestamp === 'string' ? data.timestamp : null };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read latest PID from .runner-pids.
  */
 function readLatestPid(projectRoot) {
@@ -184,7 +206,9 @@ export function get_workflow_pipeline_state(absoluteCwd) {
 
   for (const project of projects) {
     const projectRoot = project.path;
-    const pid = readLatestPid(projectRoot);
+    // Источник правды — lock раннера; .runner-pids остаётся как fallback.
+    const lock = readPipelineLock(projectRoot);
+    const pid = lock ? lock.pid : readLatestPid(projectRoot);
     if (!pid) continue;
 
     const marker = readMarker(projectRoot);
@@ -208,6 +232,13 @@ export function get_workflow_pipeline_state(absoluteCwd) {
       logExitCode
     });
 
+    // Stale lock: файл остался, а процесс мёртв (kill -9, ребут, падение).
+    // Такой запуск не должен показываться как running.
+    const staleLock = Boolean(lock) && !pidAlive;
+    if (staleLock) {
+      state = 'stale';
+    }
+
     // If there is a pending approval and pipeline is running, treat as paused
     if (awaiting && state === 'running') {
       state = 'paused';
@@ -222,17 +253,22 @@ export function get_workflow_pipeline_state(absoluteCwd) {
       current_stage: currentStage,
       step_number: stepNumber,
       ...(isForeign && { foreign: true }),
+      ...(staleLock && { stale_lock: true }),
       ...(markerValid.reason && { marker_reason: markerValid.reason }),
       ...(awaiting && { awaiting_approval: awaiting })
     };
 
     // Timestamps
-    try {
-      const startedMarker = path.join(projectRoot, '.workflow', 'logs', '.mcp-started-by');
-      if (fs.existsSync(startedMarker)) {
-        entry.started_at = new Date(fs.statSync(startedMarker).mtime).toISOString();
-      }
-    } catch { }
+    if (lock && lock.timestamp) {
+      entry.started_at = lock.timestamp;
+    } else {
+      try {
+        const startedMarker = path.join(projectRoot, '.workflow', 'logs', '.mcp-started-by');
+        if (fs.existsSync(startedMarker)) {
+          entry.started_at = new Date(fs.statSync(startedMarker).mtime).toISOString();
+        }
+      } catch { }
+    }
     try {
       const logsDir = path.join(projectRoot, '.workflow', 'logs');
       const files = fs.readdirSync(logsDir).filter(f => f.startsWith('pipeline_') && f.endsWith('.log'));
