@@ -115,7 +115,7 @@ export function getMcpConfig(cwd) {
      tick_interval_sec: 15,
      stuck_headroom_sec: 60,
      blocked_accumulation_threshold: 5,
-     ghost_execution_log_marker: 'ghost-execution',
+     ghost_execution_log_marker: '[GHOST-EXECUTION]',
      crash_mtime_freshness_sec: 60,
      dedup_fingerprint_ttl_sec: 3600,
      approval_pending_threshold_sec: 600,

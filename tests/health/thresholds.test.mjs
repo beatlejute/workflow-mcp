@@ -235,10 +235,12 @@ pipeline:
         tick_interval_sec: 15,
         stuck_headroom_sec: 60,
         blocked_accumulation_threshold: 5,
-        ghost_execution_log_marker: 'ghost-execution',
+        ghost_execution_log_marker: '[GHOST-EXECUTION]',
         crash_mtime_freshness_sec: 60,
         dedup_fingerprint_ttl_sec: 3600,
-        approval_pending_threshold_sec: 600
+        approval_pending_threshold_sec: 600,
+        branch_diverged_max_behind: 10,
+        branch_diverged_max_ahead: 30
       });
     });
 
@@ -261,7 +263,7 @@ health:
       expect(config.blocked_accumulation_threshold).toBe(10);
 
       // Check that defaults are still applied for missing keys
-      expect(config.ghost_execution_log_marker).toBe('ghost-execution');
+      expect(config.ghost_execution_log_marker).toBe('[GHOST-EXECUTION]');
       expect(config.crash_mtime_freshness_sec).toBe(60);
       expect(config.dedup_fingerprint_ttl_sec).toBe(3600);
     });
@@ -340,10 +342,12 @@ someOtherSection:
         tick_interval_sec: 15,
         stuck_headroom_sec: 60,
         blocked_accumulation_threshold: 5,
-        ghost_execution_log_marker: 'ghost-execution',
+        ghost_execution_log_marker: '[GHOST-EXECUTION]',
         crash_mtime_freshness_sec: 60,
         dedup_fingerprint_ttl_sec: 3600,
-        approval_pending_threshold_sec: 600
+        approval_pending_threshold_sec: 600,
+        branch_diverged_max_behind: 10,
+        branch_diverged_max_ahead: 30
       });
     });
 
@@ -362,10 +366,12 @@ invalid: [unclosed bracket
         tick_interval_sec: 15,
         stuck_headroom_sec: 60,
         blocked_accumulation_threshold: 5,
-        ghost_execution_log_marker: 'ghost-execution',
+        ghost_execution_log_marker: '[GHOST-EXECUTION]',
         crash_mtime_freshness_sec: 60,
         dedup_fingerprint_ttl_sec: 3600,
-        approval_pending_threshold_sec: 600
+        approval_pending_threshold_sec: 600,
+        branch_diverged_max_behind: 10,
+        branch_diverged_max_ahead: 30
       });
     });
   });

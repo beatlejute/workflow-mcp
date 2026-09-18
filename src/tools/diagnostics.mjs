@@ -2,9 +2,46 @@ import { discoverProjects } from '../discovery.mjs';
 import { getFrontmatter } from '../caches/frontmatter-cache.mjs';
 import { parsePipelineLog } from '../parsers/pipeline-log.mjs';
 import { getMcpConfig } from '../health/thresholds.mjs';
+import { buildGhostMarkerMatcher } from '../health/ghost-marker.mjs';
 import path from 'path';
 import fs from 'fs';
 import { z } from 'zod';
+
+// FIX-001: excerpt строился без ограничения длины, и в него попадали строки
+// AI_APICallError по 232 КБ — ответ list_ghost_executions разрастался до 5.5 МБ.
+// Режем по строке и по записи целиком.
+const MAX_EXCERPT_LINE_CHARS = 500;
+const MAX_EXCERPT_CHARS = 4000;
+
+/**
+ * Обрезает строку excerpt'а, помечая, сколько символов отброшено.
+ * @param {string} line
+ * @returns {string}
+ */
+function capExcerptLine(line) {
+  if (line.length <= MAX_EXCERPT_LINE_CHARS) return line;
+  const dropped = line.length - MAX_EXCERPT_LINE_CHARS;
+  return `${line.slice(0, MAX_EXCERPT_LINE_CHARS)} … [обрезано ${dropped} симв.]`;
+}
+
+/**
+ * Собирает excerpt вокруг строки с маркером с ограничением по размеру.
+ * @param {string[]} lines
+ * @param {number} index - строка с маркером
+ * @returns {string}
+ */
+function buildCappedExcerpt(lines, index) {
+  const startIdx = Math.max(0, index - 5);
+  const endIdx = Math.min(lines.length - 1, index + 5);
+  const capped = lines.slice(startIdx, endIdx + 1).map(capExcerptLine);
+
+  let excerpt = capped.join('\n');
+  if (excerpt.length > MAX_EXCERPT_CHARS) {
+    const dropped = excerpt.length - MAX_EXCERPT_CHARS;
+    excerpt = `${excerpt.slice(0, MAX_EXCERPT_CHARS)} … [обрезано ${dropped} симв.]`;
+  }
+  return excerpt;
+}
 
 /**
  * list_blocked_tickets - Aggregate blocked tickets from all or one project
@@ -180,13 +217,13 @@ async function listGhostExecutionsImpl({ project, since }) {
       continue;
     }
 
-    // Get marker from config (default: 'ghost-execution')
-    const marker = getMcpConfig(proj.path)?.ghost_execution_log_marker || 'ghost-execution';
+    // FIX-001: маркер ищется как структурный обособленный токен, а не подстрокой.
+    const matcher = buildGhostMarkerMatcher(getMcpConfig(proj.path)?.ghost_execution_log_marker);
 
     for (const logFile of logFiles) {
       // mtime-based filter: if since provided and log mtime < since, skip older logs
       if (sinceDate && logFile.mtime < sinceDate) {
-        console.log('DEBUG: Skipping log file due to mtime filter:', logFile.name, 
+        console.error('DEBUG: Skipping log file due to mtime filter:', logFile.name, 
                     'mtime:', logFile.mtime, 'since:', sinceDate);
         continue;
       }
@@ -207,11 +244,20 @@ async function listGhostExecutionsImpl({ project, since }) {
       // Parse the log once to get step info for all markers
       const steps = parsePipelineLog(logContent);
       
+      // Дедуп: совпадения ближе 5 строк друг к другу дают один и тот же
+      // excerpt (±5 строк) и раньше плодили дубли, разнесённые по соседним шагам.
+      let lastMatchIdx = -Infinity;
+
       // Scan for marker lines
       for (let i = 0; i < lines.length; i++) {
-        if (!lines[i].includes(marker)) {
+        if (!matcher.test(lines[i])) {
           continue;
         }
+
+        if (i - lastMatchIdx <= 5) {
+          continue;
+        }
+        lastMatchIdx = i;
 
         // Extract detected_at from the timestamp of the log line that contains the marker
         let detectedAt = new Date().toISOString();
@@ -224,7 +270,7 @@ async function listGhostExecutionsImpl({ project, since }) {
               // Parse the timestamp and ensure it's treated as UTC
               const localDate = new Date(timestampMatch[1].replace(' ', 'T'));
               detectedAt = localDate.toISOString();
-              console.log('DEBUG: Found timestamp in line', lineIdx, ':', timestampMatch[1], '->', detectedAt);
+              console.error('DEBUG: Found timestamp in line', lineIdx, ':', timestampMatch[1], '->', detectedAt);
               break; // Use the first timestamp we find
             } catch (e) {
               // Continue to next line
@@ -236,15 +282,12 @@ async function listGhostExecutionsImpl({ project, since }) {
         // Note: file mtime filter already skipped files older than sinceDate
         // This filter is for markers within files that might be newer than the file
         if (sinceDate && new Date(detectedAt) < sinceDate) {
-          console.log('DEBUG: Skipping marker due to detected_at filter:', detectedAt, 'since:', sinceDate);
+          console.error('DEBUG: Skipping marker due to detected_at filter:', detectedAt, 'since:', sinceDate);
           continue;
         }
 
-        // Build log_excerpt: ±5 lines around marker
-        const startIdx = Math.max(0, i - 5);
-        const endIdx = Math.min(lines.length - 1, i + 5);
-        const excerptLines = lines.slice(startIdx, endIdx + 1);
-        const logExcerpt = excerptLines.join('\n');
+        // Build log_excerpt: ±5 lines around marker, с ограничением размера
+        const logExcerpt = buildCappedExcerpt(lines, i);
 
         // Find step that covers this line number using pre-parsed steps
         // We need to determine which step the marker line belongs to

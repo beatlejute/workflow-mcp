@@ -36,14 +36,14 @@ describe('ghost-execution.mjs', () => {
     it('should return alert when marker "ghost-execution" is found in log', () => {
       // Create a log file with the marker
       const logPath = path.join(logsDir, 'pipeline_run-123.log');
-      fs.writeFileSync(logPath, 'Some log content\nghost-execution\nMore content', 'utf8');
+      fs.writeFileSync(logPath, 'Some log content\n[GHOST-EXECUTION] step=3\nMore content', 'utf8');
 
       const result = detectGhostExecution(projectPath, 'ghost-execution');
 
       expect(result).not.toBeNull();
       expect(result.type).toBe('ghost_execution');
       expect(result.severity).toBe('critical');
-      expect(result.message).toContain('ghost-execution');
+      expect(result.message).toContain('[GHOST-EXECUTION]');
     });
 
     // ===== Test Case 2: Marker not found =====
@@ -118,20 +118,20 @@ describe('ghost-execution.mjs', () => {
     // ===== Test Case 8: Custom marker parameter =====
     it('should detect custom marker when it exists in log', () => {
       const logPath = path.join(logsDir, 'pipeline_run-123.log');
-      fs.writeFileSync(logPath, 'Some content\nmy-custom-marker\nEnd', 'utf8');
+      fs.writeFileSync(logPath, 'Some content\n[MY-CUSTOM-MARKER] step=1\nEnd', 'utf8');
 
       const result = detectGhostExecution(projectPath, 'my-custom-marker');
 
       expect(result).not.toBeNull();
       expect(result.type).toBe('ghost_execution');
       expect(result.severity).toBe('critical');
-      expect(result.message).toContain('my-custom-marker');
+      expect(result.message).toContain('[MY-CUSTOM-MARKER]');
     });
 
     // ===== Test Case 9: Custom marker not found =====
     it('should return null when custom marker is not in log', () => {
       const logPath = path.join(logsDir, 'pipeline_run-123.log');
-      fs.writeFileSync(logPath, 'Some content\nghost-execution\nEnd', 'utf8');
+      fs.writeFileSync(logPath, 'Some content\n[GHOST-EXECUTION]\nEnd', 'utf8');
 
       const result = detectGhostExecution(projectPath, 'my-custom-marker');
 
@@ -145,7 +145,7 @@ describe('ghost-execution.mjs', () => {
 
       // Create both logs
       fs.writeFileSync(oldLogPath, 'No marker here', 'utf8');
-      fs.writeFileSync(newLogPath, 'Some content\nghost-execution\nEnd', 'utf8');
+      fs.writeFileSync(newLogPath, 'Some content\n[GHOST-EXECUTION]\nEnd', 'utf8');
 
       // Make old log actually old
       const oldMtime = Date.now() - 100000;
@@ -160,7 +160,7 @@ describe('ghost-execution.mjs', () => {
     // ===== Test Case 11: Alert includes required fields =====
     it('should include all required fields in alert when marker is found', () => {
       const logPath = path.join(logsDir, 'pipeline_test-run-456.log');
-      fs.writeFileSync(logPath, 'ghost-execution detected', 'utf8');
+      fs.writeFileSync(logPath, '[GHOST-EXECUTION] detected', 'utf8');
 
       const result = detectGhostExecution(projectPath, 'ghost-execution');
 
@@ -180,7 +180,7 @@ describe('ghost-execution.mjs', () => {
     // ===== Test Case 12: Fingerprint includes run_id =====
     it('should include run_id in fingerprint', () => {
       const logPath = path.join(logsDir, 'pipeline_special-run-789.log');
-      fs.writeFileSync(logPath, 'ghost-execution', 'utf8');
+      fs.writeFileSync(logPath, '[GHOST-EXECUTION]', 'utf8');
 
       const result = detectGhostExecution(projectPath, 'ghost-execution');
 
@@ -188,35 +188,49 @@ describe('ghost-execution.mjs', () => {
       expect(result.fingerprint).toContain('special-run-789');
     });
 
-    // ===== Test Case 13: Marker as substring =====
-    it('should find marker as substring within larger text', () => {
+    // ===== Test Case 13 (FIX-001): прозаическое упоминание НЕ детектится =====
+    // Раньше подстрочный includes() давал critical-алерт на любой текст со словами
+    // «ghost-execution»: тег тикета, commit message, имя файла, цитату из отчёта.
+    // Прецедент 2026-08-04: скан по workflowAi вернул 12 записей, все ложные.
+    it.each([
+      ['commit message', 'Warning: ghost-execution detected in pipeline'],
+      ['тег тикета', 'tags: [dod-fill, ticket-update, ghost-execution]'],
+      ['имя файла', '  -a----  19.04.2026  14:11  4532 ghost-execution-qa-18.log'],
+      ['цитата из отчёта', 'Новых ghost-execution не обнаружено'],
+      ['commit в выводе агента', '71b8df6 fix(runner): add E2E ghost-execution gate']
+    ])('не детектит маркер в прозе: %s', (_name, line) => {
       const logPath = path.join(logsDir, 'pipeline_run-123.log');
-      fs.writeFileSync(logPath, 'Warning: ghost-execution detected in pipeline', 'utf8');
+      fs.writeFileSync(logPath, line, 'utf8');
 
-      const result = detectGhostExecution(projectPath, 'ghost-execution');
-
-      expect(result).not.toBeNull();
-      expect(result.type).toBe('ghost_execution');
+      expect(detectGhostExecution(projectPath, 'ghost-execution')).toBeNull();
     });
 
-    // ===== Test Case 14: Case-sensitive marker matching =====
-    it('should be case-sensitive when matching marker', () => {
+    // ===== Test Case 14: регистр структурного маркера =====
+    it('матчит структурный маркер с учётом регистра', () => {
       const logPath = path.join(logsDir, 'pipeline_run-123.log');
-      fs.writeFileSync(logPath, 'Ghost-Execution marker found', 'utf8');
+      fs.writeFileSync(logPath, '[ghost-execution] lower case', 'utf8');
 
-      // Exact case doesn't match
-      const result1 = detectGhostExecution(projectPath, 'ghost-execution');
-      expect(result1).toBeNull();
+      // Нормализованный маркер — [GHOST-EXECUTION], нижний регистр не совпадает
+      expect(detectGhostExecution(projectPath, 'ghost-execution')).toBeNull();
 
-      // Exact case matches
-      const result2 = detectGhostExecution(projectPath, 'Ghost-Execution');
-      expect(result2).not.toBeNull();
+      // Структурный маркер из конфига берётся как есть
+      expect(detectGhostExecution(projectPath, '[ghost-execution]')).not.toBeNull();
+    });
+
+    // ===== Test Case 14b: нормализация старого конфига =====
+    it('голый маркер из старого конфига нормализуется в скобочную форму', () => {
+      const logPath = path.join(logsDir, 'pipeline_run-123.log');
+      fs.writeFileSync(logPath, 'step 3\n[GHOST-EXECUTION]\ndone', 'utf8');
+
+      // Любой регистр голого слова приводится к [GHOST-EXECUTION]
+      expect(detectGhostExecution(projectPath, 'ghost-execution')).not.toBeNull();
+      expect(detectGhostExecution(projectPath, 'Ghost-Execution')).not.toBeNull();
     });
 
     // ===== Test Case 15: Multiple markers in log (only need one match) =====
     it('should return alert if any instance of marker is found in log', () => {
       const logPath = path.join(logsDir, 'pipeline_run-123.log');
-      const content = 'Start\nghost-execution\nMiddle\nghost-execution\nEnd';
+      const content = 'Start\n[GHOST-EXECUTION]\nMiddle\n[GHOST-EXECUTION]\nEnd';
       fs.writeFileSync(logPath, content, 'utf8');
 
       const result = detectGhostExecution(projectPath, 'ghost-execution');
@@ -228,7 +242,7 @@ describe('ghost-execution.mjs', () => {
     // ===== Test Case 16: timestamp is current =====
     it('should set detected_at to current timestamp', () => {
       const logPath = path.join(logsDir, 'pipeline_run-123.log');
-      fs.writeFileSync(logPath, 'ghost-execution', 'utf8');
+      fs.writeFileSync(logPath, '[GHOST-EXECUTION]', 'utf8');
 
       const beforeTime = new Date().toISOString();
       const result = detectGhostExecution(projectPath, 'ghost-execution');
@@ -243,7 +257,7 @@ describe('ghost-execution.mjs', () => {
     // ===== Test Case 17: suggested_actions contains expected action =====
     it('should include "get_pipeline_log" in suggested_actions', () => {
       const logPath = path.join(logsDir, 'pipeline_run-123.log');
-      fs.writeFileSync(logPath, 'ghost-execution', 'utf8');
+      fs.writeFileSync(logPath, '[GHOST-EXECUTION]', 'utf8');
 
       const result = detectGhostExecution(projectPath, 'ghost-execution');
 

@@ -81,7 +81,7 @@ describe('list_ghost_executions', () => {
 Context:
 ticket_id: IMPL-1
 [PipelineRunner] Step 1 output
-ghost-execution
+[GHOST-EXECUTION]
 [PipelineRunner] Step 1 output continued
 [PipelineRunner] COMPLETE stage="build" status="success" exitCode=0
 [2026-04-27 19:20:00] [INFO] [PipelineRunner] Step 2
@@ -108,7 +108,7 @@ ticket_id: IMPL-2
         run_id: 'run-123',
         step_number: 1,
         ticket_id: 'IMPL-1',
-        log_excerpt: expect.stringContaining('ghost-execution'),
+        log_excerpt: expect.stringContaining('[GHOST-EXECUTION]'),
         detected_at: expect.any(String)
       });
       expect(data.truncated).toBe(false);
@@ -126,7 +126,7 @@ ticket_id: IMPL-2
 
       // Add ghost execution to second project only
       const logContent = `[2026-04-27 19:19:00] [INFO] [PipelineRunner] Step 1
-ghost-execution
+[GHOST-EXECUTION]
 [PipelineRunner] COMPLETE stage="build" status="success" exitCode=0`;
 
       fs.writeFileSync(path.join(logsDir2, 'pipeline_run-456.log'), logContent, 'utf8');
@@ -148,11 +148,11 @@ ghost-execution
       // File mtimes are set by fs.utimesSync and compared directly, without timezone issues
 
       const oldLogContent = `[2026-01-01 00:00:00] [INFO] [PipelineRunner] Step 1
-ghost-execution
+[GHOST-EXECUTION]
 [PipelineRunner] COMPLETE stage="build" status="success" exitCode=0`;
 
       const newLogContent = `[2026-12-31 23:59:59] [INFO] [PipelineRunner] Step 1
-ghost-execution
+[GHOST-EXECUTION]
 [PipelineRunner] COMPLETE stage="build" status="success" exitCode=0`;
 
       const oldLogPath = path.join(logsDir, 'pipeline_old.log');
@@ -189,7 +189,7 @@ ghost-execution
       // Create multiple log files with ghost executions
       for (let i = 0; i < 105; i++) {
         const logContent = `[2026-04-27 19:19:00] [INFO] [PipelineRunner] Step 1
-ghost-execution
+[GHOST-EXECUTION]
 [PipelineRunner] COMPLETE stage="build" status="success" exitCode=0`;
 
         fs.writeFileSync(
@@ -230,7 +230,7 @@ Line 12
 Line 13
 Line 14
 Line 15
-ghost-execution
+[GHOST-EXECUTION]
 Line 16
 Line 17
 Line 18
@@ -271,7 +271,7 @@ Line 40`;
       // Check that excerpt is approximately ±5 lines around the marker
       const lines = excerpt.split('\n').filter(l => l.trim());
       expect(lines.length).toBeGreaterThanOrEqual(10); // at least ±5 lines
-      expect(excerpt).toContain('ghost-execution');
+      expect(excerpt).toContain('[GHOST-EXECUTION]');
 
       // Verify the excerpt contains nearby content (not content from far away)
       expect(excerpt).toContain('Line 15');
@@ -286,7 +286,7 @@ Line 40`;
       );
 
       const logContent = `[2026-04-27 19:19:00] [INFO] [PipelineRunner] Step 1
-custom-ghost-marker
+[CUSTOM-GHOST-MARKER]
 [PipelineRunner] COMPLETE stage="build" status="success" exitCode=0`;
 
       fs.writeFileSync(path.join(logsDir, 'pipeline_run-123.log'), logContent, 'utf8');
@@ -295,7 +295,7 @@ custom-ghost-marker
       const data = JSON.parse(result.content[0].text);
 
       expect(data.count).toBe(1);
-      expect(data.executions[0].log_excerpt).toContain('custom-ghost-marker');
+      expect(data.executions[0].log_excerpt).toContain('[CUSTOM-GHOST-MARKER]');
     });
 
     it('should handle error gracefully when project not found', async () => {
@@ -320,7 +320,7 @@ custom-ghost-marker
 Context:
 ticket_id: IMPL-1
 [PipelineRunner] Step 1 output
-ghost-execution
+[GHOST-EXECUTION]
 [PipelineRunner] COMPLETE stage="build" status="success" exitCode=0`;
 
       fs.writeFileSync(path.join(logsDir, 'pipeline_run-123.log'), logContent, 'utf8');

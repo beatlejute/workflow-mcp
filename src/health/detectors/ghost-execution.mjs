@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { buildGhostMarkerMatcher } from '../ghost-marker.mjs';
 
 /**
  * Detects ghost-execution marker in the most recent pipeline log.
@@ -52,8 +53,11 @@ export function detectGhostExecution(projectPath, marker) {
     return null;
   }
 
-  // Check if marker exists in the log (anywhere)
-  if (!logContent.includes(marker)) {
+  // FIX-001: маркер ищется как структурный обособленный токен, а не подстрокой.
+  // Прежний includes() давал critical-алерт на любое упоминание слов
+  // «ghost-execution» в прозе — теге тикета, commit message, имени файла.
+  const matcher = buildGhostMarkerMatcher(marker);
+  if (!logContent.split('\n').some(line => matcher.test(line))) {
     return null;
   }
 
@@ -68,7 +72,7 @@ export function detectGhostExecution(projectPath, marker) {
     project: projectName,
     run_id: runId,
     ticket_id: '',
-    message: `Ghost execution marker "${marker}" found in pipeline log`,
+    message: `Ghost execution marker "${matcher.marker}" found in pipeline log`,
     detected_at: new Date().toISOString(),
     suggested_actions: ['get_pipeline_log']
   };
