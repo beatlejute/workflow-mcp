@@ -1,14 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { list_skills } from '../../src/tools/skills.mjs';
+
+// Каталог общих скилов берётся из глобальной установки (`WORKFLOW_HOME`,
+// по умолчанию `~/.workflow`), поэтому фикстуры подменяют её на временную.
+function useGlobalHome(basePath) {
+  const home = path.join(basePath, 'global-home');
+  fs.mkdirSync(home, { recursive: true });
+  process.env.WORKFLOW_HOME = home;
+  return home;
+}
 
 // Helper to create test structure with global and project skills
 function createProjectWithSkills(basePath, projectName, skillNames = []) {
   const projectPath = path.join(basePath, projectName);
 
-  // Create global skills directory (at basePath/src/skills)
-  const globalSkillsDir = path.join(basePath, 'src', 'skills');
+  const globalSkillsDir = path.join(useGlobalHome(basePath), 'skills');
   fs.mkdirSync(globalSkillsDir, { recursive: true });
 
   // Create .workflow directory for project structure
@@ -36,7 +45,8 @@ Test skill content`;
 function createProjectWithoutSkillsDir(basePath, projectName) {
   const projectPath = path.join(basePath, projectName);
 
-  // Create only .workflow directory, but no src/skills at any level
+  // Глобальная установка есть, но каталога скилов в ней нет.
+  useGlobalHome(basePath);
   fs.mkdirSync(path.join(projectPath, '.workflow'), { recursive: true });
 
   return projectPath;
@@ -45,13 +55,21 @@ function createProjectWithoutSkillsDir(basePath, projectName) {
 describe('list_skills', () => {
   let testDir;
   const originalCwd = process.cwd();
+  const originalHome = process.env.WORKFLOW_HOME;
 
   beforeEach(() => {
-    testDir = fs.mkdtempSync(path.join('/tmp', 'workflow-mcp-list-skills-'));
+    // Литерал '/tmp' на Windows даёт путь без буквы диска, а list_skills
+    // прогоняет project через path.resolve — сравнение путей разошлось бы.
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-mcp-list-skills-'));
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
+    if (originalHome === undefined) {
+      delete process.env.WORKFLOW_HOME;
+    } else {
+      process.env.WORKFLOW_HOME = originalHome;
+    }
     try {
       fs.rmSync(testDir, { recursive: true, force: true });
     } catch (err) {
@@ -112,6 +130,37 @@ describe('list_skills', () => {
       expect(skill).toHaveProperty('source');
       expect(['shared', 'ejected']).toContain(skill.source);
     }
+  });
+
+  it('копия скила в проекте помечается как ejected', async () => {
+    const projectPath = createProjectWithSkills(testDir, 'testProject', ['skill1', 'skill2']);
+
+    // Скил, скопированный в проект (не junction), вытесняет общий.
+    const ejectedDir = path.join(projectPath, '.workflow', 'src', 'skills', 'skill1');
+    fs.mkdirSync(ejectedDir, { recursive: true });
+    fs.writeFileSync(path.join(ejectedDir, 'SKILL.md'), '# ejected skill1');
+
+    const skills = await list_skills({ project: projectPath });
+
+    const skill1 = skills.find(s => s.name === 'skill1');
+    const skill2 = skills.find(s => s.name === 'skill2');
+    expect(skill1.source).toBe('ejected');
+    expect(skill1.path).toBe(ejectedDir);
+    expect(skill2.source).toBe('shared');
+  });
+
+  it('каталог без SKILL.md скилом не считается', async () => {
+    const projectPath = createProjectWithSkills(testDir, 'testProject', ['skill1']);
+
+    // В `.workflow/src/skills` проектов лежат и не-скилы — например, папка
+    // `shared` с общими документами.
+    const sharedDocs = path.join(projectPath, '.workflow', 'src', 'skills', 'shared');
+    fs.mkdirSync(sharedDocs, { recursive: true });
+    fs.writeFileSync(path.join(sharedDocs, 'README.md'), '# просто документы');
+
+    const skills = await list_skills({ project: projectPath });
+
+    expect(skills.map(s => s.name)).toEqual(['skill1']);
   });
 
   it('returns correct paths for skills', async () => {

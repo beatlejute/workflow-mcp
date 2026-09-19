@@ -1,27 +1,14 @@
 import { discoverProjects } from '../discovery.mjs';
-import { parseFrontmatter, serializeFrontmatter } from '../../../workflowAi/src/lib/utils.mjs';
+import { parseFrontmatter, serializeFrontmatter } from 'workflow-ai/lib/utils.mjs';
 import { move_ticket } from './tickets.mjs';
 import { isValidHumanTicket, loadConfig } from '../validators/human-ticket.mjs';
 import path from 'path';
 import fs from 'fs';
+import { z } from 'zod';
+import { mcpCwd, resolveProjectRoot } from '../lib/project-root.mjs';
 
 const TICKETS_DIR = '.workflow/tickets';
 const STATUS_DIRS = ['backlog', 'ready', 'in-progress', 'review', 'blocked', 'done', 'archive'];
-
-/**
- * Resolve project root from project path or name
- * @param {string} project - Project path or name
- * @param {string} cwd - Current working directory
- * @returns {string} Absolute path to project root
- */
-function resolveProjectRoot(project, cwd) {
-  const resolved = path.resolve(cwd, project);
-  const workflowDir = path.join(resolved, '.workflow');
-  if (!fs.existsSync(workflowDir)) {
-    throw new Error(`Project not found or not a workflow project: ${project}`);
-  }
-  return resolved;
-}
 
 /**
  * Check if a ticket is a HUMAN ticket based on criteria:
@@ -46,12 +33,12 @@ function isHumanTicket(frontmatter, filename) {
  * @returns {Promise<Array<{project: string, id: string, title: string, priority: number, status: string, age_sec: number, updated_at: string}>>}
  */
 export async function list_human_queue({ project, status }) {
-  const cwd = process.cwd();
+  const cwd = mcpCwd();
   const projectsToScan = [];
 
   if (project) {
     // Single project mode
-    const projectRoot = resolveProjectRoot(project, cwd);
+    const projectRoot = resolveProjectRoot(project);
     projectsToScan.push({ name: path.basename(projectRoot), path: projectRoot });
   } else {
     // All projects mode - discover projects
@@ -140,8 +127,8 @@ export async function list_human_queue({ project, status }) {
  * @returns {Promise<{ticket: Object, parent_plan: Object, deps: Array<{id: string, status: string, result_excerpt: string}>, related_reports: Array<string>, pipeline_steps: Array<Object>}>}
  */
 export async function get_human_context({ project, ticket_id }) {
-  const cwd = process.cwd();
-  const projectRoot = resolveProjectRoot(project, cwd);
+  const cwd = mcpCwd();
+  const projectRoot = resolveProjectRoot(project);
   const ticketsDir = path.join(projectRoot, TICKETS_DIR);
   
   // Find the ticket file
@@ -316,8 +303,8 @@ export async function get_human_context({ project, ticket_id }) {
  * @returns {Promise<{id: string, new_status: string, path: string}>}
  */
 export async function resolve_human_ticket({ project, ticket_id, decision, result_body, next_status = 'done', strict }) {
-  const cwd = process.cwd();
-  const projectRoot = resolveProjectRoot(project, cwd);
+  const cwd = mcpCwd();
+  const projectRoot = resolveProjectRoot(project);
   const ticketsDir = path.join(projectRoot, TICKETS_DIR);
   
   // Find the ticket file
@@ -476,3 +463,52 @@ export async function resolve_human_ticket({ project, ticket_id, decision, resul
     throw e;
   }
 }
+
+/**
+ * Регистрация human-очереди как MCP-tools.
+ *
+ * `resolve_human_ticket` обещан в README и CHANGELOG 1.2.0 как tool с самого
+ * начала, но зарегистрирован не был; два соседних тоже нужны клиенту, который
+ * ведёт human-тикеты.
+ */
+export const list_human_queue_tool = {
+  name: 'list_human_queue',
+  description: 'List HUMAN tickets across all discovered projects or a single one, sorted by priority and age',
+  inputSchema: z.object({
+    project: z.string().optional().describe('Project path or name; omit to scan all discovered projects'),
+    // Значение уходит в path.join к каталогу статусов — держим его закрытым
+    // перечислением, как в list_tickets.
+    status: z.enum(STATUS_DIRS).optional().describe('Filter by status (directory under .workflow/tickets)')
+  }),
+  async execute(args) {
+    return list_human_queue(args);
+  }
+};
+
+export const get_human_context_tool = {
+  name: 'get_human_context',
+  description: 'Get extended context for a HUMAN ticket: the ticket itself, its parent plan, dependencies, related reports and pipeline steps',
+  inputSchema: z.object({
+    project: z.string().describe('Project path or name'),
+    ticket_id: z.string().describe('Ticket ID (e.g. HUMAN-12)')
+  }),
+  async execute(args) {
+    return get_human_context(args);
+  }
+};
+
+export const resolve_human_ticket_tool = {
+  name: 'resolve_human_ticket',
+  description: 'Resolve a HUMAN ticket: append the result section and move the ticket to the next status',
+  inputSchema: z.object({
+    project: z.string().describe('Project path or name'),
+    ticket_id: z.string().describe('Ticket ID (e.g. HUMAN-12)'),
+    decision: z.string().describe('Decision recorded in the result section'),
+    result_body: z.string().describe('Result body appended to the ticket'),
+    next_status: z.enum(STATUS_DIRS).optional().describe('Target status (default: done)'),
+    strict: z.boolean().optional().describe('Enable strict validation of the result, overriding human_ticket config')
+  }),
+  async execute(args) {
+    return resolve_human_ticket(args);
+  }
+};

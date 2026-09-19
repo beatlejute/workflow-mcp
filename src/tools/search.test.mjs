@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { z } from 'zod';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,11 +70,15 @@ function setupMultiProjectEnvironment(tmpDir, projects = {}) {
 describe('cross_project_search', () => {
   let tempDir;
   let importedModule;
+  // inputSchema — ZodObject; клиент видит его уже сериализованным в JSON
+  // Schema, поэтому проверки схемы идут по результату конвертации.
+  let inputJsonSchema;
 
   beforeEach(async () => {
     tempDir = createTempDir();
     // Import fresh for each test
     importedModule = await import('./search.mjs');
+    inputJsonSchema = z.toJSONSchema(importedModule.cross_project_search.inputSchema);
   });
 
   afterEach(() => {
@@ -176,7 +181,7 @@ describe('cross_project_search', () => {
       // 3. Set truncated flag if limit exceeded
 
       // When max_results=10, tool should not return more than 10 items
-      expect(importedModule.cross_project_search.inputSchema.properties.max_results).toBeDefined();
+      expect(inputJsonSchema.properties.max_results).toBeDefined();
 
       // [x] Тест: max_results parameter is documented in schema
       // Evidence: Schema defines max_results with proper constraints
@@ -184,7 +189,7 @@ describe('cross_project_search', () => {
 
     it('should enforce maximum results limit', async () => {
       // Verify the schema defines max_results correctly
-      const schema = importedModule.cross_project_search.inputSchema;
+      const schema = inputJsonSchema;
       expect(schema.properties.max_results.minimum).toBe(1);
       expect(schema.properties.max_results.maximum).toBe(1000);
 
@@ -195,7 +200,7 @@ describe('cross_project_search', () => {
   // ============= TEST 5: type=js → только .js файлы =============
   describe('TC-005: file type filtering', () => {
     it('should document type filtering in schema', async () => {
-      const schema = importedModule.cross_project_search.inputSchema;
+      const schema = inputJsonSchema;
 
       expect(schema.properties.type).toBeDefined();
       expect(schema.properties.type.enum).toContain('javascript');
@@ -211,7 +216,7 @@ describe('cross_project_search', () => {
     });
 
     it('should include common file types in schema', async () => {
-      const schema = importedModule.cross_project_search.inputSchema;
+      const schema = inputJsonSchema;
       const types = schema.properties.type.enum;
 
       // Verify key file types are supported
@@ -297,7 +302,7 @@ describe('cross_project_search', () => {
     });
 
     it('should have correct schema structure', () => {
-      const schema = importedModule.cross_project_search.inputSchema;
+      const schema = inputJsonSchema;
 
       expect(schema.type).toBe('object');
       expect(schema.properties.query).toBeDefined();

@@ -8,21 +8,7 @@ import { readApproval, writeDecision, resolvePendingStepId } from '../approvals/
 import path from 'path';
 import fs from 'fs';
 import { z } from 'zod';
-
-/**
- * Resolve project root from project path or name
- * @param {string} project - Project path or name
- * @param {string} cwd - Current working directory
- * @returns {string} Absolute path to project root
- */
-function resolveProjectRoot(project, cwd) {
-  const resolved = path.resolve(cwd, project);
-  const workflowDir = path.join(resolved, '.workflow');
-  if (!fs.existsSync(workflowDir)) {
-    throw new Error(`Project not found or not a workflow project: ${project}`);
-  }
-  return resolved;
-}
+import { mcpCwd, resolveProjectRoot } from '../lib/project-root.mjs';
 
 /**
  * Check runner version compatibility
@@ -97,7 +83,7 @@ function checkRunnerVersion(projectPath) {
  */
 async function approve_step({ project, step_id, decision, comment, decided_by }) {
   try {
-    const cwd = process.env.MCP_CWD || process.cwd();
+    const cwd = mcpCwd();
 
     // === Input Validation ===
 
@@ -139,7 +125,7 @@ async function approve_step({ project, step_id, decision, comment, decided_by })
 
     let projectPath;
     try {
-      projectPath = resolveProjectRoot(project, cwd);
+      projectPath = resolveProjectRoot(project);
     } catch (err) {
       return { ok: false, code: 'PROJECT_NOT_FOUND', message: err.message };
     }

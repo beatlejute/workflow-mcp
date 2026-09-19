@@ -1,26 +1,15 @@
-import { listPlans, getPlan } from '../../../workflowAi/src/lib/operations/plans.mjs';
+import { listPlans, getPlan } from 'workflow-ai/lib/operations/plans.mjs';
 import { list_tickets } from './tickets.mjs';
 import path from 'path';
 import fs from 'fs';
+import { z } from 'zod';
+import { mcpCwd, resolveProjectRoot } from '../lib/project-root.mjs';
 
 /**
  * Получить абсолютный путь к корню проекта
  * @param {string} project - Путь к проекту (относительно cwd или абсолютный)
  * @returns {string} Абсолютный путь к корню проекта
  */
-function resolveProjectRoot(project) {
-  const cwd = process.cwd();
-  const resolved = path.resolve(cwd, project);
-  // Проверить, что это действительно проект workflow-ai (имеет .workflow)
-  const workflowDir = path.join(resolved, '.workflow');
-  if (!fs.existsSync(workflowDir)) {
-    const err = new Error(`Project not found or not a workflow project: ${project}`);
-    err.code = 'INVALID_PROJECT';
-    throw err;
-  }
-  return resolved;
-}
-
 /**
  * list_plans — обёртка над operations/plans::listPlans
  * @param {Object} params - Параметры
@@ -82,3 +71,31 @@ export async function get_plan({ project, plan_id }) {
     human_tickets
   };
 }
+
+/**
+ * Регистрация планов как MCP-tools. Функции выше остаются доступны напрямую —
+ * их зовёт в том числе `get_plan` внутри себя.
+ */
+export const list_plans_tool = {
+  name: 'list_plans',
+  description: 'List plans of a project with an optional status filter',
+  inputSchema: z.object({
+    project: z.string().describe('Project path or name'),
+    status: z.string().optional().describe('Filter by status: draft, approved, active, completed, archived')
+  }),
+  async execute(args) {
+    return list_plans(args);
+  }
+};
+
+export const get_plan_tool = {
+  name: 'get_plan',
+  description: 'Get a plan with its body and the tickets attached to it, split into regular and human tickets',
+  inputSchema: z.object({
+    project: z.string().describe('Project path or name'),
+    plan_id: z.string().describe('Plan ID (e.g. PLAN-001)')
+  }),
+  async execute(args) {
+    return get_plan(args);
+  }
+};

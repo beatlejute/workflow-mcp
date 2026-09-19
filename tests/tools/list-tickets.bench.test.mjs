@@ -91,9 +91,14 @@ describe('list_tickets Benchmark — frontmatter-cache efficiency', () => {
 
     // WARM CALL: Repeat with warm cache
     console.log('Starting warm call (filled cache)...');
+    const backlogDir = path.join(projectPath, '.workflow', 'tickets', 'backlog');
+    const readSpy = vi.spyOn(fs, 'readFileSync');
     const startWarm = process.hrtime.bigint();
     const ticketsWarm = await list_tickets({ project: projectPath, status: 'backlog' });
     const endWarm = process.hrtime.bigint();
+    const ticketReads = readSpy.mock.calls
+      .filter(([p]) => typeof p === 'string' && p.startsWith(backlogDir)).length;
+    readSpy.mockRestore();
     const timeWarm = Number(endWarm - startWarm) / 1_000_000; // Convert to ms
 
     console.log(`Warm call: ${timeWarm.toFixed(2)}ms, loaded ${ticketsWarm.length} tickets`);
@@ -102,10 +107,15 @@ describe('list_tickets Benchmark — frontmatter-cache efficiency', () => {
     const cacheStatsAfterWarm = frontmatterCache.getStats();
     console.log(`Cache after warm call: ${cacheStatsAfterWarm.size} entries`);
 
-    // Assert: warm call must be at least 10x faster
+    // Главное свойство кеша — тёплый вызов не перечитывает тикеты с диска.
+    // Это детерминировано, в отличие от отношения времён: на загруженной
+    // машине ускорение проседало до ~7x при полностью работающем кеше и
+    // роняло прогон.
+    expect(ticketReads).toBe(0);
+
     const speedupRatio = timeCold / timeWarm;
     console.log(`Speedup ratio: ${speedupRatio.toFixed(1)}x`);
-    expect(speedupRatio).toBeGreaterThan(10);
+    expect(speedupRatio).toBeGreaterThan(2);
   });
 
   it('should invalidate cache when file mtime changes', async () => {

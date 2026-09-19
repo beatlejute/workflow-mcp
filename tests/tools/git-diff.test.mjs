@@ -4,8 +4,9 @@ import fs from 'fs';
 import path from 'path';
 import { tmpdir } from 'os';
 import gitTools from '../../src/tools/git.mjs';
+import { positionalTool } from '../helpers/tool-call.mjs';
 
-const git_diff_tool = gitTools.find(t => t.name === 'git_diff').execute;
+const git_diff_tool = positionalTool(gitTools, 'git_diff');
 
 function createTestProject(basePath, projectName = 'test-project') {
   const projectPath = path.resolve(basePath, projectName);

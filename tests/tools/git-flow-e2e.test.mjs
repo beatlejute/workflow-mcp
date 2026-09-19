@@ -4,12 +4,13 @@ import fs from 'fs';
 import path from 'path';
 import { tmpdir } from 'os';
 import gitTools from '../../src/tools/git.mjs';
+import { positionalTool } from '../helpers/tool-call.mjs';
 
-// Extract functions from the exported tools array
-const git_status_fn = gitTools.find(t => t.name === 'git_status').execute;
-const git_create_branch_fn = gitTools.find(t => t.name === 'git_create_branch').execute;
-const git_commit_fn = gitTools.find(t => t.name === 'git_commit').execute;
-const git_open_pr_fn = gitTools.find(t => t.name === 'git_open_pr').execute;
+// Вызов идёт через зарегистрированный execute, обёртка — позиционная (см. helper).
+const git_status_fn = positionalTool(gitTools, 'git_status');
+const git_create_branch_fn = positionalTool(gitTools, 'git_create_branch');
+const git_commit_fn = positionalTool(gitTools, 'git_commit');
+const git_open_pr_fn = positionalTool(gitTools, 'git_open_pr');
 
 // Helper to create a test project with .workflow structure and mock gh
 function createTestProject(basePath, projectName = 'test-project') {
@@ -207,7 +208,9 @@ describe('Git Flow E2E', () => {
         expect(prResult.ok).toBe(false);
         expect(prResult.code).toBe('BRANCH_NOT_PUSHED');
       }
-    });
+    // Сценарий гоняет больше десятка вызовов git подряд; дефолтных 5 секунд
+    // ему не хватает даже на незагруженной машине.
+    }, 30000);
   });
 
   describe('Parallel scenario: dirty tree → open_pr → DIRTY_TREE', () => {

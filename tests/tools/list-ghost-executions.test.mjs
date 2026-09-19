@@ -36,9 +36,10 @@ function writeLog(projectPath, lines, name = 'pipeline_2026-09-18_10-00-00.log')
 }
 
 async function scan() {
-  const result = await list_ghost_executions.execute({ project: PROJECT });
-  const text = result.content[0].text;
-  return { data: JSON.parse(text), bytes: Buffer.byteLength(text) };
+  // execute() отдаёт данные как есть; в content[] их заворачивает сервер —
+  // объём меряем по тому, что он отправит клиенту.
+  const data = await list_ghost_executions.execute({ project: PROJECT });
+  return { data, bytes: Buffer.byteLength(JSON.stringify(data, null, 2)) };
 }
 
 describe('normalizeGhostMarker', () => {

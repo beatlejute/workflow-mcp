@@ -1,11 +1,11 @@
-import { discoverProjects } from '../discovery.mjs';
-import { findProjectRoot } from '../../../workflowAi/src/lib/find-root.mjs';
-import { parseFrontmatter } from '../../../workflowAi/src/lib/utils.mjs';
+import { parseFrontmatter } from 'workflow-ai/lib/utils.mjs';
 import { parsePipelineLog } from '../parsers/pipeline-log.mjs';
-import { listPlans } from '../../../workflowAi/src/lib/operations/plans.mjs';
+import { listPlans } from 'workflow-ai/lib/operations/plans.mjs';
 import { frontmatterCache } from '../caches/frontmatter-cache.mjs';
 import fs from 'fs';
 import path from 'path';
+import { z } from 'zod';
+import { tryResolveProjectRoot } from '../lib/project-root.mjs';
 
 /**
  * List tickets from a project directory
@@ -55,164 +55,6 @@ async function listTickets(projectPath, options = {}) {
   }
 
   return tickets;
-}
-
-/**
- * Get list of all projects with their statistics
- * @returns {Promise<Array<{name: string, path: string, counts: Object, human_count: number, pipeline_running: boolean}>>}
- */
-export async function list_projects() {
-  try {
-    // Get current working directory
-    const cwd = process.cwd();
-    
-    // Discover projects
-    const projects = discoverProjects(cwd);
-    
-    // For each project, get detailed statistics
-    const projectsWithStats = [];
-    
-    for (const project of projects) {
-      try {
-        // Get ticket counts by status
-        const tickets = await listTickets(project.path);
-
-        // Initialize counts - status names from directory structure
-        const counts = {
-          backlog: 0,
-          ready: 0,
-          in_progress: 0,
-          review: 0,
-          blocked: 0,
-          done: 0
-        };
-
-        // Count tickets by status
-        for (const ticket of tickets) {
-          const status = ticket.status;
-          // Convert directory-based status to count key
-          const countKey = status === 'in-progress' ? 'in_progress' : status;
-          if (counts[countKey] !== undefined) {
-            counts[countKey]++;
-          }
-        }
-
-        // Get human ticket count (type: 'human')
-        const humanTickets = await listTickets(project.path, { type: 'human' });
-        const human_count = humanTickets.length;
-        
-        // Check if pipeline is running
-        const pipeline_running = await checkPipelineRunning(project.path);
-        
-        projectsWithStats.push({
-          name: project.name,
-          path: project.path,
-          counts,
-          human_count,
-          pipeline_running
-        });
-      } catch (error) {
-        // If we can't process a project, still include it with zero values
-        console.warn(`Warning: Could not process project ${project.path}:`, error.message);
-        projectsWithStats.push({
-          name: project.name,
-          path: project.path,
-          counts: {
-            backlog: 0,
-            ready: 0,
-            in_progress: 0,
-            review: 0,
-            blocked: 0,
-            done: 0
-          },
-          human_count: 0,
-          pipeline_running: false
-        });
-      }
-    }
-    
-    return projectsWithStats;
-  } catch (error) {
-    console.error('Error in list_projects:', error);
-    return [];
-  }
-}
-
-/**
- * Check if pipeline is running for a project
- * @param {string} projectPath - Path to project
- * @returns {Promise<boolean>} - True if pipeline is running
- */
-async function checkPipelineRunning(projectPath) {
-  try {
-    const pidFilePath = path.join(projectPath, '.workflow', 'logs', '.runner-pids');
-    if (!fs.existsSync(pidFilePath)) {
-      return false;
-    }
-    
-    const content = fs.readFileSync(pidFilePath, 'utf8');
-    const pids = content.trim().split('\n').filter(pid => pid.trim() !== '');
-    
-    // Check if any PID is still running
-    for (const pidStr of pids) {
-      const pid = parseInt(pidStr.trim(), 10);
-      if (!isNaN(pid)) {
-        try {
-          // On Windows, we can use tasklist to check if process exists
-          // On Unix-like systems, we can use kill -0
-          if (process.platform === 'win32') {
-            const { execSync } = require('child_process');
-            execSync(`tasklist /FI "PID eq ${pid}"`, { stdio: 'ignore' });
-            return true; // Process exists
-          } else {
-            process.kill(pid, 0); // Doesn't actually kill, just checks if process exists
-            return true;
-          }
-        } catch (err) {
-          // Process doesn't exist
-          continue;
-        }
-      }
-    }
-    
-    return false;
-  } catch (error) {
-    // If we can't check, assume not running
-    return false;
-  }
-}
-
-/**
- * Refresh the list of projects and return changes
- * @returns {Promise<{added: Array, removed: Array, total: number}>}
- */
-export async function refresh_projects() {
-  try {
-    // Get current working directory
-    const cwd = process.cwd();
-
-    // Discover projects again
-    const currentProjects = discoverProjects(cwd);
-    const currentProjectNames = new Set(currentProjects.map(p => p.name));
-
-    // We don't have a cached list from previous call, so we'll return all as added
-    // In a real implementation, we would cache the previous result
-    // For now, we'll just return the current state as all "added" and empty removed
-    // This is a limitation but matches the expected behavior for a refresh
-
-    return {
-      added: currentProjects,
-      removed: [],
-      total: currentProjects.length
-    };
-  } catch (error) {
-    console.error('Error in refresh_projects:', error);
-    return {
-      added: [],
-      removed: [],
-      total: 0
-    };
-  }
 }
 
 /**
@@ -329,3 +171,24 @@ export async function get_project_status(project) {
     };
   }
 }
+/**
+ * Регистрация статуса проекта как MCP-tool.
+ *
+ * Соседние `list_projects` и `refresh_projects` удалены: первый дублировал
+ * ресурс `project://*`, второй по своему же комментарию не умел сравнивать с
+ * прошлым состоянием и всегда возвращал всё как «added».
+ */
+export const get_project_status_tool = {
+  name: 'get_project_status',
+  description: 'Get project status: ticket counts by status, the active plan, recent pipeline steps and pending human tasks',
+  inputSchema: z.object({
+    project: z.string().describe('Project path')
+  }),
+  async execute({ project }) {
+    const resolved = tryResolveProjectRoot(project);
+    if (!resolved.ok) {
+      return { error: 'INVALID_PROJECT', message: resolved.message };
+    }
+    return get_project_status(resolved.root);
+  }
+};

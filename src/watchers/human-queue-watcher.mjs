@@ -6,7 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import { FsOrPollWatcher } from './fs-or-poll.mjs';
-import { parseFrontmatter } from '../../../workflowAi/src/lib/utils.mjs';
+import { parseFrontmatter } from 'workflow-ai/lib/utils.mjs';
 import * as resources from '../resources/index.mjs';
 
 export class HumanQueueWatcher {

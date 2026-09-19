@@ -2,6 +2,7 @@
 
 import { createGitClient, GitErrorCodes, mapGitError } from '../git/client.mjs';
 import { discoverProjects } from '../discovery.mjs';
+import { mcpCwd } from '../lib/project-root.mjs';
 import { spawn } from 'child_process';
 import { z } from 'zod';
 
@@ -71,7 +72,7 @@ function extractPrNumber(url) {
  */
 async function git_status(project) {
   // Validate project through discovery
-  const cwd = process.cwd();
+  const cwd = mcpCwd();
   const discoveredProjects = discoverProjects(cwd);
   const projectInfo = discoveredProjects.find(p => p.name === project);
 
@@ -167,7 +168,7 @@ async function git_status(project) {
  */
 async function git_create_branch(project, { name, from = 'HEAD', switch: switchTo = true }) {
   // Validate project through discovery
-  const cwd = process.cwd();
+  const cwd = mcpCwd();
   const discoveredProjects = discoverProjects(cwd);
   const projectInfo = discoveredProjects.find(p => p.name === project);
 
@@ -290,7 +291,7 @@ async function git_diff(project, { staged = false, path: filePath, max_lines = 5
   }
 
   // Validate project through discovery
-  const cwd = process.cwd();
+  const cwd = mcpCwd();
   const discoveredProjects = discoverProjects(cwd);
   const projectInfo = discoveredProjects.find(p => p.name === project);
 
@@ -371,7 +372,7 @@ async function git_diff(project, { staged = false, path: filePath, max_lines = 5
  */
 async function git_commit(project, { message, paths, co_authors }) {
   // Validate project through discovery
-  const cwd = process.cwd();
+  const cwd = mcpCwd();
   const discoveredProjects = discoverProjects(cwd);
   const projectInfo = discoveredProjects.find(p => p.name === project);
 
@@ -563,7 +564,7 @@ async function git_commit(project, { message, paths, co_authors }) {
  */
 async function git_open_pr(project, { title, body, base = 'main', head, draft = false }) {
   // Validate project through discovery
-  const cwd = process.cwd();
+  const cwd = mcpCwd();
   const discoveredProjects = discoverProjects(cwd);
   const projectInfo = discoveredProjects.find(p => p.name === project);
 

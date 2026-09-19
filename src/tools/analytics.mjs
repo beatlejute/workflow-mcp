@@ -4,6 +4,7 @@ import path from 'path';
 import { computeStats, computeCycleTime, computeVelocity } from '../analytics/aggregate.mjs';
 import { discoverProjects } from '../discovery.mjs';
 import { z } from 'zod';
+import { mcpCwd, tryResolveProjectRoot } from '../lib/project-root.mjs';
 
 /**
  * Get velocity metrics for a project grouped by time period
@@ -139,13 +140,13 @@ export const get_ticket_stats = {
     window_days: z.number().min(1).max(365).optional().describe('Window in days for filtering by created_at (default: 14)')
   }),
   async execute(args) {
-    // Check if project exists
-    if (!fs.existsSync(args.project)) {
-      return { error: 'PROJECT_NOT_FOUND', message: `Project path does not exist: ${args.project}` };
+    const resolved = tryResolveProjectRoot(args.project);
+    if (!resolved.ok) {
+      return { error: 'PROJECT_NOT_FOUND', message: resolved.message };
     }
 
     // Compute stats using aggregate function
-    const result = computeStats(args.project, args.window_days || 14);
+    const result = computeStats(resolved.root, args.window_days || 14);
 
     // Normalize by_status: only include expected status buckets
     const expectedStatuses = ["ready", "in_progress", "blocked", "done", "review", "backlog"];
@@ -275,7 +276,7 @@ export const aggregate_metrics = {
     window_days: z.number().min(1).max(365).optional().describe('Time window in days for filtering metrics (default: 14)')
   }),
   async execute(args) {
-    const cwd = process.env.MCP_CWD || process.cwd();
+    const cwd = mcpCwd();
     const windowDays = args.window_days || 14;
 
     // Resolve projects list
@@ -422,18 +423,47 @@ export const aggregate_metrics = {
   }
 };
 
-// Default export for auto-loading via loadTools()
-const tools = [get_ticket_stats, aggregate_metrics];
+// Tools подхватываются auto-discovery в server.mjs напрямую из именованных
+// экспортов — своя фабрика loadTools() тут была не нужна и не вызывалась.
 
-export const loadTools = () => {
-  return tools.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    inputSchema: tool.inputSchema,
-    execute: tool.execute
-  }));
+/**
+ * Регистрация get_velocity и get_cycle_time как MCP-tools.
+ *
+ * Сами функции существуют с первого коммита и объявлены в README/CHANGELOG,
+ * но зарегистрированы не были: `callTool` по этим именам возвращал
+ * `Tool not found`. Функции принимают project позиционно — обёртка переводит
+ * вызов в форму, которую отдаёт клиент.
+ */
+export const get_velocity_tool = {
+  name: 'get_velocity',
+  description: 'Velocity metrics for a project: completed tickets grouped by day or week over a time window',
+  inputSchema: z.object({
+    project: z.string().describe('Project path'),
+    window_days: z.number().min(1).max(365).optional().describe('Window in days (default: 14)'),
+    group_by: z.enum(['day', 'week']).optional().describe("Grouping: 'day' or 'week' (default: day)")
+  }),
+  async execute({ project, window_days, group_by }) {
+    const resolved = tryResolveProjectRoot(project);
+    if (!resolved.ok) {
+      return { error: 'PROJECT_NOT_FOUND', message: resolved.message };
+    }
+    return get_velocity(resolved.root, { window_days, group_by });
+  }
 };
 
-export default {
-  loadTools
+export const get_cycle_time_tool = {
+  name: 'get_cycle_time',
+  description: 'Cycle time statistics for a project: percentiles and mean time from ticket creation to completion',
+  inputSchema: z.object({
+    project: z.string().describe('Project path'),
+    window_days: z.number().min(1).max(365).optional().describe('Window in days (default: 14)'),
+    percentiles: z.array(z.number().min(0).max(100)).optional().describe('Percentiles to compute (default: [50, 90])')
+  }),
+  async execute({ project, window_days, percentiles }) {
+    const resolved = tryResolveProjectRoot(project);
+    if (!resolved.ok) {
+      return { error: 'PROJECT_NOT_FOUND', message: resolved.message };
+    }
+    return get_cycle_time(resolved.root, { window_days, percentiles });
+  }
 };

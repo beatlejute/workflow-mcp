@@ -3,6 +3,7 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { tmpdir } from 'os';
+import { positionalTool } from '../helpers/tool-call.mjs';
 
 function createTestProject(basePath, projectName = 'test-project') {
   const projectPath = path.resolve(basePath, projectName);
@@ -117,7 +118,7 @@ describe('git_open_pr tool', () => {
     resetOverrides();
 
     const gitModule = await import('../../src/tools/git.mjs');
-    git_open_pr_tool = gitModule.default.find(t => t.name === 'git_open_pr').execute;
+    git_open_pr_tool = positionalTool(gitModule.default, 'git_open_pr');
   });
 
   afterEach(() => {

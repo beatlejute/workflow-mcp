@@ -99,8 +99,7 @@ Fourth report body`;
     it('should return all reports sorted by created_at DESC', async () => {
       const result = await list_reports.execute({ project: testProjectDir });
 
-      expect(result.isError).toBeFalsy();
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
 
       expect(data).toHaveLength(4);
       // Check sorting: latest first
@@ -116,8 +115,7 @@ Fourth report body`;
         since: '2026-04-26T00:00:00Z'
       });
 
-      expect(result.isError).toBeFalsy();
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
 
       // Should include only reports with created_at >= 2026-04-26
       expect(data).toHaveLength(3);
@@ -130,8 +128,7 @@ Fourth report body`;
         limit: 2
       });
 
-      expect(result.isError).toBeFalsy();
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
 
       expect(data).toHaveLength(2);
       expect(data[0].id).toBe('REPORT-004');
@@ -146,8 +143,7 @@ Fourth report body`;
       try {
         const result = await list_reports.execute({ project: tempProject });
 
-        expect(result.isError).toBeFalsy();
-        const data = JSON.parse(result.content[0].text);
+        const data = result;
         expect(data).toEqual([]);
       } finally {
         fs.rmSync(tempProject, { recursive: true, force: true });
@@ -158,8 +154,7 @@ Fourth report body`;
       // Reports with missing fields should still be included
       const result = await list_reports.execute({ project: testProjectDir });
 
-      expect(result.isError).toBeFalsy();
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
 
       // REPORT-004 has no 'type' field but should still be included
       const report4 = data.find(r => r.id === 'REPORT-004');
@@ -170,7 +165,7 @@ Fourth report body`;
 
     it('should return object with required fields: id, title, type, created_at, path', async () => {
       const result = await list_reports.execute({ project: testProjectDir });
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
 
       expect(data.length).toBeGreaterThan(0);
       const report = data[0];
@@ -190,8 +185,7 @@ Fourth report body`;
         report_id: 'REPORT-001'
       });
 
-      expect(result.isError).toBeFalsy();
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
 
       expect(data.frontmatter).toBeDefined();
       expect(data.frontmatter.id).toBe('REPORT-001');
@@ -206,8 +200,7 @@ Fourth report body`;
         report_id: 'REPORT-002'
       });
 
-      expect(result.isError).toBeFalsy();
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
 
       expect(typeof data.frontmatter).toBe('object');
       expect(typeof data.body).toBe('string');
@@ -215,35 +208,24 @@ Fourth report body`;
     });
 
     it('should return error for non-existent report', async () => {
-      const result = await get_report.execute({
+      await expect(get_report.execute({
         project: testProjectDir,
         report_id: 'NONEXISTENT'
-      });
-
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error executing tool get_report');
-      expect(result.content[0].text).toContain('Report not found');
+      })).rejects.toThrow('Report not found');
     });
 
     it('should reject path traversal attack: ../../etc/passwd', async () => {
-      const result = await get_report.execute({
+      await expect(get_report.execute({
         project: testProjectDir,
         report_id: '../../etc/passwd'
-      });
-
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error executing tool get_report');
-      expect(result.content[0].text).toContain('Invalid report_id format');
+      })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
     });
 
     it('should reject path traversal attack with multiple dots: ..', async () => {
-      const result = await get_report.execute({
+      await expect(get_report.execute({
         project: testProjectDir,
         report_id: '..\\REPORT-001'
-      });
-
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Error executing tool get_report');
+      })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
     });
 
     it('should only accept alphanumeric and hyphen characters in report_id', async () => {
@@ -258,26 +240,21 @@ Fourth report body`;
       ];
 
       for (const invalidId of invalidIds) {
-        const result = await get_report.execute({
+        await expect(get_report.execute({
           project: testProjectDir,
           report_id: invalidId
-        });
-
-        expect(result.isError).toBe(true);
-        expect(result.content[0].text).toContain('Error executing tool get_report');
+        })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
       }
     });
 
     it('should accept valid report_id formats: alphanumeric and hyphens only', async () => {
-      const validIds = ['REPORT-001', 'REPORT-002', 'REPORT-004', 'TEST-ABC-123', 'ABC123DEF'];
-
-      // Only test the ones that exist
       const result = await get_report.execute({
         project: testProjectDir,
         report_id: 'REPORT-001'
       });
 
-      expect(result.isError).toBeFalsy();
+      expect(result.frontmatter.id).toBe('REPORT-001');
+      expect(typeof result.body).toBe('string');
     });
 
     it('should return error for report with invalid frontmatter', async () => {
@@ -290,13 +267,10 @@ Body content`;
       fs.writeFileSync(invalidPath, invalidFrontmatter, 'utf8');
 
       try {
-        const result = await get_report.execute({
+        await expect(get_report.execute({
           project: testProjectDir,
           report_id: 'INVALID-FM'
-        });
-
-        expect(result.isError).toBe(true);
-        expect(result.content[0].text).toContain('Error executing tool get_report');
+        })).rejects.toThrow();
       } finally {
         fs.unlinkSync(invalidPath);
       }
@@ -310,8 +284,7 @@ Body content`;
         since: '2026-04-26T12:00:00Z'
       });
 
-      expect(result.isError).toBeFalsy();
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
 
       // Should include REPORT-003 which has exactly this timestamp
       expect(data.some(r => r.id === 'REPORT-003')).toBe(true);
@@ -321,8 +294,8 @@ Body content`;
       const result1 = await list_reports.execute({ project: testProjectDir });
       const result2 = await list_reports.execute({ project: testProjectDir });
 
-      const data1 = JSON.parse(result1.content[0].text);
-      const data2 = JSON.parse(result2.content[0].text);
+      const data1 = result1;
+      const data2 = result2;
 
       expect(data1.map(r => r.id)).toEqual(data2.map(r => r.id));
     });
@@ -331,7 +304,7 @@ Body content`;
   describe('Integration: list and get together', () => {
     it('should be able to get reports returned from list', async () => {
       const listResult = await list_reports.execute({ project: testProjectDir });
-      const listData = JSON.parse(listResult.content[0].text);
+      const listData = listResult;
 
       for (const reportMeta of listData) {
         const getResult = await get_report.execute({
@@ -339,8 +312,7 @@ Body content`;
           report_id: reportMeta.id
         });
 
-        expect(getResult.isError).toBeFalsy();
-        const getData = JSON.parse(getResult.content[0].text);
+        const getData = getResult;
 
         expect(getData.frontmatter.id).toBe(reportMeta.id);
         expect(getData.frontmatter.title).toBe(reportMeta.title);

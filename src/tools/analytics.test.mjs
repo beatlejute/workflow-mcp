@@ -392,7 +392,9 @@ describe('get_ticket_stats tool tests', () => {
     const result = await tool.execute({ project: '/nonexistent/project', window_days: 30 });
 
     expect(result.error).toBe('PROJECT_NOT_FOUND');
-    expect(result.message).toMatch(/Project path does not exist/);
+    // Резолв общий со всеми tools, поэтому и текст один: старое «путь не
+    // существует» ещё и врало про каталог без `.workflow/`.
+    expect(result.message).toMatch(/not a workflow project/);
   });
 
   test('blocked_top содержит id, blocked_reason и age_sec', async () => {

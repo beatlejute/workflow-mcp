@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { list_skill_tests, run_skill_tests } from '../coach.mjs';
@@ -8,6 +9,38 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.join(__dirname, '../../..');
 const fixturesDir = path.join(projectRoot, 'tests', 'fixtures', 'skills');
+
+/**
+ * Скилы фикстур лежат в `tests/fixtures/skills/`, а `list_skill_tests` читает
+ * только `<project>/.workflow/src/skills/<skill>/tests/index.yaml`. Раньше
+ * тесты передавали корень самого workflow-mcp и попадали на реальные скилы —
+ * фикстур там нет, и все проверки разбора YAML оказались мёртвыми. Поэтому
+ * собираем отдельный проект во временной папке.
+ */
+let fixtureProject;
+let emptyProject;
+
+beforeAll(() => {
+  fixtureProject = fs.mkdtempSync(path.join(os.tmpdir(), 'coach-fixtures-'));
+  const skillsDir = path.join(fixtureProject, '.workflow', 'src', 'skills');
+  fs.mkdirSync(skillsDir, { recursive: true });
+  fs.cpSync(path.join(fixturesDir, 'valid-skill'), path.join(skillsDir, 'fixture-valid-skill'), { recursive: true });
+  fs.cpSync(path.join(fixturesDir, 'invalid-yaml'), path.join(skillsDir, 'fixture-invalid-yaml'), { recursive: true });
+
+  // Проект без `.workflow/src/skills` вообще.
+  emptyProject = fs.mkdtempSync(path.join(os.tmpdir(), 'coach-empty-'));
+  fs.mkdirSync(path.join(emptyProject, '.workflow'), { recursive: true });
+});
+
+afterAll(() => {
+  for (const dir of [fixtureProject, emptyProject]) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // временная папка могла быть уже убрана
+    }
+  }
+});
 
 describe('list_skill_tests', () => {
   it('returns empty stdout and exit_code 1 when project is not provided', async () => {
@@ -20,7 +53,7 @@ describe('list_skill_tests', () => {
 
   it('returns expected test cases from valid fixture YAML', async () => {
     const result = await list_skill_tests.execute({
-      project: projectRoot,
+      project: fixtureProject,
       skill_name: 'fixture-valid-skill'
     });
 
@@ -31,14 +64,14 @@ describe('list_skill_tests', () => {
     expect(testCases.length).toBeGreaterThan(0);
 
     const testIds = testCases.map(t => t.test_id);
-    expect(testIds).toContain('TC-FIXTURE-001');
-    expect(testIds).toContain('TC-FIXTURE-002');
-    expect(testIds).toContain('TC-FIXTURE-003');
+    expect(testIds).toContain('TC-VALID-001');
+    expect(testIds).toContain('TC-VALID-002');
+    expect(testIds).toContain('TC-VALID-003');
   });
 
   it('includes skill_name in each test case', async () => {
     const result = await list_skill_tests.execute({
-      project: projectRoot,
+      project: fixtureProject,
       skill_name: 'fixture-valid-skill'
     });
 
@@ -50,7 +83,7 @@ describe('list_skill_tests', () => {
 
   it('skips invalid YAML with warning on stderr', async () => {
     const result = await list_skill_tests.execute({
-      project: projectRoot,
+      project: fixtureProject,
       skill_name: 'fixture-invalid-yaml'
     });
 
@@ -63,7 +96,7 @@ describe('list_skill_tests', () => {
 
   it('returns 0 exit code for missing skills directory', async () => {
     const result = await list_skill_tests.execute({
-      project: projectRoot
+      project: emptyProject
     });
 
     expect(result.exit_code).toBe(0);
@@ -94,7 +127,7 @@ describe('list_skill_tests', () => {
 
   it('includes test description and expected_verdict', async () => {
     const result = await list_skill_tests.execute({
-      project: projectRoot,
+      project: fixtureProject,
       skill_name: 'fixture-valid-skill'
     });
 
@@ -107,7 +140,7 @@ describe('list_skill_tests', () => {
 
   it('includes optional source_path when present', async () => {
     const result = await list_skill_tests.execute({
-      project: projectRoot,
+      project: fixtureProject,
       skill_name: 'fixture-valid-skill'
     });
 
@@ -122,7 +155,7 @@ describe('list_skill_tests', () => {
 
   it('sets source_path to null when not present in YAML', async () => {
     const result = await list_skill_tests.execute({
-      project: projectRoot,
+      project: fixtureProject,
       skill_name: 'fixture-valid-skill'
     });
 

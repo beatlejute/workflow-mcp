@@ -6,6 +6,7 @@ import { buildGhostMarkerMatcher } from '../health/ghost-marker.mjs';
 import path from 'path';
 import fs from 'fs';
 import { z } from 'zod';
+import { mcpCwd } from '../lib/project-root.mjs';
 
 // FIX-001: excerpt строился без ограничения длины, и в него попадали строки
 // AI_APICallError по 232 КБ — ответ list_ghost_executions разрастался до 5.5 МБ.
@@ -50,7 +51,7 @@ function buildCappedExcerpt(lines, index) {
  * @returns {Promise<Array<{project: string, id: string, title: string, blocked_reason: string, age_sec: number, ticket_path: string}>>}
  */
 export async function list_blocked_tickets({ project }) {
-  const cwd = process.env.MCP_CWD || process.cwd();
+  const cwd = mcpCwd();
   const projectsToScan = [];
 
   if (project) {
@@ -171,7 +172,7 @@ export default {
  * @returns {Promise<Array<{project: string, run_id: string, step_number: number, ticket_id: string, log_excerpt: string, detected_at: string}>>}
  */
 async function listGhostExecutionsImpl({ project, since }) {
-  const cwd = process.env.MCP_CWD || process.cwd();
+  const cwd = mcpCwd();
   const projectsToScan = [];
 
   if (project) {
@@ -361,30 +362,13 @@ export const list_ghost_executions = {
     project: z.string().optional().describe('Optional: filter by specific project name or path'),
     since: z.string().optional().describe('Optional: ISO 8601 date to filter results (only entries detected at or after this date)')
   }),
+  // Обёртку в content[] делает сам сервер (см. registerTools в server.mjs).
+  // Своя такая же здесь давала клиенту данные на уровень глубже, чем у всех
+  // остальных tools; ошибку сервер тоже ловит и форматирует тем же текстом.
   async execute(args) {
-    try {
-      const data = await listGhostExecutionsImpl({ 
-        project: args.project, 
-        since: args.since 
-      });
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(data, null, 2)
-          }
-        ]
-      };
-    } catch (err) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error executing tool list_ghost_executions: ${err.message}`
-          }
-        ],
-        isError: true
-      };
-    }
+    return listGhostExecutionsImpl({
+      project: args.project,
+      since: args.since
+    });
   }
 };

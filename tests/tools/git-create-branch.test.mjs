@@ -4,10 +4,11 @@ import fs from 'fs';
 import path from 'path';
 import { tmpdir } from 'os';
 import git_status from '../../src/tools/git.mjs';
+import { positionalTool } from '../helpers/tool-call.mjs';
 
 // Extract the git_create_branch and git_status functions from the exported tools array
-const git_create_branch_tool = git_status.find(t => t.name === 'git_create_branch').execute;
-const git_status_tool = git_status.find(t => t.name === 'git_status').execute;
+const git_create_branch_tool = positionalTool(git_status, 'git_create_branch');
+const git_status_tool = positionalTool(git_status, 'git_status');
 
 // Helper to create a test project with .workflow structure
 function createTestProject(basePath, projectName = 'test-project') {

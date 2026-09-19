@@ -49,9 +49,7 @@ describe('list_ghost_executions', () => {
     it('should return empty results when no ghost executions found', async () => {
       const result = await list_ghost_executions.execute({});
       
-      expect(result.content).toHaveLength(1);
-      expect(result.content[0].type).toBe('text');
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
       
       expect(data.project_filter).toBe('all');
       expect(data.count).toBe(0);
@@ -66,9 +64,7 @@ describe('list_ghost_executions', () => {
 
       const result = await list_ghost_executions.execute({});
       
-      expect(result.content).toHaveLength(1);
-      expect(result.content[0].type).toBe('text');
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
       
       expect(data.count).toBe(0);
       expect(data.executions).toEqual([]);
@@ -97,9 +93,7 @@ ticket_id: IMPL-2
 
       const result = await list_ghost_executions.execute({});
       
-      expect(result.content).toHaveLength(1);
-      expect(result.content[0].type).toBe('text');
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
       
       expect(data.count).toBe(1);
       expect(data.executions).toHaveLength(1);
@@ -133,11 +127,11 @@ ticket_id: IMPL-2
 
       // Test with first project (should have no results)
       const result1 = await list_ghost_executions.execute({ project: projectPath });
-      expect(JSON.parse(result1.content[0].text).count).toBe(0);
+      expect(result1.count).toBe(0);
 
       // Test with second project (should have results)
       const result2 = await list_ghost_executions.execute({ project: projectPath2 });
-      expect(JSON.parse(result2.content[0].text).count).toBe(1);
+      expect(result2.count).toBe(1);
 
       // Clean up second project
       fs.rmSync(testDir2, { recursive: true, force: true });
@@ -170,19 +164,19 @@ ticket_id: IMPL-2
 
       // Test without since filter (should find both)
       const result1 = await list_ghost_executions.execute({});
-      expect(JSON.parse(result1.content[0].text).count).toBe(2);
+      expect(result1.count).toBe(2);
 
       // Test with since=Apr 1 filter - should find only new log (mtime=May 15)
       const result2 = await list_ghost_executions.execute({
         since: '2026-04-01T00:00:00Z'
       });
-      expect(JSON.parse(result2.content[0].text).count).toBe(1);
+      expect(result2.count).toBe(1);
 
       // Test with future since filter (should find none)
       const result3 = await list_ghost_executions.execute({
         since: '2026-06-01T00:00:00Z'
       });
-      expect(JSON.parse(result3.content[0].text).count).toBe(0);
+      expect(result3.count).toBe(0);
     });
 
     it('should respect result limit of 100', async () => {
@@ -200,7 +194,7 @@ ticket_id: IMPL-2
       }
 
       const result = await list_ghost_executions.execute({});
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
 
       // When results reach MAX_RESULTS (100), the count should be 100 and truncated=true
       expect(data.count).toBe(100);
@@ -263,7 +257,7 @@ Line 40`;
       fs.writeFileSync(logPath, logContent, 'utf8');
 
       const result = await list_ghost_executions.execute({});
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
 
       expect(data.executions).toHaveLength(1);
       const excerpt = data.executions[0].log_excerpt;
@@ -292,25 +286,18 @@ Line 40`;
       fs.writeFileSync(path.join(logsDir, 'pipeline_run-123.log'), logContent, 'utf8');
 
       const result = await list_ghost_executions.execute({});
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
 
       expect(data.count).toBe(1);
       expect(data.executions[0].log_excerpt).toContain('[CUSTOM-GHOST-MARKER]');
     });
 
     it('should handle error gracefully when project not found', async () => {
-      const result = await list_ghost_executions.execute({
+      // Ошибку ловит и форматирует обработчик сервера (`Error executing tool
+      // <name>: …` с isError), поэтому tool просто пробрасывает её наверх.
+      await expect(list_ghost_executions.execute({
         project: '/nonexistent/path'
-      });
-
-      expect(result.content).toHaveLength(1);
-      expect(result.content[0].type).toBe('text');
-      expect(result.isError).toBe(true);
-
-      // Error message is returned as plain text, not JSON
-      const errorText = result.content[0].text;
-      expect(errorText).toContain('Error executing tool');
-      expect(errorText).toContain('Project not found');
+      })).rejects.toThrow('Project not found');
     });
 
     it('should return proper structure with all required fields', async () => {
@@ -326,7 +313,7 @@ ticket_id: IMPL-1
       fs.writeFileSync(path.join(logsDir, 'pipeline_run-123.log'), logContent, 'utf8');
 
       const result = await list_ghost_executions.execute({});
-      const data = JSON.parse(result.content[0].text);
+      const data = result;
 
       expect(data).toHaveProperty('project_filter', 'all');
       expect(data).toHaveProperty('count');

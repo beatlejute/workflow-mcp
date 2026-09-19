@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { resolve_human_ticket, list_human_queue } from '../../src/tools/human.mjs';
-import { parseFrontmatter } from '../../../workflowAi/src/lib/utils.mjs';
+import { parseFrontmatter } from 'workflow-ai/lib/utils.mjs';
 import { invalidate as invalidateCache } from '../../src/caches/frontmatter-cache.mjs';
 
 let testDir = null;

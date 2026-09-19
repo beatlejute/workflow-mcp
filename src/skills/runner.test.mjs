@@ -39,6 +39,26 @@ function cleanupTempDir(dir) {
 }
 
 /**
+ * Минимальный раннер скилов — контракт, который ожидает runSkill():
+ * `node run-skill.js <skill> <argsJson> <contextJson>` из корня проекта,
+ * скил лежит в `.workflow/src/skills/<skill>/main.js` и экспортируется как
+ * CommonJS-функция `(args, context)`.
+ *
+ * Раньше тест копировал этот скрипт из `.workflow` самого workflow-mcp, но
+ * такого файла нет ни здесь, ни в других проектах — копирование молча не
+ * срабатывало, и все прогоны скилов падали на SKILL_RUNNER_UNAVAILABLE.
+ */
+const RUN_SKILL_HARNESS = `const path = require('path');
+
+const [, , skillName, argsJson = '{}', contextJson = '{}'] = process.argv;
+const mainPath = path.join(__dirname, '..', 'skills', skillName, 'main.js');
+
+const skill = require(mainPath);
+const run = typeof skill === 'function' ? skill : skill.default;
+run(JSON.parse(argsJson), JSON.parse(contextJson));
+`;
+
+/**
  * Helper: Setup test project structure
  */
 function setupTestProject(projectRoot) {
@@ -50,12 +70,7 @@ function setupTestProject(projectRoot) {
   const skillsDir = path.join(projectRoot, '.workflow', 'src', 'skills');
   fs.mkdirSync(skillsDir, { recursive: true });
 
-  // Copy run-skill.js from project to test project
-  const sourceRunSkill = path.join(__dirname, '..', '..', '.workflow', 'src', 'scripts', 'run-skill.js');
-  const targetRunSkill = path.join(scriptsDir, 'run-skill.js');
-  if (fs.existsSync(sourceRunSkill)) {
-    fs.copyFileSync(sourceRunSkill, targetRunSkill);
-  }
+  fs.writeFileSync(path.join(scriptsDir, 'run-skill.js'), RUN_SKILL_HARNESS);
 
   return { scriptsDir, skillsDir };
 }

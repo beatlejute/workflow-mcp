@@ -3,6 +3,7 @@ import { discoverProjects } from '../discovery.mjs';
 import { spawn, spawnSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import { mcpCwd } from '../lib/project-root.mjs';
 
 /**
  * Default glob patterns to exclude from search
@@ -171,7 +172,7 @@ export const cross_project_search = {
   }),
 
   async execute(args) {
-    const cwd = process.env.MCP_CWD || process.cwd();
+    const cwd = mcpCwd();
 
     // Validate query
     if (!args.query || typeof args.query !== 'string' || args.query.length < 2) {
