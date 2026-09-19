@@ -66,8 +66,25 @@ describe('abort_pipeline tool', () => {
     return `workflow-mcp@${hash.slice(0, 12)}`;
   }
 
+  /**
+   * pid из `.runner-pids` — тот, кого тест выдаёт за идущий раннер.
+   * Владение привязано к запуску, поэтому именно этот pid должен лежать
+   * в маркере; раньше туда писался `process.pid` самого теста.
+   */
+  function runnerPidFromFile() {
+    try {
+      const pids = fs.readFileSync(path.join(projectPath, '.runner-pids'), 'utf-8')
+        .split('\n')
+        .map((line) => parseInt(line.trim(), 10))
+        .filter((n) => !Number.isNaN(n));
+      return pids.length > 0 ? pids[pids.length - 1] : process.pid;
+    } catch {
+      return process.pid;
+    }
+  }
+
   // Helper to create marker file (must be in .workflow/logs/)
-  function createMarker(mcpInstanceId = null, pid = process.pid) {
+  function createMarker(mcpInstanceId = null, pid = runnerPidFromFile()) {
     const markerPath = path.join(logsDir, '.mcp-started-by');
     const instanceId = mcpInstanceId || getMcpInstanceId(projectPath);
     fs.writeFileSync(markerPath, JSON.stringify({

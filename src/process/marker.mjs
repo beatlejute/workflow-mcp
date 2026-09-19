@@ -2,17 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { createHash } from 'crypto';
-
-/**
- * Compute mcp_instance_id from current working directory (same algo as in startup-guard).
- * @returns {string}
- */
-function getMcpInstanceId() {
-  const cwd = process.cwd();
-  const hash = createHash('sha256').update(cwd).digest('hex');
-  return `workflow-mcp@${hash.slice(0, 12)}`;
-}
+import { mcpInstanceId as getMcpInstanceId } from '../lib/project-root.mjs';
 
 /**
  * Atomic write via temp file + rename.
@@ -79,6 +69,17 @@ function atomicWrite(filePath, content) {
 /**
  * Write marker file atomically.
  * Payload must include version: 1 and mcp_instance_id (added automatically if missing).
+ *
+ * `pid` — это pid раннера, а не сервера: владение привязано к запуску, а не к
+ * процессу. `validateMarker` сверяет его с живым pid из `.pipeline.lock`, поэтому:
+ *
+ * - свой пайплайн остаётся своим после рестарта сервера (stdio-сервер живёт
+ *   одну сессию клиента, detached-раннер — часами);
+ * - протухший маркер от прошлого запуска не даёт права на чужой пайплайн,
+ *   идущий в том же проекте: pid не совпадёт.
+ *
+ * `mcp_instance_id` добавляется автоматически и отсекает чужую рабочую область.
+ *
  * @param {string} projectPath - Absolute path to project root
  * @param {Object} payload - Marker payload (version, mcp_instance_id, started_at, pid, run_id)
  * @returns {{ok: true} | {ok: false, code: string, hint?: string}}

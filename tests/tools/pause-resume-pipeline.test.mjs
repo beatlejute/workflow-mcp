@@ -66,8 +66,10 @@ describe('pause_pipeline and resume_pipeline tools', () => {
     resources.setPipelineStateNotificationHandler(null);
   });
 
-  // Helper to create marker file (must be in .workflow/logs/)
-  function createMarker() {
+  // Helper to create marker file (must be in .workflow/logs/).
+  // Владение привязано к запуску, поэтому в маркере должен лежать pid того
+  // раннера, который тест выдаёт за идущий, а не pid самого тестового процесса.
+  function createMarker(runnerPid = process.pid) {
     const markerPath = path.join(logsDir, '.mcp-started-by');
     // Use same mcp_instance_id calculation as the implementation
     const hash = createHash('sha256').update(projectPath).digest('hex');
@@ -76,7 +78,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       version: 1,
       mcp_instance_id,
       started_at: new Date().toISOString(),
-      pid: process.pid
+      pid: runnerPid
     }), 'utf-8');
   }
 
@@ -105,7 +107,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
 
       // Create marker file (so validation passes)
-      createMarker();
+      createMarker(childPid);
 
       // Call pause_pipeline
       const pauseResult = await pausePipelineImpl('.');
@@ -181,7 +183,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       const dummyPid = 12345;
 
       // Create marker file
-      createMarker();
+      createMarker(dummyPid);
 
       // Create .runner-pids file
       const runnerPidsPath = path.join(projectPath, '.runner-pids');
@@ -201,7 +203,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       const currentPid = 22222;
 
       // Create marker file
-      createMarker();
+      createMarker(currentPid);
 
       // Create .runner-pids with current PID
       const runnerPidsPath = path.join(projectPath, '.runner-pids');
@@ -237,7 +239,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
 
       // Create marker file
-      createMarker();
+      createMarker(childPid);
 
       // Call pause_pipeline
       const result = await pausePipelineImpl('.');
@@ -270,7 +272,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
 
       // Create marker file
-      createMarker();
+      createMarker(childPid);
 
       // First pause
       const pauseResult = await pausePipelineImpl('.');
@@ -313,7 +315,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
 
       // Create marker file
-      createMarker();
+      createMarker(childPid);
 
       // First pause
       const firstPause = await pausePipelineImpl('.');
@@ -386,7 +388,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
 
       // Create marker file
-      createMarker();
+      createMarker(childPid);
 
       // Pause
       const pauseResult = await pausePipelineImpl('.');
@@ -429,7 +431,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
 
       // Create marker file
-      createMarker();
+      createMarker(childPid);
 
       // Pause
       const pauseResult = await pausePipelineImpl('.');

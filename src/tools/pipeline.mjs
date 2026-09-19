@@ -1,25 +1,20 @@
 import fs from 'fs';
 import path from 'path';
-import { createHash } from 'crypto';
 import { spawn } from 'child_process';
-import { createRequire } from 'module';
-import { validateMarker, readMarker, removeMarker, writeMarker } from '../process/marker.mjs';
+import { removeMarker, writeMarker } from '../process/marker.mjs';
+import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
+import { pidCouldBeFromRun } from '../process/process-start.mjs';
 import { kill, pause, resume, abort } from '../process/control.mjs';
 import { notify_workflow_pipeline_state } from '../resources/index.mjs';
 import { get_workflow_pipeline_state } from '../resources/pipeline-state.mjs';
 import { z } from 'zod';
-
-function getMcpInstanceId() {
-  const cwd = process.cwd();
-  const hash = createHash('sha256').update(cwd).digest('hex');
-  return `workflow-mcp@${hash.slice(0, 12)}`;
-}
+import { mcpCwd, mcpInstanceId as getMcpInstanceId, resolveProjectRoot } from '../lib/project-root.mjs';
+import { workflowAiPath } from '../lib/workflow-ai.mjs';
 
 /**
  * Разрешить путь до CLI workflow-ai (bin/workflow.mjs).
  *
- * Тот же приём, что в startup-guard: package.json пакета не объявлен в exports,
- * поэтому якоримся на экспортируемый подпуть и поднимаемся до корня пакета.
+ * Корень пакета считает `lib/workflow-ai.mjs` — один на весь сервер.
  *
  * @returns {{ok: true, bin: string} | {ok: false, code: string, hint: string}}
  */
@@ -33,46 +28,76 @@ function resolveWorkflowAiBin() {
   }
 
   try {
-    const require = createRequire(import.meta.url);
-    const resolveOpts = process.env.WORKFLOW_AI_RESOLVE_PATH
-      ? { paths: [process.env.WORKFLOW_AI_RESOLVE_PATH] }
-      : undefined;
-    let dir = path.dirname(require.resolve('workflow-ai/lib/find-root.mjs', resolveOpts));
-
-    while (dir !== path.dirname(dir)) {
-      const pkgPath = path.join(dir, 'package.json');
-      if (fs.existsSync(pkgPath)) {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-        if (pkg.name === 'workflow-ai') {
-          const bin = path.join(dir, 'bin', 'workflow.mjs');
-          if (!fs.existsSync(bin)) {
-            return { ok: false, code: 'RUNNER_NOT_FOUND', hint: `workflow-ai found at ${dir}, but bin/workflow.mjs is missing` };
-          }
-          return { ok: true, bin };
-        }
-      }
-      dir = path.dirname(dir);
+    const bin = workflowAiPath('bin', 'workflow.mjs');
+    if (!fs.existsSync(bin)) {
+      return { ok: false, code: 'RUNNER_NOT_FOUND', hint: `workflow-ai found at ${path.dirname(path.dirname(bin))}, but bin/workflow.mjs is missing` };
     }
-    return { ok: false, code: 'RUNNER_NOT_FOUND', hint: 'workflow-ai package root not found' };
+    return { ok: true, bin };
   } catch (err) {
     return { ok: false, code: 'RUNNER_NOT_FOUND', hint: err.message };
   }
 }
 
 /**
- * Прочитать lock раннера (.workflow/logs/.pipeline.lock).
+ * Pid идущего раннера.
+ *
+ * Источник правды — `.pipeline.lock`: его раннер пишет при любом запуске.
+ * `.runner-pids` остаётся запасным путём, но полагаться на него нельзя: его
+ * читают четыре модуля, а не пишет никто — ни workflow-ai, ни расширение,
+ * ни сам сервер. Пока pid брался только оттуда, pause/resume/abort/stop
+ * всегда отвечали `NO_RUNNER_PIDS` на любом реальном пайплайне.
+ *
+ * Возвращает и сам lock: читать его второй раз для проверки владения значит
+ * допускать, что между чтениями его снимут и проверка выродится.
+ *
  * @param {string} projectRoot
- * @returns {{pid: number, timestamp: string|null}|null}
+ * @returns {{ok: true, pid: number, lock: Object|null} | {ok: false, code: string, hint: string}}
  */
-function readPipelineLock(projectRoot) {
-  try {
-    const data = JSON.parse(fs.readFileSync(path.join(projectRoot, '.workflow', 'logs', '.pipeline.lock'), 'utf-8'));
-    const pid = typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10);
-    if (!pid || Number.isNaN(pid) || pid <= 0) return null;
-    return { pid, timestamp: typeof data.timestamp === 'string' ? data.timestamp : null };
-  } catch {
-    return null;
+function resolveRunnerPid(projectRoot) {
+  const lock = readPipelineLock(projectRoot);
+  if (lock) {
+    return { ok: true, pid: lock.pid, lock };
   }
+
+  try {
+    const content = fs.readFileSync(path.join(projectRoot, '.runner-pids'), 'utf-8');
+    const pids = content
+      .split('\n')
+      .map((line) => parseInt(line.trim(), 10))
+      .filter((n) => !Number.isNaN(n));
+
+    if (pids.length > 0) {
+      return { ok: true, pid: pids[pids.length - 1], lock: null };
+    }
+    return { ok: false, code: 'NO_RUNNER_PIDS', hint: '.runner-pids file is empty or invalid' };
+  } catch (err) {
+    return { ok: false, code: 'NO_RUNNER_PIDS', hint: `Failed to read .runner-pids: ${err.message}` };
+  }
+}
+
+/**
+ * Отказ из-за владения.
+ *
+ * `PID_REUSED` выделен отдельным кодом: это не «чужой пайплайн», а протухший
+ * lock без пайплайна вовсе. Совет «повторите с force» здесь означал бы «убейте
+ * посторонний процесс, занявший номер».
+ *
+ * @param {{reason?: string}} validation
+ * @param {string} code код для обычного случая
+ * @param {string} hint подсказка для обычного случая
+ * @returns {{ok: false, code: string, reason: string|undefined, hint: string}}
+ */
+function ownershipRefusal(validation, code, hint) {
+  if (validation.reason === 'PID_REUSED') {
+    return {
+      ok: false,
+      code: 'STALE_PIPELINE_LOCK',
+      reason: validation.reason,
+      hint: 'The recorded runner is gone and its pid now belongs to another process. '
+        + 'Remove .workflow/logs/.pipeline.lock; do not retry with force — that would kill the unrelated process.'
+    };
+  }
+  return { ok: false, code, reason: validation.reason, hint };
 }
 
 function isPipelineProcessAlive(pid) {
@@ -134,7 +159,7 @@ export const start_pipeline = {
     config: z.string().optional().describe('Path to pipeline.yaml (default: .workflow/config/pipeline.yaml)')
   }),
   async execute({ project, plan, config }) {
-    const cwd = process.env.MCP_CWD || process.cwd();
+    const cwd = mcpCwd();
     const projectRoot = path.isAbsolute(project) ? project : path.join(cwd, project);
 
     if (!fs.existsSync(path.join(projectRoot, '.workflow'))) {
@@ -145,6 +170,20 @@ export const start_pipeline = {
     const lock = readPipelineLock(projectRoot);
     if (lock) {
       if (isPipelineProcessAlive(lock.pid)) {
+        // Живой pid сам по себе ничего не значит — его мог занять посторонний
+        // процесс, — но и сносить lock автоматически нельзя: ошибёмся — поверх
+        // живого раннера встанет второй пайплайн. Цена ошибки несимметрична,
+        // поэтому протухший на вид lock с живым pid отдаётся человеку явно.
+        if (!pidCouldBeFromRun(lock.pid, lock.started_at)) {
+          return {
+            ok: false,
+            code: 'STALE_PIPELINE_LOCK',
+            pid: lock.pid,
+            started_at: lock.timestamp,
+            hint: `Lock points at pid ${lock.pid}, but that process started after the lock was written `
+              + '— it is not the runner. Remove .workflow/logs/.pipeline.lock and start again.'
+          };
+        }
         return {
           ok: false,
           code: 'ALREADY_RUNNING',
@@ -178,7 +217,10 @@ export const start_pipeline = {
         cwd: projectRoot,
         detached: true,
         stdio: 'ignore',
-        windowsHide: true
+        windowsHide: true,
+        // Раннер кладёт это в .pipeline.lock — по нему внешние наблюдатели
+        // (VS Code расширение) отличают MCP-запуск от CLI.
+        env: { ...process.env, WORKFLOW_STARTED_BY: 'mcp' }
       });
       child.unref();
     } catch (err) {
@@ -191,7 +233,10 @@ export const start_pipeline = {
 
     const started_at = new Date().toISOString();
 
-    // Владение: помечаем запуск своим, чтобы pause/abort отличали чужие пайплайны.
+    // Владение привязано к запуску, а не к процессу сервера: в маркере лежит pid
+    // раннера, и проверка сверяет его с живым pid из `.pipeline.lock`. Сервер stdio
+    // живёт одну сессию клиента, а detached-раннер — часами, поэтому привязка к
+    // `process.pid` делала бы свой же пайплайн чужим после каждого рестарта.
     writeMarker(projectRoot, { pid: child.pid, run_id: null, started_at });
 
     const logName = await waitForNewLog(logsDir, before);
@@ -230,7 +275,7 @@ export const get_pipeline_log = {
     }).optional()
   }),
   async execute({ project, options = {} }) {
-    const cwd = process.env.MCP_CWD || process.cwd();
+    const cwd = mcpCwd();
 
     // Resolve project path
     const projectRoot = path.isAbsolute(project)
@@ -369,68 +414,28 @@ export function clearPauseState(projectRoot) {
 }
 
 /**
- * Resolve project root from project path
- * @param {string} project - Project path (relative or absolute)
- * @returns {string} Absolute project path
- */
-function resolveProjectRoot(project) {
-  const cwd = process.cwd();
-  const resolved = path.resolve(cwd, project);
-  const workflowDir = path.join(resolved, '.workflow');
-  if (!fs.existsSync(workflowDir)) {
-    throw new Error(`Project not found or not a workflow project: ${project}`);
-  }
-  return resolved;
-}
-
-/**
  * Pause a running pipeline (implementation).
- * Validates marker, gets PID from .runner-pids (latest run), calls process/control.pause.
+ * Validates marker, gets the runner PID from .pipeline.lock, calls process/control.pause.
  * Returns {pid, state: "paused", paused_at} on success.
  */
 export async function pausePipelineImpl(project) {
   const projectRoot = resolveProjectRoot(project);
-  const marker = readMarker(projectRoot);
+
+  // Сначала pid идущего раннера — именно с ним сверяется маркер.
+  const runner = resolveRunnerPid(projectRoot);
+  if (!runner.ok) {
+    return { ok: false, code: runner.code, hint: runner.hint };
+  }
+  const pid = runner.pid;
 
   // Validate marker
-  const validation = validateMarker(projectRoot, process.pid, getMcpInstanceId());
+  const validation = validateRunOwnership(projectRoot, pid, runner.lock, getMcpInstanceId(), { verifyProcessStart: true });
   if (!validation.valid) {
-    return {
-      ok: false,
-      code: 'MARKER_VALIDATION_FAILED',
-      reason: validation.reason,
-      hint: `Pipeline marker validation failed: ${validation.reason}`
-    };
-  }
-
-  // Get PID from .runner-pids (latest/last run)
-  const runnerPidsPath = path.join(projectRoot, '.runner-pids');
-  let pid = null;
-  try {
-    const content = fs.readFileSync(runnerPidsPath, 'utf-8');
-    const pids = content
-      .split('\n')
-      .map(line => parseInt(line.trim(), 10))
-      .filter(n => !isNaN(n));
-
-    // Get the last (latest) PID
-    if (pids.length > 0) {
-      pid = pids[pids.length - 1];
-    }
-  } catch (err) {
-    return {
-      ok: false,
-      code: 'NO_RUNNER_PIDS',
-      hint: `Failed to read .runner-pids: ${err.message}`
-    };
-  }
-
-  if (!pid) {
-    return {
-      ok: false,
-      code: 'NO_RUNNER_PIDS',
-      hint: '.runner-pids file is empty or invalid'
-    };
+    return ownershipRefusal(
+      validation,
+      'MARKER_VALIDATION_FAILED',
+      `Pipeline marker validation failed: ${validation.reason}`
+    );
   }
 
   // Idempotency: check if already paused
@@ -500,53 +505,27 @@ export const pause_pipeline = {
 
   /**
    * Resume a paused pipeline (implementation).
-   * Validates marker, gets PID from .runner-pids (latest run), calls process/control.resume.
+   * Validates marker, gets the runner PID from .pipeline.lock, calls process/control.resume.
    * Returns {pid, state: "running"} on success.
    * Idempotent: if not paused, returns NOT_PAUSED.
    */
   export async function resumePipelineImpl(project) {
     const projectRoot = resolveProjectRoot(project);
-    const marker = readMarker(projectRoot);
+
+    const runner = resolveRunnerPid(projectRoot);
+    if (!runner.ok) {
+      return { ok: false, code: runner.code, hint: runner.hint };
+    }
+    const pid = runner.pid;
 
     // Validate marker
-    const validation = validateMarker(projectRoot, process.pid, getMcpInstanceId());
+    const validation = validateRunOwnership(projectRoot, pid, runner.lock, getMcpInstanceId(), { verifyProcessStart: true });
     if (!validation.valid) {
-      return {
-        ok: false,
-        code: 'MARKER_VALIDATION_FAILED',
-        reason: validation.reason,
-        hint: `Pipeline marker validation failed: ${validation.reason}`
-      };
-    }
-
-    // Get PID from .runner-pids (latest/last run)
-    const runnerPidsPath = path.join(projectRoot, '.runner-pids');
-    let pid = null;
-    try {
-      const content = fs.readFileSync(runnerPidsPath, 'utf-8');
-      const pids = content
-        .split('\n')
-        .map(line => parseInt(line.trim(), 10))
-        .filter(n => !isNaN(n));
-
-      // Get the last (latest) PID
-      if (pids.length > 0) {
-        pid = pids[pids.length - 1];
-      }
-    } catch (err) {
-      return {
-        ok: false,
-        code: 'NO_RUNNER_PIDS',
-        hint: `Failed to read .runner-pids: ${err.message}`
-      };
-    }
-
-    if (!pid) {
-      return {
-        ok: false,
-        code: 'NO_RUNNER_PIDS',
-        hint: '.runner-pids file is empty or invalid'
-      };
+      return ownershipRefusal(
+        validation,
+        'MARKER_VALIDATION_FAILED',
+        `Pipeline marker validation failed: ${validation.reason}`
+      );
     }
 
     // Idempotency: check if already not paused (no pause state or different PID)
@@ -612,7 +591,7 @@ export const resume_pipeline = {
 
   /**
    * Stop (hard kill) a running pipeline (implementation).
-   * Validates marker (unless overridden by force=true), gets PID from .runner-pids, calls process/control.kill.
+   * Validates marker (unless overridden by force=true), gets the runner PID from .pipeline.lock, calls process/control.kill.
    * Removes marker after success.
    * Returns {pid, state: "killed"} on success.
    */
@@ -620,47 +599,22 @@ export const resume_pipeline = {
     const force = options.force === true;
     const projectRoot = resolveProjectRoot(project);
 
+    const runner = resolveRunnerPid(projectRoot);
+    if (!runner.ok) {
+      return { ok: false, code: runner.code, hint: runner.hint };
+    }
+    const pid = runner.pid;
+
     // Validate marker (unless force=true)
     if (!force) {
-      const validation = validateMarker(projectRoot, process.pid, getMcpInstanceId());
+      const validation = validateRunOwnership(projectRoot, pid, runner.lock, getMcpInstanceId(), { verifyProcessStart: true });
       if (!validation.valid) {
-        return {
-          ok: false,
-          code: 'FOREIGN_PIPELINE',
-          reason: validation.reason,
-          hint: `Pipeline is foreign (owned by another MCP instance). Use force=true to override: ${validation.reason}`
-        };
+        return ownershipRefusal(
+          validation,
+          'FOREIGN_PIPELINE',
+          `Pipeline is foreign (not started by this MCP workspace). Use force=true to override: ${validation.reason}`
+        );
       }
-    }
-
-    // Get PID from .runner-pids (latest/last run)
-    const runnerPidsPath = path.join(projectRoot, '.runner-pids');
-    let pid = null;
-    try {
-      const content = fs.readFileSync(runnerPidsPath, 'utf-8');
-      const pids = content
-        .split('\n')
-        .map(line => parseInt(line.trim(), 10))
-        .filter(n => !isNaN(n));
-
-      // Get the last (latest) PID
-      if (pids.length > 0) {
-        pid = pids[pids.length - 1];
-      }
-    } catch (err) {
-      return {
-        ok: false,
-        code: 'NO_RUNNER_PIDS',
-        hint: `Failed to read .runner-pids: ${err.message}`
-      };
-    }
-
-    if (!pid) {
-      return {
-        ok: false,
-        code: 'NO_RUNNER_PIDS',
-        hint: '.runner-pids file is empty or invalid'
-      };
     }
 
     // Call process/control.kill()
@@ -712,7 +666,7 @@ export const list_running_pipelines = {
   description: 'List running pipelines across all projects with state and approval info (Sprint 2 extension)',
   inputSchema: z.object({}),
   async execute(args) {
-    const cwd = process.env.MCP_CWD || process.cwd();
+    const cwd = mcpCwd();
     const absoluteCwd = path.resolve(cwd);
     const pipelines = await get_workflow_pipeline_state(absoluteCwd);
     return pipelines;
@@ -804,15 +758,20 @@ export async function abortPipelineImpl(project, options = {}) {
   // Clamp grace_sec to [0, 60]
   const clampedGraceSec = Math.max(0, Math.min(60, graceSec));
 
+  const runner = resolveRunnerPid(projectRoot);
+  if (!runner.ok) {
+    return { ok: false, code: runner.code, hint: runner.hint };
+  }
+  const pid = runner.pid;
+
   // Validate marker
-  const validation = validateMarker(projectRoot, process.pid, getMcpInstanceId());
+  const validation = validateRunOwnership(projectRoot, pid, runner.lock, getMcpInstanceId(), { verifyProcessStart: true });
   if (!validation.valid) {
-    return {
-      ok: false,
-      code: 'FOREIGN_PIPELINE',
-      reason: validation.reason,
-      hint: `Pipeline is foreign (owned by another MCP instance). Cannot abort: ${validation.reason}`
-    };
+    return ownershipRefusal(
+      validation,
+      'FOREIGN_PIPELINE',
+      `Pipeline is foreign (not started by this MCP workspace). Cannot abort: ${validation.reason}`
+    );
   }
 
   // Check for parallel abort already in progress (flag in state-dir)
@@ -821,35 +780,6 @@ export async function abortPipelineImpl(project, options = {}) {
       ok: false,
       code: 'ALREADY_ABORTING',
       hint: 'An abort operation is already in progress for this project'
-    };
-  }
-
-  // Get PID from .runner-pids
-  const runnerPidsPath = path.join(projectRoot, '.runner-pids');
-  let pid = null;
-  try {
-    const content = fs.readFileSync(runnerPidsPath, 'utf-8');
-    const pids = content
-      .split('\n')
-      .map(line => parseInt(line.trim(), 10))
-      .filter(n => !isNaN(n));
-
-    if (pids.length > 0) {
-      pid = pids[pids.length - 1];
-    }
-  } catch (err) {
-    return {
-      ok: false,
-      code: 'NO_RUNNER_PIDS',
-      hint: `Failed to read .runner-pids: ${err.message}`
-    };
-  }
-
-  if (!pid) {
-    return {
-      ok: false,
-      code: 'NO_RUNNER_PIDS',
-      hint: '.runner-pids file is empty or invalid'
     };
   }
 
@@ -864,7 +794,32 @@ export async function abortPipelineImpl(project, options = {}) {
   }
 
   // Execute graceful abort using process/control.abort
-  const abortResult = await abort(pid, { grace_sec: clampedGraceSec });
+  const abortResult = await abort(pid, {
+      grace_sec: clampedGraceSec,
+      // Перед жёстким сигналом снова смотрим на живое состояние, а не на
+      // сохранённый lock: за grace-окно раннер мог выйти сам.
+      can_escalate: () => {
+        const liveLock = readPipelineLock(projectRoot);
+        // В lock'е уже другой pid — наш раннер вышел, а на его место встал чужой
+        // запуск. Добивать старый pid незачем и опасно.
+        if (liveLock && runner.lock && liveLock.pid !== pid) {
+          return { escalate: false, reason: 'RUNNER_GONE' };
+        }
+        if (!liveLock && runner.lock) {
+          // lock был в начале и исчез — раннер завершился сам. Добивать некого,
+          // а pid к этому моменту может уже принадлежать чужому процессу.
+          // Если lock'а не было изначально (pid из `.runner-pids`), сокращать нечего:
+          // иначе отказ внешней команды выглядел бы как успешный abort.
+          return { escalate: false, reason: 'RUNNER_GONE' };
+        }
+        const ownership = validateRunOwnership(
+          projectRoot, pid, liveLock, getMcpInstanceId(), { verifyProcessStart: true }
+        );
+        return ownership.valid
+          ? { escalate: true }
+          : { escalate: false, reason: ownership.reason || 'OWNERSHIP_LOST' };
+      }
+    });
 
   if (!abortResult.ok) {
     // Clear flag even on failure
@@ -895,7 +850,11 @@ export async function abortPipelineImpl(project, options = {}) {
     console.error('Failed to notify pipeline-state on abort complete:', err.message);
   }
 
+  // `ok` здесь раньше не возвращался, хотя соседние pause/resume/stop его отдают,
+  // а отказы самого abort всегда шли с `ok: false` — клиенту приходилось разбирать
+  // успех по отсутствию поля. Добавлено без ломки остальных полей.
   return {
+    ok: true,
     pid,
     state: 'aborted',
     duration_ms: abortResult.duration_ms,

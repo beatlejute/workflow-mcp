@@ -143,6 +143,28 @@ export async function resume(pid) {
 export async function abort(pid, options = {}) {
   const graceSec = options.grace_sec !== undefined ? options.grace_sec : 10;
   const clampedGraceSec = Math.max(0, Math.min(60, graceSec));
+  // Между мягким сигналом и жёстким проходит до минуты. За это время раннер
+  // может завершиться сам, а его pid — достаться чужому процессу. Вызывающий даёт
+  // проверку, которая повторяется перед эскалацией и различает два исхода:
+  // раннер уже вышел (цель достигнута, добивать некого) и владение потеряно.
+  const rawCanEscalate = typeof options.can_escalate === 'function' ? options.can_escalate : () => true;
+  const checkEscalation = () => {
+    const verdict = rawCanEscalate();
+    if (verdict === true || verdict === undefined) return { escalate: true };
+    if (verdict === false) return { escalate: false, reason: 'OWNERSHIP_LOST' };
+    return { escalate: verdict.escalate !== false, reason: verdict.reason };
+  };
+  const escalationRefused = (verdict) => (
+    verdict.reason === 'RUNNER_GONE'
+      ? { ok: true, pid, state: 'aborted', duration_ms: clampedGraceSec * 1000, escalated: false }
+      : {
+          ok: false,
+          code: 'OWNERSHIP_LOST',
+          pid,
+          reason: verdict.reason,
+          hint: `Process ${pid} is no longer the pipeline runner; not escalating to a forced kill`
+        }
+  );
 
   if (process.platform === 'win32') {
     // First attempt: graceful taskkill (without /F)
@@ -161,6 +183,11 @@ export async function abort(pid, options = {}) {
     // Wait for grace period
     if (clampedGraceSec > 0) {
       await new Promise((resolve) => setTimeout(resolve, clampedGraceSec * 1000));
+    }
+
+    const winVerdict = checkEscalation();
+    if (!winVerdict.escalate) {
+      return escalationRefused(winVerdict);
     }
 
     // Force termination
@@ -199,6 +226,11 @@ export async function abort(pid, options = {}) {
   // Wait for grace period
   if (clampedGraceSec > 0) {
     await new Promise((resolve) => setTimeout(resolve, clampedGraceSec * 1000));
+  }
+
+  const posixVerdict = checkEscalation();
+  if (!posixVerdict.escalate) {
+    return escalationRefused(posixVerdict);
   }
 
   // Send SIGTERM as escalation

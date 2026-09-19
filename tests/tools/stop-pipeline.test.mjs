@@ -9,6 +9,7 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import process from 'process';
 import { stopPipelineImpl } from '../../src/tools/pipeline.mjs';
 
@@ -57,14 +58,34 @@ describe('stop_pipeline tool', () => {
   });
 
   // Helper to create marker file (must be in .workflow/logs/)
-  function createMarker() {
+  /**
+   * pid из `.runner-pids` — тот, кого тест выдаёт за идущий раннер.
+   * Владение привязано к запуску, поэтому именно этот pid должен лежать
+   * в маркере; раньше туда писался `process.pid` самого теста.
+   */
+  function runnerPidFromFile() {
+    try {
+      const pids = fs.readFileSync(path.join(projectPath, '.runner-pids'), 'utf-8')
+        .split('\n')
+        .map((line) => parseInt(line.trim(), 10))
+        .filter((n) => !Number.isNaN(n));
+      return pids.length > 0 ? pids[pids.length - 1] : process.pid;
+    } catch {
+      return process.pid;
+    }
+  }
+
+  function createMarker(pid = runnerPidFromFile()) {
     const markerPath = path.join(logsDir, '.mcp-started-by');
-    const mcp_instance_id = `workflow-mcp@${Buffer.from(projectPath).toString('hex').slice(0, 12)}`;
+    // Тот же алгоритм, что в `lib/project-root.mjs`. Раньше здесь был
+    // самодельный hex, который не совпадал ни с чем, и тесты проходили по
+    // причине INSTANCE_MISMATCH вместо той, которую проверяют.
+    const mcp_instance_id = `workflow-mcp@${createHash('sha256').update(path.resolve(projectPath)).digest('hex').slice(0, 12)}`;
     fs.writeFileSync(markerPath, JSON.stringify({
       version: 1,
       mcp_instance_id,
       started_at: new Date().toISOString(),
-      pid: process.pid
+      pid
     }), 'utf-8');
   }
 

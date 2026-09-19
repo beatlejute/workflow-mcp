@@ -11,6 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { spawn } from 'child_process';
 import { start_pipeline } from '../../src/tools/pipeline.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,10 +28,10 @@ function createProject(workspaceDir, name = 'start-project') {
   return projectPath;
 }
 
-function writeLock(projectPath, pid) {
+function writeLock(projectPath, pid, startedAt = new Date().toISOString()) {
   fs.writeFileSync(
     path.join(projectPath, ...LOCK_REL),
-    JSON.stringify({ pid, timestamp: new Date().toISOString() }, null, 2)
+    JSON.stringify({ pid, timestamp: startedAt, started_at: startedAt }, null, 2)
   );
 }
 
@@ -135,9 +136,51 @@ describe('start_pipeline', () => {
       'utf8'
     ));
 
+    // Владение привязано к запуску: в маркере pid раннера, и именно с живым
+    // pid из `.pipeline.lock` сверяются pause/resume/abort/stop.
     expect(marker.pid).toBe(result.pid);
     expect(marker.run_id).toBe(result.run_id);
     expect(marker.version).toBe(1);
+  });
+
+  it('отказывает, но не сносит lock с живым чужим pid', { timeout: 30000 }, async () => {
+    // pid жив, но процесс стартовал позже записи lock'а — значит это не раннер,
+    // а посторонний процесс, занявший номер. Сносить lock автоматически нельзя:
+    // ошибёмся — поверх живого раннера встанет второй пайплайн.
+    const victim = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore' });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      writeLock(projectPath, victim.pid, '2020-01-01T00:00:00.000Z');
+      process.env.WORKFLOW_AI_BIN = writeFakeRunner(workspaceDir);
+
+      const result = await start_pipeline.execute({ project: 'start-project' });
+
+      expect(result.ok).toBe(false);
+      expect(result.code).toBe('STALE_PIPELINE_LOCK');
+      expect(result.hint).toMatch(/\.pipeline\.lock/);
+      // lock на месте: решение за человеком.
+      expect(fs.existsSync(path.join(projectPath, ...LOCK_REL))).toBe(true);
+    } finally {
+      try { victim.kill(); } catch { /* мог завершиться */ }
+    }
+  });
+
+  it('отказывает по ALREADY_RUNNING, когда lock свежий и pid жив', { timeout: 30000 }, async () => {
+    const victim = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore' });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      // lock записан ПОСЛЕ старта процесса — так делает настоящий раннер.
+      writeLock(projectPath, victim.pid);
+      process.env.WORKFLOW_AI_BIN = writeFakeRunner(workspaceDir);
+
+      const result = await start_pipeline.execute({ project: 'start-project' });
+
+      expect(result.ok).toBe(false);
+      expect(result.code).toBe('ALREADY_RUNNING');
+      expect(result.pid).toBe(victim.pid);
+    } finally {
+      try { victim.kill(); } catch { /* мог завершиться */ }
+    }
   });
 
   it('сообщает RUNNER_NOT_FOUND, если CLI не найден', async () => {

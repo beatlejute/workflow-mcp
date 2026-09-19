@@ -1,17 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
 import { discoverProjects } from '../discovery.mjs';
-import { validateMarker, readMarker } from '../process/marker.mjs';
+import { mcpInstanceId as getMcpInstanceId } from '../lib/project-root.mjs';
+import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
 import { parsePipelineLog } from '../parsers/pipeline-log.mjs';
-
-/**
- * Compute MCP instance ID from absolute cwd.
- */
-function getMcpInstanceId(cwd) {
-  const hash = crypto.createHash('sha256').update(cwd).digest('hex');
-  return `workflow-mcp@${hash.slice(0, 12)}`;
-}
 
 /**
  * Check if a process is alive.
@@ -19,28 +11,6 @@ function getMcpInstanceId(cwd) {
 function isProcessAlive(pid) {
   if (!pid || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch { return false; }
-}
-
-/**
- * Прочитать lock-файл пайплайна.
- *
- * Раннер workflow-ai пишет `.workflow/logs/.pipeline.lock` ({pid, timestamp})
- * при любом запуске — из CLI, из VS Code или из MCP. Это единственный признак
- * "пайплайн идёт", общий для всех способов старта.
- *
- * @param {string} projectRoot
- * @returns {{pid: number, timestamp: string|null}|null}
- */
-function readPipelineLock(projectRoot) {
-  try {
-    const raw = fs.readFileSync(path.join(projectRoot, '.workflow', 'logs', '.pipeline.lock'), 'utf-8');
-    const data = JSON.parse(raw);
-    const pid = typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10);
-    if (!pid || Number.isNaN(pid) || pid <= 0) return null;
-    return { pid, timestamp: typeof data.timestamp === 'string' ? data.timestamp : null };
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -211,9 +181,14 @@ export function get_workflow_pipeline_state(absoluteCwd) {
     const pid = lock ? lock.pid : readLatestPid(projectRoot);
     if (!pid) continue;
 
-    const marker = readMarker(projectRoot);
-    const markerValid = validateMarker(projectRoot, process.pid, getMcpInstanceId(absoluteCwd));
-    const isForeign = !markerValid.valid && markerValid.reason === 'PID_MISMATCH';
+    // Владение привязано к запуску, а не к номеру процесса. Битый маркер
+    // внутри читается безопасно: раньше один такой файл ронял снимок целиком.
+    const markerValid = validateRunOwnership(projectRoot, pid, lock, getMcpInstanceId(absoluteCwd));
+    // Чужой — любой, чей маркер не доказывает наше владение: нет маркера
+    // (запущен из CLI), чужой идентификатор или чужой pid. Проверка только на
+    // PID_MISMATCH давала ровно обратный ответ: свои пайплайны считались чужими,
+    // а запущенные из CLI (маркера нет вовсе) — своими.
+    const isForeign = !markerValid.valid;
 
     const pidAlive = isProcessAlive(pid);
     const paused = getPausedState(projectRoot, pid);

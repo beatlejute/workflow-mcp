@@ -196,14 +196,17 @@ describe('E2E: foreign-pipeline protection', () => {
 
         const ownedPid = proc.pid;
 
-        // Create proper MCP marker
+        // Create proper MCP marker.
+        // Маркер свой: `pid` — pid идущего раннера, `mcp_instance_id` — настоящий.
+        // Раньше здесь был самодельный hex-идентификатор, который не совпадал ни
+        // с чем, и тест проходил бы по ложной причине.
         const markerPath = path.join(logsDir, '.mcp-started-by');
-        const mcp_instance_id = `workflow-mcp@${Buffer.from(projectPath).toString('hex').slice(0, 12)}`;
+        const { mcpInstanceId } = await import('../../src/lib/project-root.mjs');
         fs.writeFileSync(
           markerPath,
           JSON.stringify({
             version: 1,
-            mcp_instance_id,
+            mcp_instance_id: mcpInstanceId(),
             started_at: new Date().toISOString(),
             pid: ownedPid
           }),
