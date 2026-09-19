@@ -1,463 +1,386 @@
 /**
- * Tests for list_running_pipelines MCP tool
- * Tests the extended state machine: running, paused, aborting, killed, completed
- * Tests foreign pipeline detection and awaiting_approval field
- * Tests backward compatibility with Sprint 1 fields
+ * `list_running_pipelines` — снимок состояния пайплайнов по всем проектам.
+ *
+ * Прежняя версия этого файла состояла из 26 тестов, в которых на всех был один
+ * `expect()`, а сам инструмент не вызывался ни разу — единственный вызов был
+ * закомментирован. Тесты строили фикстуры и тут же их удаляли, поэтому набор
+ * был зелёным при любом поведении кода. Вдобавок фикстуры были неверны дважды:
+ * `.runner-pids` клался в `.workflow/logs/`, хотя читается он из корня проекта,
+ * а лог писался в формате `[STAGE_START] stage=... step=...`, которого парсер
+ * не понимает.
+ *
+ * Здесь каждый тест вызывает инструмент и проверяет результат.
  */
 
-import { strict as assert } from 'assert';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { list_running_pipelines } from '../../src/tools/pipeline.mjs';
+import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 
-/**
- * Helper to create temporary project structure
- */
-function createTempProject(options = {}) {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-pipeline-state-'));
+let workspace;
+let prevMcpCwd;
+const victims = [];
 
-  // Create .workflow directory structure
-  const workflowDir = path.join(tempDir, '.workflow');
-  const logsDir = path.join(workflowDir, 'logs');
-  const stateDir = path.join(workflowDir, 'state');
-  const approvalsDir = path.join(workflowDir, 'approvals');
-
-  fs.mkdirSync(logsDir, { recursive: true });
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.mkdirSync(approvalsDir, { recursive: true });
-
-  // Create .runner-pids if specified
-  if (options.pids) {
-    const pidsContent = Array.isArray(options.pids)
-      ? options.pids.map(String).join('\n')
-      : String(options.pids);
-    fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent);
-  }
-
-  // Create pipeline log if specified
-  if (options.logContent) {
-    const logName = options.logName || `pipeline_2026-04-27_10-00-00.log`;
-    fs.writeFileSync(path.join(logsDir, logName), options.logContent);
-  }
-
-  // Create marker file if specified
-  if (options.marker) {
-    const markerPath = path.join(logsDir, '.mcp-started-by');
-    fs.writeFileSync(markerPath, JSON.stringify(options.marker, null, 2));
-  }
-
-  // Create pause state if specified
-  if (options.paused) {
-    const pauseState = {
-      pid: options.paused.pid,
-      paused_at: options.paused.paused_at || new Date().toISOString()
-    };
-    fs.writeFileSync(
-      path.join(stateDir, 'pipeline-pause.json'),
-      JSON.stringify(pauseState, null, 2)
-    );
-  }
-
-  // Create approval files if specified
-  if (options.approvals) {
-    for (const [stepId, approval] of Object.entries(options.approvals)) {
-      fs.writeFileSync(
-        path.join(approvalsDir, `${stepId}.json`),
-        JSON.stringify(approval, null, 2)
-      );
-    }
-  }
-
-  return tempDir;
+/** Живой процесс, чей pid можно выдать за раннера. */
+async function spawnVictim() {
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
+  victims.push(child);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  return child;
 }
 
-/**
- * Helper to create a log with specific content
- */
-function createHealthyLog() {
-  return `2026-04-27T10:00:00Z [STAGE_START] stage=prepare step=1 duration=0
-2026-04-27T10:00:02Z [STAGE_COMPLETE] stage=prepare step=1 duration=2
-2026-04-27T10:00:02Z [STAGE_START] stage=build step=2 duration=0
-2026-04-27T10:00:05Z [STAGE_COMPLETE] stage=build step=2 duration=3
-2026-04-27T10:00:05Z [exit] code=0`;
+/** Заведомо свободный номер процесса. */
+const DEAD_PID = 999999;
+
+/** Лог в том формате, который действительно разбирает `parsers/pipeline-log.mjs`. */
+function pipelineLog({ step = 3, stage = 'execute-task' } = {}) {
+  return [
+    '[2026-09-20 10:00:00] [INFO] [PipelineRunner] Step 1',
+    '[2026-09-20 10:00:00] [INFO] START stage="pick-first-task" agent="script"',
+    '[2026-09-20 10:00:01] [INFO] COMPLETE stage="pick-first-task" status="ok" exitCode=0',
+    `[2026-09-20 10:00:02] [INFO] [PipelineRunner] Step ${step}`,
+    `[2026-09-20 10:00:02] [INFO] START stage="${stage}" agent="claude-sonnet"`
+  ].join('\n');
 }
 
-function createCompletedLog() {
-  return `2026-04-27T09:00:00Z [STAGE_START] stage=prepare step=1 duration=0
-2026-04-27T09:00:02Z [STAGE_COMPLETE] stage=prepare step=1 duration=2
-2026-04-27T09:00:02Z [exit] code=0`;
+function makeProject(name) {
+  const root = path.join(workspace, name);
+  fs.mkdirSync(path.join(root, '.workflow', 'logs'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.workflow', 'state'), { recursive: true });
+  return root;
 }
 
-describe('list_running_pipelines tool — extended state machine', () => {
-  let testDir;
-  let projectPath;
-  let logsDir;
-  let originalMcpCwd;
-  let originalCwd;
+function writeLock(root, pid, extra = {}) {
+  const now = new Date().toISOString();
+  fs.writeFileSync(
+    path.join(root, '.workflow', 'logs', '.pipeline.lock'),
+    JSON.stringify({ pid, timestamp: now, started_at: now, started_by: 'mcp', ...extra }, null, 2)
+  );
+}
 
-  beforeEach(() => {
-    originalMcpCwd = process.env.MCP_CWD;
-    originalCwd = process.cwd();
+function writeMarker(root, marker) {
+  fs.writeFileSync(
+    path.join(root, '.workflow', 'logs', '.mcp-started-by'),
+    typeof marker === 'string' ? marker : JSON.stringify(marker, null, 2)
+  );
+}
 
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'list-running-pipelines-test-'));
-    projectPath = path.join(testDir, 'test-project');
-    fs.mkdirSync(projectPath);
+function writeLog(root, content = pipelineLog(), name = 'pipeline_2026-09-20_10-00-00.log') {
+  fs.writeFileSync(path.join(root, '.workflow', 'logs', name), content);
+}
 
-    logsDir = path.join(projectPath, '.workflow', 'logs');
-    fs.mkdirSync(logsDir, { recursive: true });
+function writeApproval(root, name, payload) {
+  const dir = path.join(root, '.workflow', 'approvals');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, name), JSON.stringify(payload, null, 2));
+}
 
-    process.env.MCP_CWD = testDir;
-  });
+/** Снимок по единственному проекту в рабочем каталоге. */
+async function snapshotOne() {
+  const all = await list_running_pipelines.execute({});
+  expect(all).toHaveLength(1);
+  return all[0];
+}
 
-  afterEach(() => {
+beforeEach(() => {
+  workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'list-running-'));
+  prevMcpCwd = process.env.MCP_CWD;
+  process.env.MCP_CWD = workspace;
+});
+
+afterEach(() => {
+  while (victims.length) {
     try {
-      process.chdir(originalCwd);
-      fs.rmSync(testDir, { recursive: true, force: true });
-    } catch (err) {
-      // ignore cleanup errors
+      victims.pop().kill();
+    } catch {
+      // мог завершиться сам
     }
-    process.env.MCP_CWD = originalMcpCwd;
+  }
+  if (prevMcpCwd === undefined) delete process.env.MCP_CWD;
+  else process.env.MCP_CWD = prevMcpCwd;
+  fs.rmSync(workspace, { recursive: true, force: true });
+});
+
+describe('источник pid', () => {
+  it('проект без lock и без .runner-pids пропускается', async () => {
+    makeProject('proj');
+
+    await expect(list_running_pipelines.execute({})).resolves.toEqual([]);
   });
 
-  describe('state determination', () => {
-    it.skip('should return state=running for fresh spawn with live PID', async () => {
-      // This would be tested with actual spawn:
-      // 1. Spawn a long-lived process
-      // 2. Write its PID to .runner-pids
-      // 3. Create a pipeline log
-      // 4. Call list_running_pipelines
-      // 5. Verify state='running'
-    });
+  it('pid берётся из .pipeline.lock', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
 
-    it('should return state=paused after pause_pipeline call', async () => {
-      // Setup: create pause state file
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog(),
-        marker: {
-          version: 1,
-          mcp_instance_id: 'workflow-mcp@test1234567890ab',
-          started_at: new Date().toISOString(),
-          pid: 9999,
-          run_id: 'pipeline_2026-04-27_10-00-00'
-        },
-        paused: {
-          pid: 9999,
-          paused_at: new Date().toISOString()
-        }
-      });
+    const entry = await snapshotOne();
 
-      // Skip actual function call as it's not yet exported
-      // const result = await list_running_pipelines();
-      // expect(result).toContainEqual(expect.objectContaining({ state: 'paused' }));
-
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
-
-    it('should return state=aborting during abort grace period', async () => {
-      // Setup: create .aborting marker file
-      const projectTemp = createTempProject({
-        pids: 9998,
-        logContent: createHealthyLog()
-      });
-
-      // Create .aborting marker
-      const aborting = path.join(projectTemp, '.workflow', 'logs', '.aborting');
-      fs.writeFileSync(aborting, '{}');
-
-      // Would test: state should be 'aborting'
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
-
-    it('should return state=completed when process exited normally with exit code 0', async () => {
-      // Setup: old log with exit code
-      const projectTemp = createTempProject({
-        logContent: createCompletedLog(),
-        logName: 'pipeline_2026-04-27_09-00-00.log'
-      });
-
-      // State determination should show 'completed' based on log analysis
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
-
-    it('should return state=killed when process is dead and exit code != 0', async () => {
-      // Setup: log with non-zero exit code
-      const projectTemp = createTempProject({
-        logContent: `2026-04-27T09:00:00Z [STAGE_START] stage=prepare step=1
-2026-04-27T09:00:02Z [exit] code=1`
-      });
-
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
+    expect(entry.pid).toBe(victim.pid);
+    expect(entry.project).toBe('proj');
   });
 
-  describe('foreign pipeline detection', () => {
-    it('should set foreign=true when marker has mismatched PID', async () => {
-      // Setup: marker with different PID than in .runner-pids
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog(),
-        marker: {
-          version: 1,
-          mcp_instance_id: 'workflow-mcp@different123456789',
-          started_at: new Date().toISOString(),
-          pid: 8888, // Different from .runner-pids
-          run_id: 'pipeline_2026-04-27_10-00-00'
-        }
-      });
+  it('.runner-pids работает как запасной источник и читается из корня проекта', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    // Именно корень проекта, не `.workflow/logs/`.
+    fs.writeFileSync(path.join(root, '.runner-pids'), String(victim.pid));
+    writeLog(root);
 
-      // Would test: foreign: true should be present in result
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
+    expect((await snapshotOne()).pid).toBe(victim.pid);
+  });
+});
 
-    it('should set foreign=true when marker has mismatched instance ID', async () => {
-      // Setup: marker with different instance ID
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog(),
-        marker: {
-          version: 1,
-          mcp_instance_id: 'workflow-mcp@differenthash1234567',
-          started_at: new Date().toISOString(),
-          pid: 9999,
-          run_id: 'pipeline_2026-04-27_10-00-00'
-        }
-      });
+describe('определение состояния', () => {
+  it('живой pid даёт running', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
 
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
+    expect((await snapshotOne()).state).toBe('running');
   });
 
-  describe('awaiting_approval field', () => {
-    it('should include awaiting_approval when pending approval file exists', async () => {
-      // Setup: create pending approval
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog(),
-        approvals: {
-          'step-142': {
-            step_id: 'step-142',
-            ticket_id: 'IMPL-37',
-            status: 'pending',
-            pending_since: '2026-04-27T10:00:00.000Z',
-            decided_at: null,
-            decision: null
-          }
-        }
-      });
+  it('мёртвый pid при живом lock даёт stale', async () => {
+    const root = makeProject('proj');
+    writeLock(root, DEAD_PID);
+    writeLog(root);
 
-      // Would test: awaiting_approval should contain step_id and since
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
+    const entry = await snapshotOne();
 
-    it('should NOT include awaiting_approval when no pending approvals', async () => {
-      // Setup: create approved (not pending) approval
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog(),
-        approvals: {
-          'step-142': {
-            step_id: 'step-142',
-            status: 'approved',
-            pending_since: '2026-04-27T10:00:00.000Z',
-            decided_at: '2026-04-27T10:05:00.000Z',
-            decision: 'approve'
-          }
-        }
-      });
-
-      // Would test: awaiting_approval should NOT be present
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
-
-    it('should include awaiting_approval with correct structure', async () => {
-      // Setup: pending approval with all fields
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog(),
-        approvals: {
-          'step-200': {
-            step_id: 'step-200',
-            status: 'pending',
-            pending_since: '2026-04-27T11:00:00.000Z'
-          }
-        }
-      });
-
-      // Would test structure:
-      // awaiting_approval: {
-      //   step_id: 'step-200',
-      //   since: '2026-04-27T11:00:00.000Z'
-      // }
-
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
+    expect(entry.state).toBe('stale');
+    expect(entry.stale_lock).toBe(true);
   });
 
-  describe('backward compatibility with Sprint 1', () => {
-    it('should include project field from Sprint 1', async () => {
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog()
-      });
+  it('файл паузы с тем же pid даёт paused', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
+    fs.writeFileSync(
+      path.join(root, '.workflow', 'state', 'pipeline-pause.json'),
+      JSON.stringify({ pid: victim.pid, paused_at: new Date().toISOString() })
+    );
 
-      // Would test: result should include project field
-      // project should be the discovered project name
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
-
-    it('should include run_id field from Sprint 1', async () => {
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog()
-      });
-
-      // Would test: result should include run_id
-      // extracted from pipeline_*.log filename
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
-
-    it('should include current_stage field from Sprint 1', async () => {
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog()
-      });
-
-      // Would test: result should include current_stage from log
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
-
-    it('should include step_number field from Sprint 1', async () => {
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog()
-      });
-
-      // Would test: result should include step_number from log
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
-
-    it('should include started_at field from marker', async () => {
-      const startedAt = new Date().toISOString();
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog(),
-        marker: {
-          version: 1,
-          mcp_instance_id: 'workflow-mcp@test1234567890ab',
-          started_at: startedAt,
-          pid: 9999,
-          run_id: 'pipeline_2026-04-27_10-00-00'
-        }
-      });
-
-      // Would test: started_at should be from marker
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
+    expect((await snapshotOne()).state).toBe('paused');
   });
 
-  describe('empty result handling', () => {
-    it('should return empty array when no projects have running pipelines', async () => {
-      // Setup: create temp dir without any .runner-pids
-      const projectTemp = createTempProject({});
+  it('файл паузы с чужим pid состояние не меняет', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
+    fs.writeFileSync(
+      path.join(root, '.workflow', 'state', 'pipeline-pause.json'),
+      JSON.stringify({ pid: DEAD_PID, paused_at: new Date().toISOString() })
+    );
 
-      // Would test: list_running_pipelines() returns []
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
-
-    it('should skip projects without .workflow directory', async () => {
-      // Setup: temp dir with some non-workflow projects
-      const projectTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'empty-projects-'));
-      fs.mkdirSync(path.join(projectTemp, 'regular-project'));
-      fs.mkdirSync(path.join(projectTemp, 'another-project'));
-
-      // Would test: list_running_pipelines() returns []
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
-
-    it('should skip projects with empty .runner-pids', async () => {
-      // Setup: project with empty .runner-pids
-      const projectTemp = createTempProject({});
-      const pidsFile = path.join(projectTemp, '.workflow', 'logs', '.runner-pids');
-      fs.writeFileSync(pidsFile, '');
-
-      // Would test: project is skipped, returns []
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
+    expect((await snapshotOne()).state).toBe('running');
   });
 
-  describe('multiple pipelines and projects', () => {
-    it.skip('should list multiple pipelines with correct state for each', async () => {
-      // Would test with multiple projects/PIDs
-      // Each should have correct state determination
-    });
+  it('маркер .aborting даёт aborting и перекрывает живой процесс', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
+    fs.writeFileSync(path.join(root, '.workflow', 'logs', '.aborting'), '');
 
-    it.skip('should aggregate results from multiple projects', async () => {
-      // Would test with multiple project dirs
-      // All with different states
-    });
+    expect((await snapshotOne()).state).toBe('aborting');
   });
 
-  describe('marker validation edge cases', () => {
-    it('should handle invalid marker JSON gracefully', async () => {
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog()
-      });
+  it('маркер .killed даёт killed', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
+    fs.writeFileSync(path.join(root, '.workflow', 'logs', '.killed'), '');
 
-      // Write invalid JSON to marker
-      const markerPath = path.join(projectTemp, '.workflow', 'logs', '.mcp-started-by');
-      fs.writeFileSync(markerPath, '{invalid json}');
+    expect((await snapshotOne()).state).toBe('killed');
+  });
+});
 
-      // Would test: should not crash, handles gracefully
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
+describe('чужие пайплайны', () => {
+  it('без маркера запуск считается чужим', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
 
-    it('should handle missing marker file gracefully', async () => {
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog()
-      });
+    const entry = await snapshotOne();
 
-      // Don't create marker file - test handles missing marker
-
-      // Would test: returns valid result without marker_valid/foreign fields
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
-
-    it('should handle unsupported marker version', async () => {
-      const projectTemp = createTempProject({
-        pids: 9999,
-        logContent: createHealthyLog(),
-        marker: {
-          version: 99, // Unsupported version
-          mcp_instance_id: 'workflow-mcp@test1234567890ab',
-          started_at: new Date().toISOString(),
-          pid: 9999,
-          run_id: 'pipeline_2026-04-27_10-00-00'
-        }
-      });
-
-      // Would test: handles version mismatch
-      fs.rmSync(projectTemp, { recursive: true, force: true });
-    });
+    expect(entry.foreign).toBe(true);
+    expect(entry.marker_valid).toBe(false);
   });
 
-  describe('output schema and field presence', () => {
-    it('should have consistent field names across results', () => {
-      // Would test output format consistency
-      // Fields: project, pid, state, run_id, current_stage, step_number
-      // Optional: foreign, awaiting_approval, started_at, last_log_at, marker_valid
+  it('свой маркер снимает признак чужого', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeMarker(root, {
+      version: 1,
+      mcp_instance_id: mcpInstanceId(workspace),
+      started_at: new Date().toISOString(),
+      pid: victim.pid
+    });
+    writeLog(root);
+
+    const entry = await snapshotOne();
+
+    expect(entry.marker_valid).toBe(true);
+    expect(entry.foreign).toBeUndefined();
+  });
+
+  it('чужой идентификатор экземпляра делает пайплайн чужим', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeMarker(root, {
+      version: 1,
+      mcp_instance_id: 'workflow-mcp@deadbeefdead',
+      started_at: new Date().toISOString(),
+      pid: victim.pid
+    });
+    writeLog(root);
+
+    const entry = await snapshotOne();
+
+    expect(entry.foreign).toBe(true);
+    expect(entry.marker_reason).toBeTruthy();
+  });
+
+  it('маркер с чужим pid делает пайплайн чужим', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeMarker(root, {
+      version: 1,
+      mcp_instance_id: mcpInstanceId(workspace),
+      started_at: new Date().toISOString(),
+      pid: victim.pid + 1
+    });
+    writeLog(root);
+
+    expect((await snapshotOne()).foreign).toBe(true);
+  });
+
+  it('битый маркер не роняет снимок целиком', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeMarker(root, '{ это не json');
+    writeLog(root);
+
+    const entry = await snapshotOne();
+
+    expect(entry.pid).toBe(victim.pid);
+    expect(entry.foreign).toBe(true);
+  });
+});
+
+describe('ожидание одобрения', () => {
+  it('pending-одобрение переводит running в paused и попадает в ответ', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
+    writeApproval(root, 'HUMAN-1_manual-gate-human_1.json', {
+      ticket_id: 'HUMAN-1',
+      stage_id: 'manual-gate-human',
+      status: 'pending',
+      created_at: new Date().toISOString()
     });
 
-    it('should not include internal implementation fields in output', () => {
-      // Would verify no .workflow paths or internal state is exposed
+    const entry = await snapshotOne();
+
+    expect(entry.state).toBe('paused');
+    expect(entry.awaiting_approval).toBeTruthy();
+  });
+
+  it('решённое одобрение в ответ не попадает', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
+    writeApproval(root, 'HUMAN-1_manual-gate-human_1.json', {
+      ticket_id: 'HUMAN-1',
+      status: 'approved'
     });
+
+    const entry = await snapshotOne();
+
+    expect(entry.awaiting_approval).toBeUndefined();
+    expect(entry.state).toBe('running');
+  });
+});
+
+describe('данные запуска из лога', () => {
+  it('run_id, стадия и номер шага берутся из последнего лога', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root, pipelineLog({ step: 7, stage: 'review-result' }));
+
+    const entry = await snapshotOne();
+
+    expect(entry.run_id).toBe('pipeline_2026-09-20_10-00-00');
+    expect(entry.current_stage).toBe('review-result');
+    expect(entry.step_number).toBe(7);
+  });
+
+  it('started_at берётся из lock', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    const stamp = '2026-09-20T08:30:00.000Z';
+    writeLock(root, victim.pid, { timestamp: stamp });
+    writeLog(root);
+
+    expect((await snapshotOne()).started_at).toBe(stamp);
+  });
+});
+
+describe('несколько проектов', () => {
+  it('снимок собирается по всем проектам и различает их состояния', async () => {
+    const victim = await spawnVictim();
+
+    const live = makeProject('live-proj');
+    writeLock(live, victim.pid);
+    writeLog(live);
+
+    const stale = makeProject('stale-proj');
+    writeLock(stale, DEAD_PID);
+    writeLog(stale);
+
+    // Без pid — в снимок не попадает вовсе.
+    makeProject('idle-proj');
+
+    const all = await list_running_pipelines.execute({});
+    const byName = Object.fromEntries(all.map((e) => [e.project, e]));
+
+    expect(Object.keys(byName).sort()).toEqual(['live-proj', 'stale-proj']);
+    expect(byName['live-proj'].state).toBe('running');
+    expect(byName['stale-proj'].state).toBe('stale');
+  });
+});
+
+describe('форма ответа', () => {
+  it('обязательные поля присутствуют, внутренние — нет', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
+
+    const entry = await snapshotOne();
+
+    for (const field of ['project', 'pid', 'state', 'marker_valid', 'run_id', 'current_stage', 'step_number']) {
+      expect(entry, `отсутствует поле ${field}`).toHaveProperty(field);
+    }
+    // Внутренняя кухня наружу не выдаётся.
+    for (const field of ['lock', 'marker', 'projectRoot', 'logAgeMs']) {
+      expect(entry).not.toHaveProperty(field);
+    }
   });
 });
