@@ -13,10 +13,6 @@ function isProcessAlive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-/**
- * Pid раннера. Единственный источник — lock; `.runner-pids` убран как фантом
- * (писателя нет ни в одном из трёх репозиториев).
- */
 
 /**
  * Get paused state for a PID.
@@ -34,6 +30,14 @@ function getPausedState(projectRoot, pid) {
 
 /**
  * Check for abort/kill markers.
+ */
+/**
+ * ВНИМАНИЕ: `.aborting` и `.killed` не пишет никто — ни этот сервер, ни раннер
+ * workflow-ai, ни расширение VS Code (проверено grep'ом по трём репозиториям).
+ * Состояния `aborting` и `killed`, которые обещает README, на практике не
+ * возникают. Тот же класс фантома, что убранный `.runner-pids`; выбор —
+ * начать их писать в `abort_pipeline`/`stop_pipeline` или убрать вместе с
+ * состояниями — зафиксирован в PLAN-001.
  */
 function getAbortKillMarkers(projectRoot) {
   let hasAbort = false, hasKill = false;

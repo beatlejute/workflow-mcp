@@ -12,7 +12,7 @@ import { spawn } from 'child_process';
 import { createHash } from 'crypto';
 import process from 'process';
 import { stopPipelineImpl } from '../../src/tools/pipeline.mjs';
-import { writeRunnerLock, removeRunnerLock, runnerLockPath } from '../helpers/pipeline-lock.mjs';
+import { writeRunnerLock, writeBrokenLock } from '../helpers/pipeline-lock.mjs';
 import { readPipelineLock } from '../../src/process/run-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -332,7 +332,7 @@ describe('stop_pipeline tool', () => {
 
   describe('TC-008: Пустой lock раннера → PIPELINE_NOT_RUNNING error', () => {
     it('should return PIPELINE_NOT_RUNNING when lock раннера пуст', async () => {
-      removeRunnerLock(projectPath);  // Empty file
+      writeBrokenLock(projectPath, 'empty');
 
       // Create marker file
       createMarker();

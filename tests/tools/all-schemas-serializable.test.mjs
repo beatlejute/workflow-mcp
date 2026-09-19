@@ -89,14 +89,17 @@ describe('сериализация inputSchema через конвертер SDK
   });
 });
 
-describe('сериализация outputSchema, где она объявлена', () => {
-  const withOutput = tools.filter((t) => t.outputSchema);
+const withOutput = tools.filter((t) => t.outputSchema);
 
-  it('инструменты без outputSchema не мешают', () => {
-    expect(withOutput.length).toBeLessThanOrEqual(tools.length);
+describe('сериализация outputSchema', () => {
+  // Сегодня `outputSchema` не объявляет ни один инструмент. Фиксируем это
+  // явно: когда первый появится, проверка ниже перестанет быть пустой и
+  // начнёт его гонять, а не молча пропустит.
+  it('перечень инструментов с outputSchema', () => {
+    expect(withOutput.map((t) => t.name)).toEqual([]);
   });
 
-  it.each(withOutput.map((t) => [t.name, t]))('%s', (_name, tool) => {
+  it.skipIf(withOutput.length === 0).each(withOutput.map((t) => [t.name, t]))('%s', (_name, tool) => {
     const normalized = normalizeObjectSchema(tool.outputSchema);
     expect(normalized).toBeTruthy();
     const jsonSchema = toJsonSchemaCompat(normalized, {

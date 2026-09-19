@@ -10,7 +10,6 @@ import { discoverProjects, readConfig } from '../discovery.mjs';
 import { parseFrontmatter } from 'workflow-ai/lib/utils.mjs';
 import { workflowAiPath } from '../lib/workflow-ai.mjs';
 import { mcpCwd } from '../lib/project-root.mjs';
-import { readPipelineLock } from '../process/run-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,97 +42,15 @@ const pipelineStateSubscribers = new Set();
 let pipelineStateNotificationHandler = null;
 let pipelineStateCache = null;
 let pipelineStateCoalesceTimer = null;
-const pipelineStateWatchers = new Map(); // projectName -> { runnerPidsWatcher, approvalsWatcher }
+const pipelineStateWatchers = new Map(); // projectName -> { logsWatcher, approvalsWatcher }
 
 function getCoalesceWindowMs(cwd) {
   const config = readConfig(cwd);
   return (config.notifications?.coalesce_window_ms ?? 200);
 }
 
-function isProcessAlive(pid) {
-  if (!pid || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; }
-  catch { return false; }
-}
-
-/**
- * Pid раннера из lock-файла. `.runner-pids` убран как фантом: писателя нет ни
- * в одном из трёх репозиториев, а читателей было пять.
- */
-function readLatestPid(projectRoot) {
-  const lock = readPipelineLock(projectRoot);
-  return lock ? lock.pid : null;
-}
-
-function getPausedState(projectRoot, pid) {
-  try {
-    const pauseFile = path.join(projectRoot, '.workflow', 'state', 'pipeline-pause.json');
-    if (fs.existsSync(pauseFile)) {
-      const data = JSON.parse(fs.readFileSync(pauseFile, 'utf-8'));
-      return data.pid === pid;
-    }
-  } catch { }
-  return false;
-}
-
-function getAbortKillMarkers(projectRoot) {
-  let hasAbort = false, hasKill = false;
-  try {
-    hasAbort = fs.existsSync(path.join(projectRoot, '.workflow', 'logs', '.aborting'));
-    hasKill = fs.existsSync(path.join(projectRoot, '.workflow', 'logs', '.killed'));
-  } catch { }
-  return { hasAbortMarker: hasAbort, hasKillMarker: hasKill };
-}
-
-function getAwaitingApproval(projectRoot) {
-  const approvalsDir = path.join(projectRoot, '.workflow', 'approvals');
-  if (!fs.existsSync(approvalsDir)) return null;
-  try {
-    for (const file of fs.readdirSync(approvalsDir).filter(f => f.endsWith('.json'))) {
-      const fp = path.join(approvalsDir, file);
-      const data = JSON.parse(fs.readFileSync(fp, 'utf-8'));
-      if (data.status === 'pending') {
-        return {
-          step_id: data.step_id || data.id || file.replace('.json', ''),
-          since: data.created_at || data.since || new Date(fs.statSync(fp).mtime).toISOString()
-        };
-      }
-    }
-  } catch { }
-  return null;
-}
-
-function determinePipelineState({ pidAlive, paused, hasAbortMarker, hasKillMarker, logAgeMs, logHasExitCode, logExitCode }) {
-  if (paused) return 'paused';
-  if (hasAbortMarker) return 'aborting';
-  if (hasKillMarker) return 'killed';
-  if (pidAlive) return 'running';
-  if (logHasExitCode) return logExitCode === 0 ? 'completed' : 'killed';
-  return logAgeMs < 30000 ? 'completed' : 'completed';
-}
-
-function getLogExitInfo(projectRoot) {
-  const logsDir = path.join(projectRoot, '.workflow', 'logs');
-  if (!fs.existsSync(logsDir)) return { ageMs: Infinity, hasExitCode: false, exitCode: null };
-  try {
-    const files = fs.readdirSync(logsDir)
-      .filter(f => f.startsWith('pipeline-') && f.endsWith('.log'))
-      .map(f => ({ name: f, mtime: fs.statSync(path.join(logsDir, f)).mtime.getTime() }))
-      .sort((a, b) => b.mtime - a.mtime);
-    if (files.length === 0) return { ageMs: Infinity, hasExitCode: false, exitCode: null };
-    const latest = files[0];
-    const content = fs.readFileSync(path.join(logsDir, latest.name), 'utf-8');
-    for (const line of content.split('\n').reverse()) {
-      if (line.includes('[exit]')) {
-        const m = line.match(/code=(\d+)/);
-        if (m) return { ageMs: Date.now() - latest.mtime, hasExitCode: true, exitCode: parseInt(m[1], 10) };
-      }
-    }
-    return { ageMs: Date.now() - latest.mtime, hasExitCode: false, exitCode: null };
-  } catch {
-    return { ageMs: Infinity, hasExitCode: false, exitCode: null };
-  }
-}
+// Логика снимка состояния пайплайна живёт в `resources/pipeline-state.mjs`.
+// Здесь её копия пролежала неиспользованной: семь функций, ни одного вызова.
 
 export function startProjectWatchers(projectRoot, projectName, cwd) {
   if (pipelineStateWatchers.has(projectName)) return;
@@ -147,21 +64,24 @@ export function startProjectWatchers(projectRoot, projectName, cwd) {
   const coalesceMs = getCoalesceWindowMs(cwd);
   let rw = null, aw = null;
   try {
-    if (fs.existsSync(logsDir)) {
-      rw = fs.watch(logsDir, (_event, filename) => {
-        if (filename && !String(filename).startsWith('.pipeline.lock')) return;
-        scheduleCoalesceUpdate(cwd, coalesceMs);
-      });
-    }
+    // Каталог создаётся `workflow init`, но он же в `.gitignore`: у свежего
+    // клона до первого прогона логов нет. `fs.watch` по несуществующему пути
+    // ничего не даёт и молча, поэтому каталог создаётся здесь — иначе
+    // подписка до первого пайплайна остаётся глухой, ровно как раньше.
+    fs.mkdirSync(logsDir, { recursive: true });
+    rw = fs.watch(logsDir, (_event, filename) => {
+      if (filename && !String(filename).startsWith('.pipeline.lock')) return;
+      scheduleCoalesceUpdate(cwd, coalesceMs);
+    });
   } catch { }
   try { if (fs.existsSync(approvalsDir)) aw = fs.watch(approvalsDir, { recursive: true }, () => scheduleCoalesceUpdate(cwd, coalesceMs)); } catch { }
-  pipelineStateWatchers.set(projectName, { runnerPidsWatcher: rw, approvalsWatcher: aw });
+  pipelineStateWatchers.set(projectName, { logsWatcher: rw, approvalsWatcher: aw });
 }
 
 export function stopProjectWatchers(projectName) {
   const w = pipelineStateWatchers.get(projectName);
   if (!w) return;
-  try { if (w.runnerPidsWatcher) w.runnerPidsWatcher.close(); } catch { }
+  try { if (w.logsWatcher) w.logsWatcher.close(); } catch { }
   try { if (w.approvalsWatcher) w.approvalsWatcher.close(); } catch { }
   pipelineStateWatchers.delete(projectName);
 }

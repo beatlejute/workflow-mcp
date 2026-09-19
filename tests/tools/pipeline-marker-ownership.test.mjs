@@ -5,8 +5,8 @@
  * `.mcp-started-by` pid порождённого раннера, а `pause`/`resume`/`abort`/`stop`
  * сверяли это поле с `process.pid` самого сервера — совпасть нельзя никогда,
  * и управление своим же пайплайном всегда отвечало `PID_MISMATCH`. Затем pid
- * для сигналов брался только из `lock раннера`, которого не пишет никто, — и
- * отказ просто переехал в `PIPELINE_NOT_RUNNING`.
+ * для сигналов брался только из `.runner-pids`, которого не писал никто, — и
+ * отказ просто переехал в `NO_RUNNER_PIDS`.
  *
  * Сейчас в маркере лежит pid раннера, а сверяется он с живым pid из
  * `.pipeline.lock`. Из этого следуют три свойства, каждое проверено ниже:
@@ -31,8 +31,6 @@ import {
 } from '../../src/tools/pipeline.mjs';
 import { readMarker } from '../../src/process/marker.mjs';
 import { mcpInstanceId } from '../../src/lib/project-root.mjs';
-import { writeRunnerLock, removeRunnerLock } from '../helpers/pipeline-lock.mjs';
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.dirname(path.dirname(__dirname));
 

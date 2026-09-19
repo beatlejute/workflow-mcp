@@ -17,7 +17,7 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import * as resourcesIndex from '../../src/resources/index.mjs';
-import { writeRunnerLock, removeRunnerLock, runnerLockPath } from '../helpers/pipeline-lock.mjs';
+import { writeRunnerLock, runnerLockPath } from '../helpers/pipeline-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

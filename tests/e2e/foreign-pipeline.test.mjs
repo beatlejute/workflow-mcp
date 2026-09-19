@@ -11,7 +11,8 @@ import os from 'os';
 import { spawn } from 'child_process';
 import process from 'process';
 import { fileURLToPath } from 'url';
-import { writeRunnerLock, removeRunnerLock, runnerLockPath } from '../helpers/pipeline-lock.mjs';
+import { writeRunnerLock, runnerLockPath } from '../helpers/pipeline-lock.mjs';
+import { readPipelineLock } from '../../src/process/run-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -52,12 +53,14 @@ describe('E2E: foreign-pipeline protection', () => {
     process.env = { ...originalEnv };
     process.chdir(originalCwd);
 
-    // Kill any remaining test processes
-    const runnerPidsPath = runnerLockPath(projectPath);
-    if (fs.existsSync(runnerPidsPath)) {
+    // Kill any remaining test processes.
+    // Раньше здесь парсился `.runner-pids` — одно число в файле. Lock раннера
+    // это JSON, и `parseInt` над ним даёт NaN: уборка молча не выполнялась и
+    // оставляла процессы-сироты. Читаем поле `pid`.
+    if (fs.existsSync(runnerLockPath(projectPath))) {
       try {
-        const pidStr = fs.readFileSync(runnerPidsPath, 'utf-8').trim();
-        const pid = parseInt(pidStr);
+        const lock = readPipelineLock(projectPath);
+        const pid = lock ? lock.pid : 0;
         if (pid > 0 && process.platform !== 'win32') {
           try {
             process.kill(-pid, 'SIGKILL'); // Kill process group
@@ -93,8 +96,9 @@ describe('E2E: foreign-pipeline protection', () => {
       const foreignPid = proc.pid;
       expect(foreignPid).toBeGreaterThan(0);
 
-      // Write lock раннера as if CLI started the pipeline
-      writeRunnerLock(projectPath, foreignPid);
+      // Lock, как его пишет запуск из CLI: `started_by: 'cli'`. По умолчанию
+      // помощник ставит `'mcp'`, и фикстура описывала бы не тот сценарий.
+      writeRunnerLock(projectPath, foreignPid, { started_by: 'cli' });
 
       // Intentionally NO marker file (.mcp-started-by) — simulating CLI-started pipeline
       const markerPath = path.join(logsDir, '.mcp-started-by');

@@ -48,3 +48,25 @@ export function removeRunnerLock(projectRoot) {
     // нет файла — нечего снимать
   }
 }
+
+/**
+ * Кладёт lock, который нельзя использовать: пустой файл, не-JSON или JSON без
+ * годного `pid`. Раннер может оставить такой при падении посреди записи —
+ * инструменты обязаны отвечать `PIPELINE_NOT_RUNNING`, а не падать.
+ *
+ * @param {string} projectRoot
+ * @param {'empty'|'garbage'|'no-pid'|'bad-pid'} [kind]
+ */
+export function writeBrokenLock(projectRoot, kind = 'empty') {
+  const logsDir = path.join(projectRoot, '.workflow', 'logs');
+  fs.mkdirSync(logsDir, { recursive: true });
+
+  const body = {
+    empty: '',
+    garbage: '{ это не json',
+    'no-pid': JSON.stringify({ timestamp: new Date().toISOString(), started_by: 'mcp' }),
+    'bad-pid': JSON.stringify({ pid: 0, timestamp: new Date().toISOString() })
+  }[kind];
+
+  fs.writeFileSync(path.join(logsDir, '.pipeline.lock'), body);
+}

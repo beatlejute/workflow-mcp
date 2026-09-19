@@ -13,7 +13,7 @@ import { spawn } from 'child_process';
 import process from 'process';
 import { pausePipelineImpl, resumePipelineImpl } from '../../src/tools/pipeline.mjs';
 import * as resources from '../../src/resources/index.mjs';
-import { writeRunnerLock, removeRunnerLock } from '../helpers/pipeline-lock.mjs';
+import { writeRunnerLock } from '../helpers/pipeline-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

@@ -173,6 +173,11 @@ describe('определение состояния', () => {
     expect((await snapshotOne()).state).toBe('running');
   });
 
+  // `.aborting` и `.killed` читаются (`resources/pipeline-state.mjs:37-38`), но
+  // не пишутся никем — ни сервером, ни раннером, ни расширением. Тесты ниже
+  // проверяют читателя, а не существующий контракт: состояния `aborting` и
+  // `killed`, обещанные в README, в жизни не возникают. Это тот же класс
+  // фантома, что `.runner-pids`; решение вынесено в PLAN-001.
   it('маркер .aborting даёт aborting и перекрывает живой процесс', async () => {
     const victim = await spawnVictim();
     const root = makeProject('proj');

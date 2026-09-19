@@ -15,7 +15,7 @@ import { spawn } from 'child_process';
 import process from 'process';
 import { createHash } from 'crypto';
 import { abortPipelineImpl } from '../../src/tools/pipeline.mjs';
-import { writeRunnerLock, removeRunnerLock } from '../helpers/pipeline-lock.mjs';
+import { writeRunnerLock, writeBrokenLock } from '../helpers/pipeline-lock.mjs';
 import { readPipelineLock } from '../../src/process/run-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -304,15 +304,20 @@ describe('abort_pipeline tool', () => {
       expect(result.code).toBe('PIPELINE_NOT_RUNNING');
     });
 
-    it('should return PIPELINE_NOT_RUNNING when lock раннера пуст', async () => {
-      createMarker();
-      removeRunnerLock(projectPath);
+    it.each([['empty'], ['garbage'], ['no-pid'], ['bad-pid']])(
+      'should return PIPELINE_NOT_RUNNING when lock испорчен (%s)',
+      async (kind) => {
+        // Раннер может оставить обрывок при падении посреди записи. Отвечать
+        // надо «пайплайн не запущен», а не падать на разборе.
+        createMarker();
+        writeBrokenLock(projectPath, kind);
 
-      const result = await abortPipelineImpl('.');
+        const result = await abortPipelineImpl('.');
 
-      expect(result.ok).toBe(false);
-      expect(result.code).toBe('PIPELINE_NOT_RUNNING');
-    });
+        expect(result.ok).toBe(false);
+        expect(result.code).toBe('PIPELINE_NOT_RUNNING');
+      }
+    );
   });
 
   describe('TC-007: Grace period behavior — escalated=true after SIGTERM escalation', () => {
