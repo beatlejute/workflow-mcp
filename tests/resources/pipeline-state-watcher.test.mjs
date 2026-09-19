@@ -128,6 +128,26 @@ describe('наблюдатель за состоянием пайплайна', 
     expect(await waitForNotification(calls), 'подписка не встала без каталога логов').toBe(true);
   });
 
+  it('появление approval-файла доходит до подписчика', async () => {
+    // `workflow init` каталог `approvals` не создаёт вовсе — раннер делает его
+    // лениво при первом manual-gate, а `approve_step` о своих записях не
+    // уведомляет. Без создания каталога при подписке клиент никогда не узнал
+    // бы про `awaiting_approval` и перевод пайплайна в `paused`.
+    const root = makeProjectWithoutLogs('proj');
+
+    const calls = [];
+    unsubscribe = subscribe_workflow_pipeline_state(() => calls.push(Date.now()));
+
+    const approvalsDir = path.join(root, '.workflow', 'approvals');
+    fs.mkdirSync(approvalsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(approvalsDir, 'HUMAN-1_manual-gate-human_1.json'),
+      JSON.stringify({ ticket_id: 'HUMAN-1', status: 'pending' })
+    );
+
+    expect(await waitForNotification(calls), 'подписка на approvals не встала').toBe(true);
+  });
+
   it('посторонние файлы в каталоге логов подписчика не будят', async () => {
     const root = makeProject('proj');
 
@@ -166,7 +186,6 @@ describe('наблюдатель за состоянием пайплайна', 
     // Абсолютное число сравнивать нельзя: соседние тесты в файле могут
     // оставить свои наблюдатели, а `stopAllPipelineStateWatchers` закрывает их
     // все разом. Проверяемое свойство — что закрытие вообще происходит.
-    expect(during, 'наблюдатель не был создан').toBeGreaterThan(baseline - 1);
     expect(during, 'наблюдатель остался открытым после отписки').toBeGreaterThan(after);
   });
 

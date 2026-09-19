@@ -29,9 +29,6 @@ function getPausedState(projectRoot, pid) {
 }
 
 /**
- * Check for abort/kill markers.
- */
-/**
  * ВНИМАНИЕ: `.aborting` и `.killed` не пишет никто — ни этот сервер, ни раннер
  * workflow-ai, ни расширение VS Code (проверено grep'ом по трём репозиториям).
  * Состояния `aborting` и `killed`, которые обещает README, на практике не

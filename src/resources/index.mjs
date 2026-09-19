@@ -74,7 +74,15 @@ export function startProjectWatchers(projectRoot, projectName, cwd) {
       scheduleCoalesceUpdate(cwd, coalesceMs);
     });
   } catch { }
-  try { if (fs.existsSync(approvalsDir)) aw = fs.watch(approvalsDir, { recursive: true }, () => scheduleCoalesceUpdate(cwd, coalesceMs)); } catch { }
+  try {
+    // Та же история, что с каталогом логов, только хуже: `workflow init`
+    // `approvals` вообще не создаёт, раннер делает его лениво при первом
+    // manual-gate, а `approve_step` о своих записях не уведомляет. Подписка,
+    // поставленная до первого гейта проекта, иначе никогда не узнала бы про
+    // `awaiting_approval` и перевод в `paused`.
+    fs.mkdirSync(approvalsDir, { recursive: true });
+    aw = fs.watch(approvalsDir, { recursive: true }, () => scheduleCoalesceUpdate(cwd, coalesceMs));
+  } catch { }
   pipelineStateWatchers.set(projectName, { logsWatcher: rw, approvalsWatcher: aw });
 }
 

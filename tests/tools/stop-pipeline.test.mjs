@@ -331,8 +331,10 @@ describe('stop_pipeline tool', () => {
   });
 
   describe('TC-008: Пустой lock раннера → PIPELINE_NOT_RUNNING error', () => {
-    it('should return PIPELINE_NOT_RUNNING when lock раннера пуст', async () => {
-      writeBrokenLock(projectPath, 'empty');
+    it.each([['empty'], ['garbage'], ['no-pid'], ['bad-pid']])(
+      'should return PIPELINE_NOT_RUNNING when lock испорчен (%s)',
+      async (kind) => {
+      writeBrokenLock(projectPath, kind);
 
       // Create marker file
       createMarker();
@@ -342,7 +344,8 @@ describe('stop_pipeline tool', () => {
 
       expect(result.ok).toBe(false);
       expect(result.code).toBe('PIPELINE_NOT_RUNNING');
-    });
+      }
+    );
   });
 
   describe('TC-009: Invalid project path → error', () => {

@@ -173,7 +173,8 @@ describe('определение состояния', () => {
     expect((await snapshotOne()).state).toBe('running');
   });
 
-  // `.aborting` и `.killed` читаются (`resources/pipeline-state.mjs:37-38`), но
+  // `.aborting` и `.killed` читает `getAbortKillMarkers` в
+  // `resources/pipeline-state.mjs`, но
   // не пишутся никем — ни сервером, ни раннером, ни расширением. Тесты ниже
   // проверяют читателя, а не существующий контракт: состояния `aborting` и
   // `killed`, обещанные в README, в жизни не возникают. Это тот же класс
