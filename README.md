@@ -40,6 +40,12 @@ const diff = await client.callTool('git_diff', { project: 'my-project', staged: 
 - `run_skill_tests(project, {skill_name, test_ids?, parallel?, timeout_sec?})` — прогон тестов скила со структурированным результатом
 - `create_coach_ticket(project, {target_skill, gap_description, evidence_path?, priority?})` — создание coach-gap тикета на улучшение скила
 
+> **`run_skill` требует раннера, которого нет.** Tool зовёт
+> `<project>/.workflow/src/scripts/run-skill.js`; этот скрипт не поставляется
+> ни пакетом `workflow-ai`, ни `workflow init`, поэтому в реальном проекте
+> вызов возвращает `SKILL_RUNNER_UNAVAILABLE`. `run_skill_tests` этим не
+> затронут — его скрипт `run-skill-tests.js` на месте.
+
 **Пример:**
 ```javascript
 // Запуск скила
@@ -58,12 +64,12 @@ const testResult = await client.callTool('run_skill_tests', {
 // Возвращает: { skill_name: 'execute-task', summary: { pass: 5, fail: 0, skipped: 1 }, results: [...] }
 ```
 
-### Аналитические инструменты (4 новых tools)
+### Аналитические инструменты (4 tools)
 
 Прикладные метрики скорости и эффективности воркфлоу проекта. Метрики вычисляются по frontmatter тикетов (отдельное хранилище аналитики не требуется).
 
 - `get_velocity(project, {window_days?, group_by?})` — метрика velocity, сгруппированная по дням или неделям
-- `get_cycle_time(project, {window_days?, percentiles?})` — статистика cycle time (p50, p90, среднее в секундах)
+- `get_cycle_time(project, {window_days?, percentiles?})` — статистика cycle time (перцентили и среднее в секундах)
 - `get_ticket_stats(project, {window_days?})` — распределение тикетов по статусам, типам, top-N заблокированных
 - `aggregate_metrics({projects?, window_days?})` — агрегация аналитики по нескольким проектам
 
@@ -89,10 +95,15 @@ const velocity = await client.callTool('get_velocity', {
 - ловить тренды: проседание velocity сигнализирует о блокерах или расширении scope;
 - прогнозировать: оценивать срок завершения спринта по текущей velocity и остатку тикетов.
 
-`get_cycle_time` (p50/p90) помогает понять эффективность:
+`get_cycle_time` (по умолчанию p50/p90) помогает понять эффективность:
 - **p50** — медиана времени от создания до завершения тикета (типичная длительность);
 - **p90** — 90-й перцентиль (как долго длятся «самые медленные» 10% тикетов; индикатор выбросов и сложных задач);
 - комбинация velocity + cycle_time позволяет ловить узкие места (например, высокий p90 + низкая velocity = задержки в процессе).
+
+> `get_velocity` и `get_cycle_time` существовали как функции с первого коммита,
+> но зарегистрированы как MCP-tools были только сейчас — до этого `callTool`
+> по этим именам возвращал `Tool not found`, хотя README и CHANGELOG 1.2.0
+> обещали обратное.
 
 ### Инструмент поиска
 - `cross_project_search({query, projects?, type?, max_results?})` — быстрый поиск кода по нескольким проектам через ripgrep
@@ -101,7 +112,150 @@ const velocity = await client.callTool('get_velocity', {
 - детектор расхождения веток (branch divergence) с настраиваемыми порогами
 - алёрты на висящие approval-тикеты
 
+## Управление пайплайном (7 tools)
+
+Запуск и контроль раннера workflow-ai. Все tools принимают `project` — путь
+относительно корня рабочей области (`MCP_CWD`) либо абсолютный.
+
+Схемы резолва две, и они не совпадают. `git_*` требуют имя из discovery и
+абсолютный путь не принимают; остальные tools делают `path.resolve(MCP_CWD, project)`
+и проверяют наличие `.workflow/`, не заглядывая в discovery. В multi-project
+раскладке (проекты — прямые потомки `MCP_CWD`) обе схемы дают один результат
+для имени проекта. В single-project (`.workflow/` в самом `MCP_CWD`) расходятся:
+`git_*` понимают имя проекта, остальные — только путь.
+
+- `start_pipeline(project, {plan?, config?})` — запускает `workflow run` detached-процессом. Возвращает `{ok, run_id, pid, started_at, log_path}`. Синглтон держит сам раннер через `.workflow/logs/.pipeline.lock`; если lock жив — `{ok: false, code: 'ALREADY_RUNNING', pid, started_at}`; lock мёртвого процесса снимается автоматически. Если pid жив, но сам процесс стартовал позже записи lock'а — это не раннер, а занявший номер посторонний процесс: ответ `{ok: false, code: 'STALE_PIPELINE_LOCK', pid}`, а lock остаётся на месте — удалять его решает человек, чтобы ошибка проверки не подняла второй пайплайн поверх живого. Ждёт появления лога до 10 секунд, иначе `RUNNER_NO_LOG`.
+- `get_pipeline_log(project, options: {tail_lines?, offset_bytes?, run_id?})` — содержимое лога с курсором. `tail_lines` по умолчанию 200, максимум 5000 (иначе `TOO_MANY_LINES`); без `run_id` берётся последний прогон. Возвращает `{run_id, lines, log_path, log_size_bytes, truncated}`.
+- `list_running_pipelines()` — все идущие пайплайны по обнаруженным проектам: `state` (`running|paused|aborting|killed|completed|stale`), текущая стадия, номер шага, `awaiting_approval`, `marker_valid`, а также `foreign`, `stale_lock` и `marker_reason`, когда они применимы. Параметров нет.
+- `pause_pipeline(project)` — `SIGSTOP` на POSIX, `pssuspend.exe` на Windows. Возвращает `{ok, pid, state: 'paused', paused_at}`; повторный вызов идемпотентен и отдаёт `code: 'ALREADY_PAUSED'`. Если средство приостановки недоступно — `PAUSE_UNSUPPORTED`.
+- `resume_pipeline(project)` — снимает паузу (`SIGCONT` / `pssuspend -r`).
+- `abort_pipeline(project, options: {grace_sec?})` — мягкая остановка: `SIGINT` → ожидание → `SIGTERM`. `grace_sec` зажимается в `[0, 60]`, по умолчанию 10. Возвращает `{ok, pid, state: 'aborted', duration_ms, escalated}`. Если раннер успел выйти сам за grace-окно — `escalated: false` без жёсткого сигнала; если за это время владение потеряно — `{ok: false, code: 'OWNERSHIP_LOST'}`.
+- `stop_pipeline(project, options: {force?})` — жёсткое убийство (`SIGKILL` / `taskkill /F /T`). Возвращает `{ok, pid, state: 'killed'}`.
+
+Обратите внимание: у `get_pipeline_log`, `abort_pipeline` и `stop_pipeline`
+дополнительные параметры лежат во вложенном объекте `options`, а не рядом с
+`project` — в отличие от `start_pipeline` и всех `git_*`-tools.
+
+**Пример:**
+```javascript
+const run = await client.callTool('start_pipeline', {
+  project: 'my-project',
+  plan: 'PLAN-017'
+});
+// { ok: true, run_id: 'pipeline_2026-09-19_14-30-00', pid: 12345, started_at: '...', log_path: '...' }
+
+const log = await client.callTool('get_pipeline_log', {
+  project: 'my-project',
+  options: { tail_lines: 50, run_id: run.run_id }
+});
+```
+
+> **Владение процессом.** `pause`/`resume`/`abort`/`stop` отказываются трогать пайплайн,
+> запущенный не этой рабочей областью. Владение привязано к запуску, а не к процессу
+> сервера: пайплайн остаётся своим и после перезапуска клиента. Сверяются четыре вещи:
+>
+> - `.workflow/logs/.mcp-started-by` — pid раннера и `mcp_instance_id` рабочей области;
+> - `started_by` из `.pipeline.lock` — запуск из CLI не наш (`STARTED_BY_MISMATCH`);
+> - `run_id` — маркер и lock должны описывать один запуск (`RUN_MISMATCH`);
+> - время старта процесса — настоящий раннер стартовал не позже записи lock'а
+>   (`PID_REUSED`). Время берётся у ОС (`Get-Process` на Windows, `ps -o lstart=` на
+>   POSIX); если узнать не удалось — проверка пропускается, чтобы недоступная
+>   системная утилита не запрещала управлять своим же пайплайном.
+>
+> Обход — `force: true` у `stop_pipeline` либо `WORKFLOW_MCP_FORCE_FOREIGN=1`. **Кроме случая
+> `STALE_PIPELINE_LOCK`:** там pid из lock'а принадлежит уже другому процессу, и `force`
+> убьёт постороннее дерево. Такой lock нужно удалить руками: сервер его не сносит
+> ни в `stop`, ни в `start_pipeline` — ошибка проверки стоила бы второго пайплайна
+> поверх живого.
+>
+> Список `list_running_pipelines` делает только три дешёвые проверки из четырёх: время
+> старта процесса там не запрашивается (это внешний вызов на каждый проект при
+> каждом запросе). Поэтому протухший lock с переиспользованным pid в списке выглядит
+> как идущий свой пайплайн, а `stop`/`pause`/`abort` откажут с `STALE_PIPELINE_LOCK`.
+
+## Approvals, диагностика и отчёты (5 tools)
+
+- `approve_step(project, {step_id, decision, comment?, decided_by?})` — решение по manual-gate стадии. `decision` — `approve` или `reject`, `comment` до 1000 символов, `decided_by` по умолчанию `mcp-client`. Пишет `.workflow/approvals/{step_id}.json`. `step_id` можно задавать и префиксом: раннер именует файлы как `{TICKET}_{stage}_{N}`, и если под префикс подходит ровно один pending — он и берётся; если несколько, вернётся `AMBIGUOUS_STEP_ID` со списком кандидатов. Идемпотентен: повторное решение по тому же шагу возвращает `{ok: false, code: 'ALREADY_DECIDED', previous_decision, decided_at, decided_by}`.
+- `list_blocked_tickets({project?})` — тикеты из `.workflow/tickets/blocked/` по всем проектам или по одному. Возвращает `{project_filter, count, tickets[]}`.
+- `list_ghost_executions({project?, since?})` — скан логов пайплайна на маркеры ghost-execution (маркер настраивается через `health.ghost_execution_log_marker`). `since` — ISO 8601. Возвращает `{project_filter, count, truncated, executions[]}`.
+- `list_reports(project, {since?, limit?})` — отчёты проекта, отсортированные по `created_at` убыванию. `limit` по умолчанию 50.
+- `get_report(project, {report_id})` — один отчёт: `{frontmatter, body, path}`. `report_id` — только буквы, цифры и дефисы.
+
+**Пример:**
+```javascript
+await client.callTool('approve_step', {
+  project: 'my-project',
+  step_id: 'manual-gate-human',
+  decision: 'approve',
+  comment: 'Проверено вручную'
+});
+
+const blocked = await client.callTool('list_blocked_tickets', {});
+// { project_filter: 'all', count: 3, tickets: [{ project, id, title, ... }] }
+```
+
+> **Изменение формата ответа.** До этой версии `list_ghost_executions`,
+> `list_reports` и `get_report` заворачивали результат в `content[]` внутри
+> себя, а сервер оборачивал его ещё раз — клиент получал
+> `{"content":[{"type":"text","text":"<данные>"}]}` вместо самих данных.
+> Лишняя обёртка убрана, теперь эти три tools отдают данные так же, как все
+> остальные. Код, который разбирал их результат с поправкой на вложенность,
+> нужно поправить.
+
+## Тикеты, планы, скилы и human-очередь (12 tools)
+
+Операции над содержимым `.workflow` конкретного проекта.
+
+**Тикеты:**
+- `list_tickets(project, {status?, plan_id?, priority?, type?})` — список тикетов с фильтрами. `status` — одна из директорий `backlog`, `ready`, `in-progress`, `review`, `blocked`, `done`, `archive`; без него сканируются все.
+- `get_ticket(project, {ticket_id})` — `{frontmatter, body, status_from_dir, path}`. Статус берётся из имени директории, а не из frontmatter.
+- `create_ticket(project, {type, title, priority?, plan_id?, body?})` — создание тикета в backlog. `priority` — число, 1 = высший, по умолчанию 3. При `type: 'human'` в frontmatter дополнительно проставляется `executor_type: human`.
+- `move_ticket(project, {ticket_id, target})` — перемещение между статусами с проверкой допустимости перехода.
+- `pick_next_ticket(project)` — следующий тикет в работу по правилам приоритизации проекта.
+
+**Планы:**
+- `list_plans(project, {status?})` — планы проекта; статусы `draft`, `approved`, `active`, `completed`, `archived`.
+- `get_plan(project, {plan_id})` — план с телом и присоединёнными тикетами, разделёнными на обычные и human.
+
+**Скилы:**
+- `list_skills({project?})` — скилы проекта: подключённые из глобальной установки (`shared`) и скопированные в проект (`ejected`); без `project` — только общие.
+
+**Human-очередь:**
+- `list_human_queue({project?, status?})` — HUMAN-тикеты по всем обнаруженным проектам или по одному.
+- `get_human_context(project, {ticket_id})` — расширенный контекст HUMAN-тикета: сам тикет, родительский план, зависимости, связанные отчёты и шаги пайплайна.
+- `resolve_human_ticket(project, {ticket_id, decision, result_body, next_status?, strict?})` — дописывает секцию результата и переводит тикет в следующий статус (по умолчанию `done`).
+
+**Проект:**
+- `get_project_status(project)` — счётчики тикетов по статусам, активный план, последние шаги пайплайна и висящие human-задачи.
+
+**Пример:**
+```javascript
+const plan = await client.callTool('get_plan', {
+  project: 'my-project',
+  plan_id: 'PLAN-017'
+});
+// { frontmatter, body, tickets: [...], human_tickets: [...] }
+
+await client.callTool('move_ticket', {
+  project: 'my-project',
+  ticket_id: 'IMPL-12',
+  target: 'review'
+});
+```
+
+> Все эти функции существовали в `src/tools/` с первого коммита и покрыты
+> тестами, но как MCP-tools зарегистрированы не были — клиент их не видел.
+
 ## Конфигурация
+
+Полный список ключей, которые действительно читает код, с дефолтами и ссылками
+на модули-потребители — в [`.workflow-mcp.yaml.example`](.workflow-mcp.yaml.example).
+Разделы ниже описывают отдельные группы настроек.
+
+Корнем рабочей области служит `MCP_CWD`, а не рабочий каталог процесса: его
+задаёт клиент, и у stdio-клиентов он произвольный. От `MCP_CWD` резолвятся
+имена проектов во всех tools, читается `.workflow-mcp.yaml` и считается
+каталог состояния по умолчанию.
 
 ### Health-мониторинг
 
@@ -110,7 +264,7 @@ health:
   tick_interval_sec: 15
   stuck_headroom_sec: 60
   blocked_accumulation_threshold: 5
-  ghost_execution_log_marker: "ghost-execution"
+  ghost_execution_log_marker: "[GHOST-EXECUTION]"
   crash_mtime_freshness_sec: 60
   dedup_fingerprint_ttl_sec: 3600
   approval_pending_threshold_sec: 600
@@ -120,32 +274,23 @@ health:
   branch_diverged_auto_fetch: false   # Запускать `git fetch` перед проверкой (опционально)
 ```
 
-### Конфигурация Git-инструментов
+### Обнаружение проектов
 
 ```yaml
-git:
-  default_remote: origin
-  default_base_branch: main
-  enable_open_pr: auto  # auto | always | never (auto = автоопределение наличия gh CLI)
+projects:
+  whitelist: []   # непустой — берутся только перечисленные проекты
+  blacklist: []   # применяется после whitelist
+
+discovery:
+  depth: 1        # глубина сканирования подпапок cwd в поисках `.workflow/`
+  debounce_sec: 2 # пауза перед схлопыванием пачки изменений в одно событие
 ```
 
-### Конфигурация аналитики
+### Каталог состояния
 
 ```yaml
-analytics:
-  default_window_days: 14
-  cycle_time_percentiles: [50, 90]
-```
-
-### Конфигурация поиска
-
-```yaml
-search:
-  ripgrep_path: rg        # путь к бинарю ripgrep (по умолчанию: "rg")
-  exclude_patterns:
-    - "node_modules/**"
-    - ".git/**"
-    - ".workflow/.cache/**"
+state:
+  dir: ""   # пусто → XDG-путь; в защищённом cwd запись отключается
 ```
 
 ### Валидация human-тикетов (Sprint 3)
@@ -203,7 +348,10 @@ human_ticket:
 
 ```javascript
 const result = await client.callTool('resolve_human_ticket', {
+  project: 'my-project',
   ticket_id: 'HUMAN-001',
+  decision: 'Проверено вручную',
+  result_body: 'Скриншот: https://example.com/shot.png',
   strict: true  // Переопределить конфиг для этого вызова
 });
 ```
@@ -237,9 +385,12 @@ health:
 
 ### Дополнительная конфигурация для новых возможностей
 
-См. секцию [Конфигурация](#конфигурация) выше:
-- ключи `git.*` — управление default remote и поведением PR
-- ключи `analytics.*` — окна метрик
-- ключи `search.*` — поведение поиска
+См. секцию [Конфигурация](#конфигурация) выше и полный список ключей в
+[`.workflow-mcp.yaml.example`](.workflow-mcp.yaml.example).
+
+> Прошлые версии README описывали здесь секции `git.*`, `analytics.*` и
+> `search.*`. Ни один из этих ключей код не читает — они удалены, чтобы не
+> создавать впечатление настраиваемости. Поведение `git_*`-tools, аналитики и
+> `cross_project_search` задаётся параметрами вызова, а не конфигом.
 
 Полные детали — в [MIGRATION.md](MIGRATION.md).
