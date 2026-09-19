@@ -10,3 +10,6 @@ QWEN.md
 CLAUDE.md
 .kilocode/
 .kilocodemodes
+
+# Отчёты покрытия — артефакт прогона, не исходник.
+coverage/
