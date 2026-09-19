@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { discoverProjects, watchProjects } from '../src/discovery.mjs';
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Helper to create test fixture directories
 function createTestDirs(basePath, dirs) {
@@ -174,7 +177,10 @@ describe('watchProjects', () => {
   let stopFn;
 
   beforeEach(() => {
-    testDir = fs.mkdtempSync(path.join('/tmp', 'workflow-mcp-watch-test-'));
+    // Именно здесь путь сравнивается с тем, что вернул watchProjects, а тот
+    // прогоняет его через path.resolve. Литерал '/tmp' на Windows даёт путь без
+    // буквы диска — сравнение разошлось бы на ровном месте.
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-mcp-watch-test-'));
   });
 
   afterEach(() => {
@@ -188,85 +194,74 @@ describe('watchProjects', () => {
     }
   });
 
-  it('calls onChange when a project with .workflow is added', (done) => {
-    const onChange = vi.fn(({ added, removed }) => {
-      expect(removed).toEqual([]);
-      expect(added).toHaveLength(1);
-      expect(added[0].name).toBe('projectA');
-      expect(added[0].path).toBe(path.join(testDir, 'projectA'));
-      done();
-    });
+  it('calls onChange when a project with .workflow is added', async () => {
+    let seen;
+    const changed = new Promise((resolve) => { seen = resolve; });
+    const onChange = vi.fn((event) => seen(event));
 
     stopFn = watchProjects(testDir, onChange);
 
     // Create project after a short delay for debounce
-    setTimeout(() => {
-      const workflowDir = path.join(testDir, 'projectA', '.workflow');
-      fs.mkdirSync(workflowDir, { recursive: true });
-    }, 100);
-  }, 5000);
+    await delay(100);
+    fs.mkdirSync(path.join(testDir, 'projectA', '.workflow'), { recursive: true });
 
-  it('calls onChange with removed project', (done) => {
+    const { added, removed } = await changed;
+    expect(removed).toEqual([]);
+    expect(added).toHaveLength(1);
+    expect(added[0].name).toBe('projectA');
+    expect(added[0].path).toBe(path.join(testDir, 'projectA'));
+  }, 10000);
+
+  it('calls onChange with removed project', async () => {
     const projectDir = path.join(testDir, 'projectA');
-    const workflowDir = path.join(projectDir, '.workflow');
-    fs.mkdirSync(workflowDir, { recursive: true });
+    fs.mkdirSync(path.join(projectDir, '.workflow'), { recursive: true });
 
-    const onChange = vi.fn(({ added, removed }) => {
-      if (onChange.mock.calls.length === 1) {
-        // First call: project added
-        expect(added).toHaveLength(1);
-      } else if (onChange.mock.calls.length === 2) {
-        // Second call: project removed
-        expect(removed).toHaveLength(1);
-        expect(removed[0].name).toBe('projectA');
-        done();
-      }
+    let seenRemoval;
+    const removal = new Promise((resolve) => { seenRemoval = resolve; });
+    const onChange = vi.fn((event) => {
+      if (event.removed.length > 0) { seenRemoval(event); }
     });
 
     stopFn = watchProjects(testDir, onChange);
 
-    setTimeout(() => {
-      fs.rmSync(projectDir, { recursive: true, force: true });
-    }, 300);
-  }, 5000);
+    await delay(300);
+    fs.rmSync(projectDir, { recursive: true, force: true });
 
-  it('stop function stops watching', (done) => {
+    const { removed } = await removal;
+    expect(removed).toHaveLength(1);
+    expect(removed[0].name).toBe('projectA');
+  }, 10000);
+
+  it('stop function stops watching', async () => {
     const onChange = vi.fn();
     stopFn = watchProjects(testDir, onChange);
     stopFn();
 
-    setTimeout(() => {
-      const workflowDir = path.join(testDir, 'projectA', '.workflow');
-      fs.mkdirSync(workflowDir, { recursive: true });
-      // Wait to ensure no callback
-      setTimeout(() => {
-        expect(onChange).not.toHaveBeenCalled();
-        done();
-      }, 500);
-    }, 100);
-  }, 5000);
+    await delay(100);
+    fs.mkdirSync(path.join(testDir, 'projectA', '.workflow'), { recursive: true });
 
-  it('debounces rapid changes', (done) => {
+    // Wait to ensure no callback
+    await delay(500);
+    expect(onChange).not.toHaveBeenCalled();
+  }, 10000);
+
+  it('debounces rapid changes', async () => {
     const onChange = vi.fn();
     stopFn = watchProjects(testDir, onChange);
 
-    setTimeout(() => {
-      const projectDir = path.join(testDir, 'projectA');
-      fs.mkdirSync(path.join(projectDir, '.workflow'), { recursive: true });
-      // Another change shortly after
-      setTimeout(() => {
-        fs.mkdirSync(path.join(testDir, 'projectB', '.workflow'), { recursive: true });
-      }, 50);
-    }, 100);
+    await delay(100);
+    fs.mkdirSync(path.join(testDir, 'projectA', '.workflow'), { recursive: true });
+    // Another change shortly after
+    await delay(50);
+    fs.mkdirSync(path.join(testDir, 'projectB', '.workflow'), { recursive: true });
 
-    setTimeout(() => {
-      // Should have gotten one callback with both changes
-      expect(onChange).toHaveBeenCalledTimes(1);
-      const args = onChange.mock.calls[0][0];
-      expect(args.added.length).toBeGreaterThanOrEqual(1);
-      done();
-    }, 3000);
-  }, 5000);
+    await delay(3000);
+
+    // Should have gotten one callback with both changes
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const args = onChange.mock.calls[0][0];
+    expect(args.added.length).toBeGreaterThanOrEqual(1);
+  }, 10000);
 
   it('returns empty array for non-existent cwd without throwing', () => {
     const onChange = vi.fn();

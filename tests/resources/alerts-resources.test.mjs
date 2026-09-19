@@ -9,6 +9,8 @@ import path from 'path';
 import os from 'os';
 import * as resources from '../../src/resources/index.mjs';
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // Create a temporary state directory for testing
 function createTestStateDir() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'alerts-test-'));
@@ -457,7 +459,7 @@ ${JSON.stringify({
       unsubscribe();
     });
 
-    it('subscribing and notifying should call the callback', (done) => {
+    it('subscribing and notifying should call the callback', async () => {
       const alerts = [];
       const unsubscribe = resources.subscribe_workflow_alerts((alert) => {
         alerts.push(alert);
@@ -471,18 +473,22 @@ ${JSON.stringify({
         fingerprint: 'fp-001'
       };
 
-      resources.notify_workflow_alerts(testAlert);
+      try {
+        resources.notify_workflow_alerts(testAlert);
 
-      // Give callback time to execute
-      setTimeout(() => {
+        // Give callback time to execute
+        await delay(100);
+
         expect(alerts.length).toBe(1);
         expect(alerts[0].fingerprint).toBe('fp-001');
+      } finally {
+        // Отписка обязана произойти и при упавшем ожидании: подписчики живут в
+        // модуле, и утёкший колбэк ловит алерты следующих тестов.
         unsubscribe();
-        done();
-      }, 100);
+      }
     });
 
-    it('multiple subscribers should all receive notifications', (done) => {
+    it('multiple subscribers should all receive notifications', async () => {
       const alerts1 = [];
       const alerts2 = [];
 
@@ -502,45 +508,46 @@ ${JSON.stringify({
         fingerprint: 'fp-002'
       };
 
-      resources.notify_workflow_alerts(testAlert);
+      try {
+        resources.notify_workflow_alerts(testAlert);
 
-      setTimeout(() => {
+        await delay(100);
+
         expect(alerts1.length).toBe(1);
         expect(alerts2.length).toBe(1);
         expect(alerts1[0].fingerprint).toBe('fp-002');
         expect(alerts2[0].fingerprint).toBe('fp-002');
-
+      } finally {
         unsub1();
         unsub2();
-        done();
-      }, 100);
+      }
     });
 
-    it('unsubscribe should prevent further notifications', (done) => {
+    it('unsubscribe should prevent further notifications', async () => {
       const alerts = [];
       const unsubscribe = resources.subscribe_workflow_alerts((alert) => {
         alerts.push(alert);
       });
 
-      resources.notify_workflow_alerts({ fingerprint: 'fp-001' });
+      try {
+        resources.notify_workflow_alerts({ fingerprint: 'fp-001' });
 
-      setTimeout(() => {
+        await delay(100);
         expect(alerts.length).toBe(1);
 
         unsubscribe();
 
         resources.notify_workflow_alerts({ fingerprint: 'fp-002' });
 
-        setTimeout(() => {
-          // Should still be 1 (not 2)
-          expect(alerts.length).toBe(1);
-          done();
-        }, 100);
-      }, 100);
+        await delay(100);
+        // Should still be 1 (not 2)
+        expect(alerts.length).toBe(1);
+      } finally {
+        unsubscribe();
+      }
     });
 
-    it('callback errors should not block other subscribers', (done) => {
-      const alerts1 = [];
+    it('callback errors should not block other subscribers', async () => {
       const alerts2 = [];
 
       // First subscriber throws error
@@ -559,18 +566,18 @@ ${JSON.stringify({
       const originalError = console.error;
       console.error = () => {};
 
-      resources.notify_workflow_alerts(testAlert);
+      try {
+        resources.notify_workflow_alerts(testAlert);
 
-      setTimeout(() => {
-        console.error = originalError;
+        await delay(100);
 
         expect(alerts2.length).toBe(1);
         expect(alerts2[0].fingerprint).toBe('fp-test');
-
+      } finally {
+        console.error = originalError;
         unsub1();
         unsub2();
-        done();
-      }, 100);
+      }
     });
   });
 

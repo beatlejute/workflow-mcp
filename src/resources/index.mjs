@@ -6,9 +6,10 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import crypto from 'crypto';
 import { discoverProjects, readConfig } from '../discovery.mjs';
-import { parseFrontmatter } from '../../../workflowAi/src/lib/utils.mjs';
+import { parseFrontmatter } from 'workflow-ai/lib/utils.mjs';
+import { workflowAiPath } from '../lib/workflow-ai.mjs';
+import { mcpCwd } from '../lib/project-root.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,11 +47,6 @@ const pipelineStateWatchers = new Map(); // projectName -> { runnerPidsWatcher, 
 function getCoalesceWindowMs(cwd) {
   const config = readConfig(cwd);
   return (config.notifications?.coalesce_window_ms ?? 200);
-}
-
-function getMcpInstanceId(cwd) {
-  const hash = crypto.createHash('sha256').update(cwd).digest('hex');
-  return `workflow-mcp@${hash.slice(0, 12)}`;
 }
 
 function isProcessAlive(pid) {
@@ -179,7 +175,7 @@ function scheduleCoalesceUpdate(cwd, coalesceMs) {
   }, coalesceMs);
 }
 
-async function buildPipelineStateSnapshot(cwd = process.cwd()) {
+async function buildPipelineStateSnapshot(cwd = mcpCwd()) {
   const absoluteCwd = path.resolve(cwd);
   const { get_workflow_pipeline_state: getState } = await import('./pipeline-state.mjs');
   pipelineStateCache = getState(absoluteCwd);
@@ -192,7 +188,7 @@ async function buildPipelineStateSnapshot(cwd = process.cwd()) {
  */
 export function subscribe_workflow_pipeline_state(callback) {
   pipelineStateSubscribers.add(callback);
-  if (pipelineStateSubscribers.size === 1) startAllPipelineStateWatchers(process.cwd());
+  if (pipelineStateSubscribers.size === 1) startAllPipelineStateWatchers(mcpCwd());
   return () => {
     pipelineStateSubscribers.delete(callback);
     if (pipelineStateSubscribers.size === 0) {
@@ -207,7 +203,7 @@ export function setPipelineStateNotificationHandler(handler) {
 }
 
 export function notify_workflow_pipeline_state() {
-  const cwd = process.cwd();
+  const cwd = mcpCwd();
   scheduleCoalesceUpdate(cwd, getCoalesceWindowMs(cwd));
 }
 
@@ -219,7 +215,7 @@ export function clearPipelineStateCache() {
   }
 }
 
-export async function get_workflow_pipeline_state(cwd = process.cwd()) {
+export async function get_workflow_pipeline_state(cwd = mcpCwd()) {
   if (pipelineStateCache === null) await buildPipelineStateSnapshot(cwd);
   return {
     uri: 'workflow://pipeline-state',
@@ -238,7 +234,7 @@ export function resources_list() {
     { uri: 'workflow://{project}/tickets/{id}', format: 'Markdown', description: 'Content of a specific ticket file' },
     { uri: 'workflow://{project}/config/pipeline', format: 'YAML', description: 'Pipeline configuration YAML', mimeType: 'application/yaml' },
     { uri: 'workflow://{project}/config/ticket-movement-rules', format: 'YAML', description: 'Ticket movement rules configuration YAML', mimeType: 'application/yaml' },
-    { uri: 'workflow://skills/{skill_name}/SKILL.md', format: 'Markdown', description: 'Skill definition from workflowAi/src/skills/' },
+    { uri: 'workflow://skills/{skill_name}/SKILL.md', format: 'Markdown', description: 'Skill definition from the installed workflow-ai package' },
     { uri: 'workflow://templates/{type}', format: 'Markdown', description: 'Global template (ticket, plan, or report)' },
     { uri: 'workflow://alerts', format: 'JSON', description: 'Current list of active alerts from health monitoring', mimeType: 'application/json', subscribable: true },
     { uri: 'workflow://alerts/history', format: 'JSON', description: 'Historical alerts from alerts-history.jsonl with optional since parameter', mimeType: 'application/json' },
@@ -250,7 +246,7 @@ export function resources_list() {
 // ============================================================
 // Other resource getters (original from index.mjs)
 // ============================================================
-export async function get_workflow_projects(cwd = process.cwd()) {
+export async function get_workflow_projects(cwd = mcpCwd()) {
   try {
     const projects = discoverProjects(cwd);
     return {
@@ -276,7 +272,7 @@ export async function get_workflow_project_pipeline_log_latest(cwd, projectName,
 export async function start_pipeline_log_watch(cwd, projectName, notifyCallback) {
   try {
     const { startWatching } = await import('./pipeline-log-latest.mjs');
-    startWatching(projectName, notifyCallback);
+    startWatching(projectName, notifyCallback, cwd);
   } catch (error) { console.error(`Failed to start watch for ${projectName}:`, error.message); }
 }
 
@@ -287,7 +283,7 @@ export async function stop_pipeline_log_watch(projectName) {
   } catch { }
 }
 
-export async function get_workflow_project_board(cwd = process.cwd(), projectName) {
+export async function get_workflow_project_board(cwd = mcpCwd(), projectName) {
   try {
     const projects = discoverProjects(cwd);
     const project = projects.find(p => p.name === projectName);
@@ -315,7 +311,7 @@ export async function get_workflow_project_board(cwd = process.cwd(), projectNam
   }
 }
 
-export async function get_workflow_ticket(cwd = process.cwd(), projectName, ticketId) {
+export async function get_workflow_ticket(cwd = mcpCwd(), projectName, ticketId) {
   try {
     const projects = discoverProjects(cwd);
     const project = projects.find(p => p.name === projectName);
@@ -334,9 +330,11 @@ export async function get_workflow_ticket(cwd = process.cwd(), projectName, tick
 
 export async function get_workflow_skill(skillName) {
   try {
-    const skillPath = path.resolve(__dirname, '../../../workflowAi/src/skills', skillName, 'SKILL.md');
+    // SKILL.md берём из установленного пакета workflow-ai, а не из соседнего
+    // каталога — пакет их публикует (`src/skills/*/SKILL.md` в его `files`).
+    const skillPath = workflowAiPath('src', 'skills', skillName, 'SKILL.md');
     if (!fs.existsSync(skillPath)) throw new Error(`Skill "${skillName}" not found`);
-    return { uri: `workflow://skills/${skillName}/SKILL.md`, mimeType: 'text/markdown', text: fs.readFileSync(skillPath, 'utf8') };
+    return { uri: `workflow://skills/${encodeURIComponent(skillName)}/SKILL.md`, mimeType: 'text/markdown', text: fs.readFileSync(skillPath, 'utf8') };
   } catch (error) { throw new Error(`Failed to get skill: ${error.message}`); }
 }
 
@@ -344,7 +342,9 @@ export async function get_workflow_template(templateType) {
   try {
     const validTypes = ['ticket', 'plan', 'report'];
     if (!validTypes.includes(templateType)) throw new Error(`Invalid template type "${templateType}"`);
-    const templatePath = path.join(process.cwd(), 'node_modules/workflow-ai/templates', `${templateType}-template.md`);
+    // Раньше путь строился от cwd процесса — работало только когда сервер
+    // запущен из корня workflow-mcp.
+    const templatePath = workflowAiPath('templates', `${templateType}-template.md`);
     if (!fs.existsSync(templatePath)) throw new Error(`Template "${templateType}" not found`);
     return { uri: `workflow://templates/${templateType}`, mimeType: 'text/markdown', text: fs.readFileSync(templatePath, 'utf8') };
   } catch (error) { throw new Error(`Failed to get template: ${error.message}`); }
@@ -412,7 +412,7 @@ export function notify_workflow_human_queue(update) {
   if (humanQueueNotificationHandler) { try { humanQueueNotificationHandler('workflow://human-queue'); } catch (e) { console.error('Error sending human-queue notification:', e.message); } }
 }
 
-export async function get_workflow_human_queue(cwd = process.cwd()) {
+export async function get_workflow_human_queue(cwd = mcpCwd()) {
   try {
     const { discoverProjects } = await import('../discovery.mjs');
     const projects = discoverProjects(cwd);

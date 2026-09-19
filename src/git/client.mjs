@@ -1,7 +1,8 @@
 import simpleGit from 'simple-git';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { resolveStateDir, ensureStateDir } from '../paths/state-dir.mjs';
+import { serverStateDir, ensureStateDir } from '../paths/state-dir.mjs';
+import { mcpCwd } from '../lib/project-root.mjs';
 import { promises as fs } from 'fs';
 import path from 'path';
 
@@ -43,16 +44,19 @@ const GIT_TIMEOUT = parseInt(process.env.GIT_TIMEOUT || '30000', 10);
  * @returns {Promise<string|null>} Path to gh binary or null if not found
  */
 async function detectGhCli(stateDir) {
-  const GH_CACHE_FILE = path.join(stateDir, 'gh-path.cache');
+  const GH_CACHE_FILE = stateDir ? path.join(stateDir, 'gh-path.cache') : null;
 
-  try {
-    await fs.access(stateDir);
-  } catch {
-    await fs.mkdir(stateDir, { recursive: true });
+  if (stateDir) {
+    try {
+      await fs.access(stateDir);
+    } catch {
+      await fs.mkdir(stateDir, { recursive: true });
+    }
   }
 
   // Try cache first
   try {
+    if (!GH_CACHE_FILE) { throw new Error('no cache'); }
     const cached = await fs.readFile(GH_CACHE_FILE, 'utf-8');
     const { path: cachedPath, mtime } = JSON.parse(cached);
     // Re-validate cache if older than 24h
@@ -74,7 +78,9 @@ async function detectGhCli(stateDir) {
     const { stdout } = await execAsync(cmd);
     const detectedPath = stdout.trim().split('\n')[0].trim();
     if (detectedPath) {
-      await fs.writeFile(GH_CACHE_FILE, JSON.stringify({ path: detectedPath, mtime: Date.now() }));
+      if (GH_CACHE_FILE) {
+        await fs.writeFile(GH_CACHE_FILE, JSON.stringify({ path: detectedPath, mtime: Date.now() }));
+      }
       return detectedPath;
     }
   } catch {
@@ -150,8 +156,12 @@ function parseStatus(status) {
  * @returns {Object} Git client instance
  */
 export function createGitClient(projectPath) {
-  const stateResult = resolveStateDir(projectPath);
-  if (stateResult.mode === 'writable' && stateResult.dir) {
+  // Кеш пути к `gh` — часть состояния сервера, а не проекта: путь к бинарнику
+  // один на машину. Берём ровно тот же каталог, что и сервер — вместе с
+  // `WORKFLOW_STATE_DIR`, иначе при заданной переменной кеш уходил в XDG.
+  const stateResult = serverStateDir(mcpCwd());
+  const stateWritable = stateResult.mode === 'writable' && !!stateResult.dir;
+  if (stateWritable) {
     ensureStateDir(stateResult);
   }
   const stateDir = stateResult.dir;
@@ -284,10 +294,9 @@ export function createGitClient(projectPath) {
      * @returns {Promise<{found: boolean, path: string|null}>}
      */
     async getGhPath() {
-      if (!stateDir) {
-        return { found: false, path: null };
-      }
-      const detectedPath = await detectGhCli(stateDir);
+      // В read-only режиме детектить `gh` можно, а создавать каталог и писать
+      // кеш — нет: режим ровно про это.
+      const detectedPath = await detectGhCli(stateWritable ? stateDir : null);
       return { found: detectedPath !== null, path: detectedPath };
     },
 

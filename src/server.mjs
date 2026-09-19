@@ -8,11 +8,12 @@ import * as configResources from './resources/config.mjs';
 import { createHumanQueueWatcher } from './watchers/human-queue-watcher.mjs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
-import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
 import semver from 'semver';
-import { resolveStateDir, ensureStateDir } from './paths/state-dir.mjs';
+import { serverStateDir, ensureStateDir } from './paths/state-dir.mjs';
+import { workflowAiPath, workflowAiPackageJson } from './lib/workflow-ai.mjs';
+import { mcpCwd } from './lib/project-root.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -25,6 +26,7 @@ async function loadTools() {
   const toolsDir = resolve(__dirname, 'tools');
   const tools = [];
   const seen = new Set();
+  const failed = [];
 
   function isValidTool(obj) {
     return obj
@@ -60,12 +62,22 @@ async function loadTools() {
             collectFromExport(module[exportName]);
           }
         } catch (err) {
+          failed.push(`${file}: ${err.message}`);
           console.error(`Failed to load tool ${file}:`, err.message);
         }
       }
     }
   } catch (err) {
     // If tools directory doesn't exist or can't be read, just return empty array
+  }
+
+  // Молча отдавать урезанный набор нельзя: клиент не отличит «tool не
+  // существует» от «файл не загрузился». Так себя ведёт, например, слишком
+  // старый workflow-ai, у которого в `exports` нет нужных подпутей.
+  if (failed.length > 0) {
+    console.error(
+      `[workflow-mcp] WARNING: ${failed.length} tool file(s) failed to load, the tool list is incomplete:\n  ${failed.join('\n  ')}`
+    );
   }
 
   return tools;
@@ -101,31 +113,7 @@ async function main() {
   // Startup guard: verify workflow-ai version compatibility
   let actualVersion;
   try {
-    const require = createRequire(import.meta.url);
-    // Anchor on a known-exported subpath; package.json itself is not in `exports`.
-    // WORKFLOW_AI_RESOLVE_PATH overrides resolution base (used in tests for version isolation).
-    const resolveOpts = process.env.WORKFLOW_AI_RESOLVE_PATH
-      ? { paths: [process.env.WORKFLOW_AI_RESOLVE_PATH] }
-      : undefined;
-    const anchor = require.resolve('workflow-ai/lib/find-root.mjs', resolveOpts);
-    let dir = path.dirname(anchor);
-    let pkgPath = null;
-    while (dir !== path.dirname(dir)) {
-      const candidate = path.join(dir, 'package.json');
-      if (fs.existsSync(candidate)) {
-        const pkg = JSON.parse(fs.readFileSync(candidate, 'utf8'));
-        if (pkg.name === 'workflow-ai') {
-          actualVersion = pkg.version;
-          pkgPath = candidate;
-          break;
-        }
-      }
-      dir = path.dirname(dir);
-    }
-    if (!pkgPath) {
-      console.error('[workflow-mcp] FATAL: workflow-ai package.json not found near resolved entry.');
-      process.exit(1);
-    }
+    actualVersion = workflowAiPackageJson().version;
   } catch (err) {
     if (err.code === 'MODULE_NOT_FOUND' || err.code === 'ERR_MODULE_NOT_FOUND') {
       console.error('[workflow-mcp] FATAL: workflow-ai not found. Run npm install.');
@@ -150,7 +138,13 @@ async function main() {
     process.exit(1);
   }
 
-  if (!semver.satisfies(actualVersion, expectedRange)) {
+  // `file:`, `link:`, `workspace:` и git-URL — не semver-диапазоны: версию
+  // задаёт то, что реально лежит в node_modules, сверять не с чем.
+  // `semver.minVersion` на таком спецификаторе бросает «Invalid comparator» и
+  // роняет сервер на старте.
+  if (!semver.validRange(expectedRange)) {
+    console.error(`[workflow-mcp] workflow-ai pinned to a non-semver specifier (${expectedRange}); installed ${actualVersion}, version check skipped`);
+  } else if (!semver.satisfies(actualVersion, expectedRange)) {
     const expectedMajor = semver.minVersion(expectedRange)?.major;
     const actualMajor = semver.parse(actualVersion)?.major;
     if (expectedMajor != null && actualMajor != null && actualMajor !== expectedMajor) {
@@ -161,7 +155,7 @@ async function main() {
   }
 
   // Get cwd from environment or use process.cwd()
-  const cwd = process.env.MCP_CWD || process.cwd();
+  const cwd = mcpCwd();
 
   // Create MCP server
   const server = new McpServer({
@@ -292,16 +286,7 @@ async function main() {
      */
   async function registerWorkflowResources() {
     try {
-      // Get stateDir config: env override first, then resolver fallback (XDG/LOCALAPPDATA)
-      let stateDir;
-      if (process.env.WORKFLOW_STATE_DIR) {
-        stateDir = {
-          dir: process.env.WORKFLOW_STATE_DIR,
-          mode: process.env.WORKFLOW_STATE_MODE || 'writable'
-        };
-      } else {
-        stateDir = resolveStateDir(process.cwd());
-      }
+      const stateDir = serverStateDir(mcpCwd());
       ensureStateDir(stateDir);
 
       // Set notification handler for alerts and human-queue
@@ -387,6 +372,63 @@ async function main() {
       } catch (err) {
         console.error('Failed to register workflow://human-queue resource:', err.message);
       }
+
+      // Шаблоны и SKILL.md числятся в `resources_list()` и описаны в README, но
+      // регистрации у них не было вовсе: `resources/list` их не отдавал, и добраться
+      // до них клиент не мог. Наборы конечные, поэтому регистрируем поштучно,
+      // как и остальные ресурсы выше.
+      for (const templateType of ['ticket', 'plan', 'report']) {
+        try {
+          // Регистрируем только то, что есть в пакете: иначе ресурс виден в списке,
+          // а чтение падает внутренней ошибкой вместо «не найден».
+          if (!fs.existsSync(workflowAiPath('templates', `${templateType}-template.md`))) {
+            continue;
+          }
+          server.registerResource(
+            `workflow-template-${templateType}`,
+            `workflow://templates/${templateType}`,
+            {
+              description: `Global ${templateType} template`,
+              mimeType: 'text/markdown'
+            },
+            async () => wrapResource(await resources.get_workflow_template(templateType))
+          );
+        } catch (err) {
+          console.error(`Failed to register workflow://templates/${templateType} resource:`, err.message);
+        }
+      }
+
+      try {
+        const skillsRoot = workflowAiPath('src', 'skills');
+        const skillNames = fs.existsSync(skillsRoot)
+          ? fs.readdirSync(skillsRoot, { withFileTypes: true })
+              .filter((entry) => entry.isDirectory()
+                // `__test-*` — временные скилы прогонов, workflow-ai их тоже отбрасывает.
+                && !entry.name.startsWith('__test-')
+                && fs.existsSync(path.join(skillsRoot, entry.name, 'SKILL.md')))
+              .map((entry) => entry.name)
+          : [];
+        for (const skillName of skillNames) {
+          try {
+            // Имя идёт в URI, а SDK ищет ресурс по нормализованной строке `new URL(...)`:
+            // сырой пробел или кириллица в имени дали бы ресурс, который виден в списке,
+            // но не читается ни по какому написанию.
+            server.registerResource(
+              `workflow-skill-${skillName}`,
+              `workflow://skills/${encodeURIComponent(skillName)}/SKILL.md`,
+              {
+                description: `Skill definition: ${skillName}`,
+                mimeType: 'text/markdown'
+              },
+              async () => wrapResource(await resources.get_workflow_skill(skillName))
+            );
+          } catch (err) {
+            console.error(`Failed to register workflow://skills/${skillName}/SKILL.md resource:`, err.message);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to enumerate workflow-ai skills for resources:', err.message);
+      }
     } catch (err) {
       console.error('Failed to register workflow resources:', err.message);
     }
@@ -423,7 +465,12 @@ async function main() {
                   content: [
                     {
                       type: 'text',
-                      text: `Error executing tool ${tool.name}: ${err.message}`
+                      // Tools выставляют `err.code` (INVALID_ARGUMENT, TICKET_NOT_FOUND,
+                      // INVALID_TRANSITION и т.д.), но до клиента доезжал один
+                      // `message` — различать виды отказа приходилось по тексту.
+                      text: err.code
+                        ? `Error executing tool ${tool.name} [${err.code}]: ${err.message}`
+                        : `Error executing tool ${tool.name}: ${err.message}`
                     }
                   ],
                   isError: true,

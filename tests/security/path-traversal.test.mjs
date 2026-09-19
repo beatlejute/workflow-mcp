@@ -95,7 +95,10 @@ describe('Security: Path Traversal Tests', () => {
         });
         expect(true).toBe(false); // Should throw error
       } catch (error) {
-        expect(error.message).toContain('not found');
+        // Раньше обход просто не находил файла и падал с «Ticket not found» —
+        // то есть проверка держалась на случайности. Теперь id отвергается явно.
+        expect(error.code).toBe('INVALID_ARGUMENT');
+        expect(error.message).toContain('Invalid ticket_id');
       }
     });
 
@@ -107,7 +110,8 @@ describe('Security: Path Traversal Tests', () => {
         });
         expect(true).toBe(false); // Should throw error
       } catch (error) {
-        expect(error.message).toContain('not found');
+        expect(error.code).toBe('INVALID_ARGUMENT');
+        expect(error.message).toContain('Invalid ticket_id');
       }
     });
 

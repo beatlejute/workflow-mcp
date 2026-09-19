@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { discoverProjects } from '../discovery.mjs';
+import { mcpCwd } from '../lib/project-root.mjs';
 
 /**
  * Pipeline Log Latest Resource - subscribable live-tail for pipeline logs
@@ -291,15 +292,20 @@ const watchState = new Map();
 
 /**
  * Start watching a project's latest log file for changes
+ *
+ * `cwd` приходит от сервера: при `MCP_CWD ≠ cwd` процесса discovery от
+ * рабочего каталога не находил проект, и watcher молча не ставился — чтение
+ * ресурса работало, а `resources/updated` не приходили ни разу.
+ *
  * @param {string} projectName
  * @param {Function} notifyCallback - Called to trigger resource update notification
+ * @param {string} [cwd] - Корень рабочей области; по умолчанию `mcpCwd()`
  */
-export function startWatching(projectName, notifyCallback) {
+export function startWatching(projectName, notifyCallback, cwd = mcpCwd()) {
   if (watchState.has(projectName)) {
     return; // Already watching
   }
 
-  const cwd = process.cwd();
   const projects = discoverProjects(cwd);
   const project = projects.find(p => p.name === projectName);
 

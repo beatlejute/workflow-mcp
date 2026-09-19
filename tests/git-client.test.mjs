@@ -1177,9 +1177,13 @@ describe('Git Client', () => {
 
     it('covers gh-detect cache hit with valid path (lines 56-66)', async () => {
       let tempDir;
+      // Путь к `gh` — состояние сервера, а не проекта: кеш лежит в каталоге
+      // состояния рабочей области (`MCP_CWD`), один на все проекты.
+      const savedMcpCwd = process.env.MCP_CWD;
       try {
         tempDir = fs.mkdtempSync(path.join(tmpdir(), 'gh-cache-hit-'));
         execSync('git init', { cwd: tempDir, stdio: 'pipe' });
+        process.env.MCP_CWD = tempDir;
 
         const { resolveStateDir } = await import('../src/paths/state-dir.mjs');
         const stateInfo = resolveStateDir(tempDir);
@@ -1197,6 +1201,63 @@ describe('Git Client', () => {
         expect(result.path).toBe(fakeGhPath);
       } finally {
         vi.restoreAllMocks();
+        if (savedMcpCwd === undefined) { delete process.env.MCP_CWD; } else { process.env.MCP_CWD = savedMcpCwd; }
+        if (tempDir && fs.existsSync(tempDir)) {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+      }
+    });
+
+    it('кеш gh ложится в WORKFLOW_STATE_DIR, как и состояние сервера', async () => {
+      // Клиент повторял только вторую половину резолва сервера и при заданной
+      // переменной уходил в XDG-каталог.
+      let tempDir;
+      const savedStateDir = process.env.WORKFLOW_STATE_DIR;
+      try {
+        tempDir = fs.mkdtempSync(path.join(tmpdir(), 'gh-state-env-'));
+        execSync('git init', { cwd: tempDir, stdio: 'pipe' });
+
+        const stateDirPath = path.join(tempDir, '.state');
+        fs.mkdirSync(stateDirPath, { recursive: true });
+        process.env.WORKFLOW_STATE_DIR = stateDirPath;
+
+        const fakeGhPath = process.execPath;
+        fs.writeFileSync(
+          path.join(stateDirPath, 'gh-path.cache'),
+          JSON.stringify({ path: fakeGhPath, mtime: Date.now() })
+        );
+
+        const client = createGitClient(tempDir);
+        const result = await client.getGhPath();
+        expect(result.found).toBe(true);
+        expect(result.path).toBe(fakeGhPath);
+      } finally {
+        if (savedStateDir === undefined) { delete process.env.WORKFLOW_STATE_DIR; } else { process.env.WORKFLOW_STATE_DIR = savedStateDir; }
+        if (tempDir && fs.existsSync(tempDir)) {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+      }
+    });
+
+    it('в read-only режиме клиент не создаёт каталог состояния', async () => {
+      let tempDir;
+      const savedStateDir = process.env.WORKFLOW_STATE_DIR;
+      const savedMode = process.env.WORKFLOW_STATE_MODE;
+      try {
+        tempDir = fs.mkdtempSync(path.join(tmpdir(), 'gh-state-ro-'));
+        execSync('git init', { cwd: tempDir, stdio: 'pipe' });
+
+        const stateDirPath = path.join(tempDir, 'never-created');
+        process.env.WORKFLOW_STATE_DIR = stateDirPath;
+        process.env.WORKFLOW_STATE_MODE = 'read-only';
+
+        const client = createGitClient(tempDir);
+        await client.getGhPath();
+
+        expect(fs.existsSync(stateDirPath)).toBe(false);
+      } finally {
+        if (savedStateDir === undefined) { delete process.env.WORKFLOW_STATE_DIR; } else { process.env.WORKFLOW_STATE_DIR = savedStateDir; }
+        if (savedMode === undefined) { delete process.env.WORKFLOW_STATE_MODE; } else { process.env.WORKFLOW_STATE_MODE = savedMode; }
         if (tempDir && fs.existsSync(tempDir)) {
           fs.rmSync(tempDir, { recursive: true, force: true });
         }

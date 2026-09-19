@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { readConfig } from '../discovery.mjs';
 
 /**
  * Compute SHA-256 hash of the absolute path, first 12 characters.
@@ -87,6 +88,26 @@ export function resolveStateDir(cwd, config = {}) {
   const dir = path.join(baseDir, 'workflow-mcp', hash);
 
   return { dir, mode: 'writable' };
+}
+
+/**
+ * Каталог состояния сервера — в том же порядке, в каком его ищет `server.mjs`:
+ * сначала `WORKFLOW_STATE_DIR`, потом `state.dir` из конфига, потом XDG.
+ *
+ * Без общей функции git-клиент повторял только вторую половину: при заданном
+ * `WORKFLOW_STATE_DIR` состояние сервера шло в переменную, а кеш пути к `gh` — в XDG.
+ *
+ * @param {string} cwd - Корень рабочей области
+ * @returns {{ dir: string|null, mode: 'writable'|'read-only' }}
+ */
+export function serverStateDir(cwd) {
+  if (process.env.WORKFLOW_STATE_DIR) {
+    return {
+      dir: process.env.WORKFLOW_STATE_DIR,
+      mode: process.env.WORKFLOW_STATE_MODE || 'writable'
+    };
+  }
+  return resolveStateDir(cwd, readConfig(cwd));
 }
 
 /**
