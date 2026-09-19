@@ -1,0 +1,95 @@
+# .workflow-mcp.yaml — конфигурация workflow-mcp.
+#
+# Файл читается из cwd сервера — им считается `MCP_CWD`, если переменная задана,
+# иначе рабочий каталог процесса. Секция human_ticket читается из корня
+# конкретного проекта, health.ghost_execution_log_marker — тоже.
+#
+# Файл целиком необязателен: без него работают значения по умолчанию,
+# показанные ниже. Ключи, которых код не читает, молча игнорируются.
+#
+# Список собран из кода: src/discovery.mjs, src/health/thresholds.mjs,
+# src/paths/state-dir.mjs, src/resources/index.mjs,
+# src/validators/human-ticket.mjs. При добавлении нового ключа обновите и этот
+# файл — он ничем не генерируется.
+
+# --- Обнаружение проектов (src/discovery.mjs) --------------------------------
+projects:
+  # Если whitelist непустой, берутся только перечисленные проекты.
+  whitelist: []
+  # Исключения; применяются после whitelist.
+  blacklist: []
+
+discovery:
+  # Глубина сканирования подпапок cwd в поисках `.workflow/`.
+  # Реализован только `depth: 1` (прямые дети) — `discovery.mjs` читает ключ,
+  # но других значений не поддерживает. Если `.workflow/` есть в самом cwd,
+  # включается режим одного проекта и depth не используется вовсе.
+  depth: 1
+  # Пауза перед тем, как схлопнуть пачку изменений в одно событие watchProjects.
+  debounce_sec: 2
+
+# --- Каталог состояния (src/paths/state-dir.mjs) -----------------------------
+state:
+  # Куда писать состояние сервера. Абсолютный путь или относительный от cwd.
+  # Не задан → XDG-путь: %LOCALAPPDATA%\workflow-mcp\<hash cwd> на Windows,
+  # $XDG_STATE_HOME/workflow-mcp/<hash cwd> на POSIX.
+  # Если cwd — защищённое место (корень диска, C:\Users, домашняя папка),
+  # запись отключается: сервер уходит в read-only, пока dir не задан явно.
+  dir: ""
+
+# --- Health-мониторинг (src/health/thresholds.mjs) ---------------------------
+# Значения ниже — ровно те, что зашиты как defaults.
+#
+# ВАЖНО: сервер не запускает health-watcher. Ни один модуль вне `src/health/`
+# не импортирует `watcher.mjs`, детекторы или `publisher.mjs`, поэтому
+# `alerts-history.jsonl` никто не пишет и ресурс `workflow://alerts` всегда
+# пуст. Реально влияет один ключ — `ghost_execution_log_marker`: его читает
+# `list_ghost_executions`, причём из `<project>/.workflow-mcp.yaml`, а не из
+# конфига в cwd сервера. Остальные пороги ниже задокументированы как контракт
+# детекторов и вступят в силу, когда watcher начнут запускать.
+health:
+  # Период опроса детекторов.
+  tick_interval_sec: 15
+  # Надбавка к таймауту стадии, после которой пайплайн считается зависшим.
+  stuck_headroom_sec: 60
+  # Сколько тикетов в `blocked/` считается накоплением.
+  blocked_accumulation_threshold: 5
+  # Маркер в логе пайплайна, по которому детектится ghost-execution.
+  ghost_execution_log_marker: "[GHOST-EXECUTION]"
+  # Насколько свежим должен быть mtime лога, чтобы мёртвый pid считался крахом.
+  crash_mtime_freshness_sec: 60
+  # Сколько держать fingerprint алерта, чтобы не слать дубль.
+  dedup_fingerprint_ttl_sec: 3600
+  # Через сколько pending-approval превращается в алерт.
+  approval_pending_threshold_sec: 600
+  # Расхождение ветки с upstream, после которого поднимается алерт.
+  branch_diverged_max_behind: 10
+  branch_diverged_max_ahead: 30
+  # Делать `git fetch` перед проверкой расхождения (src/health/detectors/branch-diverged.mjs).
+  branch_diverged_auto_fetch: false
+
+# --- Нотификации (src/resources/index.mjs) -----------------------------------
+notifications:
+  # Окно схлопывания: изменения внутри него дают одно resources/updated.
+  coalesce_window_ms: 200
+
+# --- Валидация human-тикетов (src/validators/human-ticket.mjs) ---------------
+# Читается из корня проверяемого проекта, а не из cwd сервера.
+human_ticket:
+  # Включает строгую проверку результата human-тикета.
+  strict_validation: false
+  # Минимальная длина тела результата.
+  min_result_length: 50
+  # Требовать пруф: ссылку, путь к файлу или блок кода.
+  evidence_required: true
+
+# --- Переменные окружения (конфигом не задаются) -----------------------------
+# WORKFLOW_AI_BIN            путь к bin раннера workflow-ai в обход резолва
+# WORKFLOW_AI_RESOLVE_PATH   база резолва workflow-ai (используется в тестах)
+# WORKFLOW_STATE_DIR         каталог состояния в обход state.dir
+# WORKFLOW_STATE_MODE        writable | read-only
+# WORKFLOW_MCP_FORCE_FOREIGN =1 разрешает управлять чужим пайплайном
+# WORKFLOW_MCP_FORCE_POLLING =1 заставляет watcher'ы опрашивать вместо fs.watch
+# MCP_CWD                    корень: от него резолвятся проекты, читается этот
+#                            конфиг и считается каталог состояния по умолчанию
+# GIT_TIMEOUT                таймаут git-операций в мс (по умолчанию 30000)

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { parseFrontmatter } from '../../../workflowAi/src/lib/utils.mjs';
+import { parseFrontmatter } from 'workflow-ai/lib/utils.mjs';
 
 /**
  * LRU-кеш для frontmatter тикетов.

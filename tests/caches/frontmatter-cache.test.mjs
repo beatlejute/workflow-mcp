@@ -4,7 +4,7 @@ import { FrontmatterCache } from '../../src/caches/frontmatter-cache.mjs';
 
 // Мокируем fs и parseFrontmatter
 vi.mock('fs');
-vi.mock('../../workflowAi/src/lib/utils.mjs', () => ({
+vi.mock('workflow-ai/lib/utils.mjs', () => ({
   parseFrontmatter: (content) => {
     // Простой парсер frontmatter для тестов
     const match = content.match(/^---\n([\s\S]*?)\n---/);
