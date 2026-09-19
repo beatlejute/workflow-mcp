@@ -16,16 +16,16 @@ function createProjectDir(basePath, projectName = 'test-project') {
   fs.mkdirSync(path.join(workflowPath, 'tickets', 'blocked'), { recursive: true });
   fs.mkdirSync(path.join(workflowPath, 'tickets', 'done'), { recursive: true });
 
-  // Create plans structure (in project root, not in .workflow)
-  fs.mkdirSync(path.join(projectPath, 'plans', 'current'), { recursive: true });
-  fs.mkdirSync(path.join(projectPath, 'plans', 'archive'), { recursive: true });
+  // Create plans structure — .workflow/plans, как у скриптов и расширения
+  fs.mkdirSync(path.join(projectPath, '.workflow', 'plans', 'current'), { recursive: true });
+  fs.mkdirSync(path.join(projectPath, '.workflow', 'plans', 'archive'), { recursive: true });
 
   return projectPath;
 }
 
 // Helper to create a plan file
 function createPlanFile(projectPath, location, filename, frontmatter, body = '') {
-  const planPath = path.join(projectPath, 'plans', location, filename);
+  const planPath = path.join(projectPath, '.workflow', 'plans', location, filename);
 
   let content = '---\n';
   for (const [key, value] of Object.entries(frontmatter)) {
@@ -257,7 +257,7 @@ describe('Plan Tools', () => {
   describe('Error Handling', () => {
     it('handles plan with missing frontmatter fields gracefully', async () => {
       // Create plan with minimal frontmatter
-      const planPath = path.join(projectPath, 'plans', 'current', 'PLAN-MIN.md');
+      const planPath = path.join(projectPath, '.workflow', 'plans', 'current', 'PLAN-MIN.md');
       fs.writeFileSync(planPath, '---\n---\nBody only', 'utf-8');
 
       const plans = await list_plans({ project: projectPath });

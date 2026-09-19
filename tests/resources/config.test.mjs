@@ -25,8 +25,8 @@ beforeAll(() => {
   const projectPath = path.join(testProjectDir, 'test-project');
   fs.mkdirSync(projectPath, { recursive: true });
 
-  // Create .workflow/configs directory
-  const configsDir = path.join(projectPath, '.workflow', 'configs');
+  // Create .workflow/config directory (именно так его создаёт `workflow init`)
+  const configsDir = path.join(projectPath, '.workflow', 'config');
   fs.mkdirSync(configsDir, { recursive: true });
 
   // Create pipeline.yaml
@@ -137,7 +137,7 @@ describe('Config Resources', () => {
       // Create a project without pipeline.yaml
       const projectPath = path.join(testProjectDir, 'no-pipeline-project');
       fs.mkdirSync(projectPath, { recursive: true });
-      const configsDir = path.join(projectPath, '.workflow', 'configs');
+      const configsDir = path.join(projectPath, '.workflow', 'config');
       fs.mkdirSync(configsDir, { recursive: true });
 
       try {
@@ -209,7 +209,7 @@ describe('Config Resources', () => {
       // Create a project without ticket-movement-rules.yaml
       const projectPath = path.join(testProjectDir, 'no-rules-project');
       fs.mkdirSync(projectPath, { recursive: true });
-      const configsDir = path.join(projectPath, '.workflow', 'configs');
+      const configsDir = path.join(projectPath, '.workflow', 'config');
       fs.mkdirSync(configsDir, { recursive: true });
 
       try {

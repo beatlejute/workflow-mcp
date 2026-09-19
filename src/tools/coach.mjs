@@ -3,29 +3,11 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
-import { findProjectRoot } from '../../../workflowAi/src/lib/find-root.mjs';
-import {
-  getNextId,
-  createTicket
-} from '../../../workflowAi/src/lib/operations/tickets.mjs';
-import { parseFrontmatter, serializeFrontmatter } from '../../../workflowAi/src/lib/utils.mjs';
+import { createTicket } from 'workflow-ai/lib/operations/tickets.mjs';
+import { parseFrontmatter, serializeFrontmatter } from 'workflow-ai/lib/utils.mjs';
 import { fileURLToPath } from 'node:url';
 import { parseSkillTestsOutput, extractOutputExcerpt } from '../parsers/skill-tests-output.mjs';
-
-/**
- * Resolve project root from project path or name
- * @param {string} project - Project path or name
- * @param {string} cwd - Current working directory
- * @returns {string} Absolute path to project root
- */
-function resolveProjectRoot(project, cwd) {
-  const resolved = path.resolve(cwd, project);
-  const workflowDir = path.join(resolved, '.workflow');
-  if (!fs.existsSync(workflowDir)) {
-    throw new Error(`Project not found or not a workflow project: ${project}`);
-  }
-  return resolved;
-}
+import { mcpCwd, resolveProjectRoot } from '../lib/project-root.mjs';
 
 /**
  * MCP Tool: run_skill
@@ -51,7 +33,7 @@ export const run_skill = {
     timeout_sec: z.number().min(1).max(1800).optional().describe('Timeout in seconds (default 300, max 1800)')
   }),
   async execute(args) {
-    const cwd = process.env.MCP_CWD || process.cwd();
+    const cwd = mcpCwd();
 
     // Validate required parameters
     if (!args.project) {
@@ -88,7 +70,7 @@ export const run_skill = {
     // Resolve project path
     let projectPath;
     try {
-      projectPath = resolveProjectRoot(args.project, cwd);
+      projectPath = resolveProjectRoot(args.project);
     } catch (err) {
       return {
         exit_code: 1,
@@ -158,7 +140,7 @@ export const list_skill_tests = {
     skill_name: z.string().optional().describe('Optional skill name (lowercase, alphanumeric and hyphens only). If omitted, lists tests for all skills.')
   }),
   async execute(args) {
-    const cwd = process.env.MCP_CWD || process.cwd();
+    const cwd = mcpCwd();
 
     if (!args.project) {
       return {
@@ -171,7 +153,7 @@ export const list_skill_tests = {
 
     let projectPath;
     try {
-      projectPath = resolveProjectRoot(args.project, cwd);
+      projectPath = resolveProjectRoot(args.project);
     } catch (err) {
       return {
         exit_code: 1,
@@ -226,21 +208,63 @@ export const list_skill_tests = {
       };
     }
 
-    // Define Zod schema for test cases
-    const TestCaseSchema = zod.z.object({
+    // У index.yaml две формы. Каноническая (workflowAi `src/skills/*/tests/index.yaml`)
+    // — это `cases:` с полями id/file/tags/severity. Старая, на которую была
+    // написана схема здесь, — `tests:` с test_id/description/expected_verdict.
+    // Раньше принималась только вторая, и инструмент молча отдавал [] для всех
+    // скилов канона. Поддерживаем обе.
+    const LegacyCaseSchema = zod.z.object({
       test_id: zod.z.string(),
       description: zod.z.string(),
       expected_verdict: zod.z.enum(['pass', 'fail', 'error']).or(zod.z.string()),
       source_path: zod.z.string().optional()
     });
 
-    const TestIndexSchema = zod.z.object({
-      tests: zod.z.array(TestCaseSchema)
+    const CanonCaseSchema = zod.z.object({
+      id: zod.z.string(),
+      file: zod.z.string().optional(),
+      tags: zod.z.array(zod.z.string()).optional(),
+      severity: zod.z.string().optional(),
+      description: zod.z.string().optional()
     });
 
+    const TestIndexSchema = zod.z.union([
+      zod.z.object({ tests: zod.z.array(LegacyCaseSchema) }),
+      zod.z.object({ cases: zod.z.array(CanonCaseSchema) })
+    ]);
+
+    /** Приводит обе формы к одному выходному контракту. */
+    const normalizeCase = (entry) => (
+      entry.test_id !== undefined
+        ? {
+            test_id: entry.test_id,
+            description: entry.description,
+            expected_verdict: entry.expected_verdict,
+            source_path: entry.source_path || null,
+            tags: null,
+            severity: null
+          }
+        : {
+            test_id: entry.id,
+            // В каноническом index.yaml описания и вердикта нет — они внутри
+            // файла кейса. Отдаём null, а не выдумываем значение.
+            description: entry.description ?? null,
+            expected_verdict: null,
+            source_path: entry.file || null,
+            tags: entry.tags || null,
+            severity: entry.severity || null
+          }
+    );
+
+    // Скилы лежат junction'ами на канон, и битая ссылка (удалённый канон,
+    // остаток теста) ронял весь list_skill_tests через ENOENT в statSync.
     const skillNames = args.skill_name ? [args.skill_name] : fs.readdirSync(skillsDir).filter((entry) => {
       const entryPath = path.join(skillsDir, entry);
-      return fs.statSync(entryPath).isDirectory();
+      try {
+        return fs.statSync(entryPath).isDirectory();
+      } catch {
+        return false;
+      }
     });
 
     const allTestCases = [];
@@ -276,14 +300,9 @@ export const list_skill_tests = {
         }
 
         // Add skill_name to each test case
-        for (const test of validation.data.tests) {
-          allTestCases.push({
-            skill_name: skillName,
-            test_id: test.test_id,
-            description: test.description,
-            expected_verdict: test.expected_verdict,
-            source_path: test.source_path || null
-          });
+        const entries = validation.data.tests ?? validation.data.cases;
+        for (const entry of entries) {
+          allTestCases.push({ skill_name: skillName, ...normalizeCase(entry) });
         }
       } catch (err) {
         process.stderr.write(`Warning: Error reading '${testIndexPath}': ${err.message}\n`);
@@ -323,7 +342,7 @@ export const run_skill_tests = {
     timeout_sec: z.number().min(1).max(3600).optional().describe('Timeout in seconds (default 600, max 3600)')
   }),
   async execute(args) {
-    const cwd = process.env.MCP_CWD || process.cwd();
+    const cwd = mcpCwd();
     const startTime = Date.now();
 
     // Validate required parameters
@@ -358,7 +377,7 @@ export const run_skill_tests = {
     // Resolve project path
     let projectPath;
     try {
-      projectPath = resolveProjectRoot(args.project, cwd);
+      projectPath = resolveProjectRoot(args.project);
     } catch (err) {
       return {
         exit_code: 1,
@@ -508,7 +527,7 @@ export const create_coach_ticket = {
     priority: z.enum(['low', 'medium', 'high']).optional().describe('Priority of the ticket')
   }),
   async execute(args) {
-    const cwd = process.env.MCP_CWD || process.cwd();
+    const cwd = mcpCwd();
 
     // Validate required parameters
     if (!args.project) {
@@ -565,7 +584,7 @@ export const create_coach_ticket = {
     // Resolve project path
     let projectRoot;
     try {
-      projectRoot = resolveProjectRoot(args.project, cwd);
+      projectRoot = resolveProjectRoot(args.project);
     } catch (err) {
       return {
         exit_code: 1,
@@ -649,18 +668,5 @@ export const create_coach_ticket = {
   }
 };
 
-// Default export for auto-loading via loadTools()
-const tools = [run_skill, list_skill_tests, run_skill_tests, create_coach_ticket];
-
-export const loadTools = () => {
-  return tools.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    inputSchema: tool.inputSchema,
-    execute: tool.execute
-  }));
-};
-
-export default {
-  loadTools
-};
+// Tools подхватываются auto-discovery в server.mjs напрямую из именованных
+// экспортов — своя фабрика loadTools() тут была не нужна и не вызывалась.

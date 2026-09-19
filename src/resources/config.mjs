@@ -9,7 +9,7 @@ import { discoverProjects } from '../discovery.mjs';
  *   - workflow://{project}/config/pipeline
  *   - workflow://{project}/config/ticket-movement-rules
  *
- * Both read corresponding YAML files from <project>/.workflow/configs/
+ * Both read corresponding YAML files from <project>/.workflow/config/
  * Path traversal protection: project is validated via discovery.
  * MIME: application/yaml, encoding: UTF-8.
  */
@@ -32,7 +32,7 @@ function validateProject(cwd, projectName) {
 }
 
 /**
- * Safely resolve a config file path within the project's .workflow/configs/ directory
+ * Safely resolve a config file path within the project's .workflow/config/ directory
  * @param {string} projectPath - Absolute project path
  * @param {string} filename - Config filename (e.g., 'pipeline.yaml')
  * @returns {string|null} Safe absolute path or null if path traversal detected
@@ -43,7 +43,9 @@ function resolveConfigFile(projectPath, filename) {
     return null;
   }
 
-  const configDir = path.join(projectPath, '.workflow', 'configs');
+  // В проекте каталог называется `config` (его создаёт `workflow init` junction'ом
+  // на `~/.workflow/configs`). Множественное число — только внутри пакета и в global dir.
+  const configDir = path.join(projectPath, '.workflow', 'config');
   const resolvedPath = path.join(configDir, filename);
 
   // Ensure the resolved path is within the config directory (double-check)
@@ -86,7 +88,7 @@ function getProjectConfigResources(cwd, projectName) {
     return [];
   }
 
-  const configsDir = path.join(project.path, '.workflow', 'configs');
+  const configsDir = path.join(project.path, '.workflow', 'config');
   const configFiles = [];
 
   try {
