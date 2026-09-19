@@ -10,6 +10,7 @@ import { discoverProjects, readConfig } from '../discovery.mjs';
 import { parseFrontmatter } from 'workflow-ai/lib/utils.mjs';
 import { workflowAiPath } from '../lib/workflow-ai.mjs';
 import { mcpCwd } from '../lib/project-root.mjs';
+import { readPipelineLock } from '../process/run-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,12 +56,13 @@ function isProcessAlive(pid) {
   catch { return false; }
 }
 
+/**
+ * Pid раннера из lock-файла. `.runner-pids` убран как фантом: писателя нет ни
+ * в одном из трёх репозиториев, а читателей было пять.
+ */
 function readLatestPid(projectRoot) {
-  try {
-    const raw = fs.readFileSync(path.join(projectRoot, '.runner-pids'), 'utf-8');
-    const pids = raw.split('\n').map(l => parseInt(l.trim(), 10)).filter(n => !isNaN(n) && n > 0);
-    return pids.length > 0 ? pids[pids.length - 1] : null;
-  } catch { return null; }
+  const lock = readPipelineLock(projectRoot);
+  return lock ? lock.pid : null;
 }
 
 function getPausedState(projectRoot, pid) {
@@ -135,11 +137,23 @@ function getLogExitInfo(projectRoot) {
 
 export function startProjectWatchers(projectRoot, projectName, cwd) {
   if (pipelineStateWatchers.has(projectName)) return;
-  const runnerPidsPath = path.join(projectRoot, '.runner-pids');
+  // Следим за каталогом логов, а не за самим lock-файлом: в момент подписки
+  // пайплайн обычно не запущен и файла ещё нет, а `fs.watch` по
+  // несуществующему пути молча ничего не даёт. Прежняя версия подписывалась на
+  // `.runner-pids`, которого не бывает никогда, — уведомления об изменении
+  // состояния пайплайна не приходили клиенту вовсе.
+  const logsDir = path.join(projectRoot, '.workflow', 'logs');
   const approvalsDir = path.join(projectRoot, '.workflow', 'approvals');
   const coalesceMs = getCoalesceWindowMs(cwd);
   let rw = null, aw = null;
-  try { if (fs.existsSync(runnerPidsPath)) rw = fs.watch(runnerPidsPath, () => scheduleCoalesceUpdate(cwd, coalesceMs)); } catch { }
+  try {
+    if (fs.existsSync(logsDir)) {
+      rw = fs.watch(logsDir, (_event, filename) => {
+        if (filename && !String(filename).startsWith('.pipeline.lock')) return;
+        scheduleCoalesceUpdate(cwd, coalesceMs);
+      });
+    }
+  } catch { }
   try { if (fs.existsSync(approvalsDir)) aw = fs.watch(approvalsDir, { recursive: true }, () => scheduleCoalesceUpdate(cwd, coalesceMs)); } catch { }
   pipelineStateWatchers.set(projectName, { runnerPidsWatcher: rw, approvalsWatcher: aw });
 }

@@ -13,6 +13,7 @@ import { spawn } from 'child_process';
 import process from 'process';
 import { pausePipelineImpl, resumePipelineImpl } from '../../src/tools/pipeline.mjs';
 import * as resources from '../../src/resources/index.mjs';
+import { writeRunnerLock, removeRunnerLock } from '../helpers/pipeline-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -102,9 +103,8 @@ describe('pause_pipeline and resume_pipeline tools', () => {
         });
       });
 
-      // Create .runner-pids file with the PID
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
+      // Положить lock раннера с этим pid
+      writeRunnerLock(projectPath, childPid);
 
       // Create marker file (so validation passes)
       createMarker(childPid);
@@ -139,9 +139,8 @@ describe('pause_pipeline and resume_pipeline tools', () => {
     it('should reject pause when marker validation fails', async () => {
       const dummyPid = 12345;
 
-      // Create .runner-pids file (so PID exists)
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, dummyPid.toString(), 'utf-8');
+      // Положить lock раннера, чтобы pid существовал
+      writeRunnerLock(projectPath, dummyPid);
 
       // DO NOT create marker file — this should fail validation
 
@@ -157,9 +156,8 @@ describe('pause_pipeline and resume_pipeline tools', () => {
     it('should reject pause when marker is from different MCP instance', async () => {
       const dummyPid = 12345;
 
-      // Create .runner-pids file
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, dummyPid.toString(), 'utf-8');
+      // Положить lock раннера
+      writeRunnerLock(projectPath, dummyPid);
 
       // Create marker file with DIFFERENT mcp_instance_id (foreign)
       const markerPath = path.join(logsDir, '.mcp-started-by');
@@ -185,9 +183,8 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       // Create marker file
       createMarker(dummyPid);
 
-      // Create .runner-pids file
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, dummyPid.toString(), 'utf-8');
+      // Положить lock раннера
+      writeRunnerLock(projectPath, dummyPid);
 
       // Try to resume WITHOUT pausing first (no pause state file)
       const result = await resumePipelineImpl('.');
@@ -205,9 +202,8 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       // Create marker file
       createMarker(currentPid);
 
-      // Create .runner-pids with current PID
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, currentPid.toString(), 'utf-8');
+      // Положить lock раннера с текущим pid
+      writeRunnerLock(projectPath, currentPid);
 
       // Create pause state with different PID
       const pauseStateFile = path.join(stateDir, 'pipeline-pause.json');
@@ -234,9 +230,8 @@ describe('pause_pipeline and resume_pipeline tools', () => {
 
       const childPid = proc.pid;
 
-      // Create .runner-pids file
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
+      // Положить lock раннера
+      writeRunnerLock(projectPath, childPid);
 
       // Create marker file
       createMarker(childPid);
@@ -267,9 +262,8 @@ describe('pause_pipeline and resume_pipeline tools', () => {
 
       const childPid = proc.pid;
 
-      // Create .runner-pids file
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
+      // Положить lock раннера
+      writeRunnerLock(projectPath, childPid);
 
       // Create marker file
       createMarker(childPid);
@@ -310,9 +304,8 @@ describe('pause_pipeline and resume_pipeline tools', () => {
 
       const childPid = proc.pid;
 
-      // Create .runner-pids file
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
+      // Положить lock раннера
+      writeRunnerLock(projectPath, childPid);
 
       // Create marker file
       createMarker(childPid);
@@ -341,35 +334,35 @@ describe('pause_pipeline and resume_pipeline tools', () => {
     });
   });
 
-  describe('TC-009: pause with no .runner-pids file → NO_RUNNER_PIDS error', () => {
-    it('should return NO_RUNNER_PIDS when .runner-pids file does not exist', async () => {
+  describe('TC-009: pause без lock раннера → PIPELINE_NOT_RUNNING error', () => {
+    it('should return PIPELINE_NOT_RUNNING when lock раннера отсутствует', async () => {
       // Create marker file first
       createMarker();
 
-      // Do NOT create .runner-pids file
-      // This should fail at the .runner-pids check, not at marker validation
+      // НЕ класть lock раннера
+      // Должно отказать на отсутствии lock, а не на проверке маркера
 
       // Call pause_pipeline
       const result = await pausePipelineImpl('.');
 
       expect(result.ok).toBe(false);
-      expect(result.code).toBe('NO_RUNNER_PIDS');
+      expect(result.code).toBe('PIPELINE_NOT_RUNNING');
     });
   });
 
-  describe('TC-010: resume with no .runner-pids file → NO_RUNNER_PIDS error', () => {
-    it('should return NO_RUNNER_PIDS when .runner-pids file does not exist', async () => {
+  describe('TC-010: resume без lock раннера → PIPELINE_NOT_RUNNING error', () => {
+    it('should return PIPELINE_NOT_RUNNING when lock раннера отсутствует', async () => {
       // Create marker file first
       createMarker();
 
-      // Do NOT create .runner-pids file
-      // This should fail at the .runner-pids check, not at marker validation
+      // НЕ класть lock раннера
+      // Должно отказать на отсутствии lock, а не на проверке маркера
 
       // Call resume_pipeline
       const result = await resumePipelineImpl('.');
 
       expect(result.ok).toBe(false);
-      expect(result.code).toBe('NO_RUNNER_PIDS');
+      expect(result.code).toBe('PIPELINE_NOT_RUNNING');
     });
   });
 
@@ -383,9 +376,8 @@ describe('pause_pipeline and resume_pipeline tools', () => {
 
       const childPid = proc.pid;
 
-      // Create .runner-pids file
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
+      // Положить lock раннера
+      writeRunnerLock(projectPath, childPid);
 
       // Create marker file
       createMarker(childPid);
@@ -426,9 +418,8 @@ describe('pause_pipeline and resume_pipeline tools', () => {
 
       const childPid = proc.pid;
 
-      // Create .runner-pids file
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
+      // Положить lock раннера
+      writeRunnerLock(projectPath, childPid);
 
       // Create marker file
       createMarker(childPid);

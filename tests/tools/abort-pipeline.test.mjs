@@ -15,6 +15,8 @@ import { spawn } from 'child_process';
 import process from 'process';
 import { createHash } from 'crypto';
 import { abortPipelineImpl } from '../../src/tools/pipeline.mjs';
+import { writeRunnerLock, removeRunnerLock } from '../helpers/pipeline-lock.mjs';
+import { readPipelineLock } from '../../src/process/run-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,20 +69,13 @@ describe('abort_pipeline tool', () => {
   }
 
   /**
-   * pid из `.runner-pids` — тот, кого тест выдаёт за идущий раннер.
+   * pid из lock'а раннера — тот, кого тест выдаёт за идущий пайплайн.
    * Владение привязано к запуску, поэтому именно этот pid должен лежать
    * в маркере; раньше туда писался `process.pid` самого теста.
    */
   function runnerPidFromFile() {
-    try {
-      const pids = fs.readFileSync(path.join(projectPath, '.runner-pids'), 'utf-8')
-        .split('\n')
-        .map((line) => parseInt(line.trim(), 10))
-        .filter((n) => !Number.isNaN(n));
-      return pids.length > 0 ? pids[pids.length - 1] : process.pid;
-    } catch {
-      return process.pid;
-    }
+    const lock = readPipelineLock(projectPath);
+    return lock ? lock.pid : process.pid;
   }
 
   // Helper to create marker file (must be in .workflow/logs/)
@@ -95,10 +90,9 @@ describe('abort_pipeline tool', () => {
     }), 'utf-8');
   }
 
-  // Helper to create .runner-pids file
+  // Helper: положить lock раннера
   function createRunnerPids(pid) {
-    const runnerPidsPath = path.join(projectPath, '.runner-pids');
-    fs.writeFileSync(runnerPidsPath, pid.toString(), 'utf-8');
+    writeRunnerLock(projectPath, pid);
   }
 
   describe('TC-001: Grace period clamping [0, 60]', () => {
@@ -299,26 +293,25 @@ describe('abort_pipeline tool', () => {
     });
   });
 
-  describe('TC-006: Missing .runner-pids', () => {
-    it('should return NO_RUNNER_PIDS when .runner-pids is missing', async () => {
+  describe('TC-006: Нет lock раннера', () => {
+    it('should return PIPELINE_NOT_RUNNING when lock раннера отсутствует', async () => {
       createMarker();
-      // No .runner-pids file
+      // Нет lock раннера
 
       const result = await abortPipelineImpl('.');
 
       expect(result.ok).toBe(false);
-      expect(result.code).toBe('NO_RUNNER_PIDS');
+      expect(result.code).toBe('PIPELINE_NOT_RUNNING');
     });
 
-    it('should return NO_RUNNER_PIDS when .runner-pids is empty', async () => {
+    it('should return PIPELINE_NOT_RUNNING when lock раннера пуст', async () => {
       createMarker();
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, '', 'utf-8');
+      removeRunnerLock(projectPath);
 
       const result = await abortPipelineImpl('.');
 
       expect(result.ok).toBe(false);
-      expect(result.code).toBe('NO_RUNNER_PIDS');
+      expect(result.code).toBe('PIPELINE_NOT_RUNNING');
     });
   });
 

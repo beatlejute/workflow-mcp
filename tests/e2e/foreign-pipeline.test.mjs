@@ -11,6 +11,7 @@ import os from 'os';
 import { spawn } from 'child_process';
 import process from 'process';
 import { fileURLToPath } from 'url';
+import { writeRunnerLock, removeRunnerLock, runnerLockPath } from '../helpers/pipeline-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -52,7 +53,7 @@ describe('E2E: foreign-pipeline protection', () => {
     process.chdir(originalCwd);
 
     // Kill any remaining test processes
-    const runnerPidsPath = path.join(projectPath, '.runner-pids');
+    const runnerPidsPath = runnerLockPath(projectPath);
     if (fs.existsSync(runnerPidsPath)) {
       try {
         const pidStr = fs.readFileSync(runnerPidsPath, 'utf-8').trim();
@@ -92,9 +93,8 @@ describe('E2E: foreign-pipeline protection', () => {
       const foreignPid = proc.pid;
       expect(foreignPid).toBeGreaterThan(0);
 
-      // Write .runner-pids as if CLI started the pipeline
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, foreignPid.toString(), 'utf-8');
+      // Write lock раннера as if CLI started the pipeline
+      writeRunnerLock(projectPath, foreignPid);
 
       // Intentionally NO marker file (.mcp-started-by) — simulating CLI-started pipeline
       const markerPath = path.join(logsDir, '.mcp-started-by');
@@ -146,8 +146,7 @@ describe('E2E: foreign-pipeline protection', () => {
         const foreignPid = proc.pid;
 
         // Setup foreign pipeline state
-        const runnerPidsPath = path.join(projectPath, '.runner-pids');
-        fs.writeFileSync(runnerPidsPath, foreignPid.toString(), 'utf-8');
+        writeRunnerLock(projectPath, foreignPid);
 
         // No marker file
         const markerPath = path.join(logsDir, '.mcp-started-by');
@@ -213,9 +212,8 @@ describe('E2E: foreign-pipeline protection', () => {
           'utf-8'
         );
 
-        // Setup .runner-pids
-        const runnerPidsPath = path.join(projectPath, '.runner-pids');
-        fs.writeFileSync(runnerPidsPath, ownedPid.toString(), 'utf-8');
+        // Setup lock раннера
+        writeRunnerLock(projectPath, ownedPid);
 
         const { stopPipelineImpl } = await import('../../src/tools/pipeline.mjs');
 
@@ -263,9 +261,8 @@ describe('E2E: foreign-pipeline protection', () => {
         'utf-8'
       );
 
-      // Setup .runner-pids with actual PID
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, pid.toString(), 'utf-8');
+      // Setup lock раннера with actual PID
+      writeRunnerLock(projectPath, pid);
 
       const { stopPipelineImpl } = await import('../../src/tools/pipeline.mjs');
 
@@ -296,8 +293,7 @@ describe('E2E: foreign-pipeline protection', () => {
         proc.unref();
 
         const foreignPid = proc.pid;
-        const runnerPidsPath = path.join(projectPath, '.runner-pids');
-        fs.writeFileSync(runnerPidsPath, foreignPid.toString(), 'utf-8');
+        writeRunnerLock(projectPath, foreignPid);
 
         // No marker
         const markerPath = path.join(logsDir, '.mcp-started-by');
@@ -361,9 +357,8 @@ describe('E2E: foreign-pipeline protection', () => {
           'utf-8'
         );
 
-        // .runner-pids contains pid2 (the one we're trying to stop)
-        const runnerPidsPath = path.join(projectPath, '.runner-pids');
-        fs.writeFileSync(runnerPidsPath, pid2.toString(), 'utf-8');
+        // lock раннера contains pid2 (the one we're trying to stop)
+        writeRunnerLock(projectPath, pid2);
 
         const { stopPipelineImpl } = await import('../../src/tools/pipeline.mjs');
 

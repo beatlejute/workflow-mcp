@@ -41,17 +41,20 @@ function resolveWorkflowAiBin() {
 /**
  * Pid идущего раннера.
  *
- * Источник правды — `.pipeline.lock`: его раннер пишет при любом запуске.
- * `.runner-pids` остаётся запасным путём, но полагаться на него нельзя: его
- * читают четыре модуля, а не пишет никто — ни workflow-ai, ни расширение,
- * ни сам сервер. Пока pid брался только оттуда, pause/resume/abort/stop
- * всегда отвечали `NO_RUNNER_PIDS` на любом реальном пайплайне.
+ * Единственный источник — `.workflow/logs/.pipeline.lock`, который раннер
+ * пишет при любом способе запуска: из CLI, из расширения, из MCP.
+ *
+ * Раньше рядом был запасной путь через `.runner-pids`. Файла с таким именем
+ * не пишет никто — ни workflow-ai, ни расширение, ни сам сервер, — но читали
+ * его пять модулей по двум разным путям, и отсутствие пайплайна выглядело для
+ * клиента как `NO_RUNNER_PIDS: Failed to read .runner-pids: ENOENT`. Ответ
+ * описывал не положение дел, а несуществующий файл.
  *
  * Возвращает и сам lock: читать его второй раз для проверки владения значит
  * допускать, что между чтениями его снимут и проверка выродится.
  *
  * @param {string} projectRoot
- * @returns {{ok: true, pid: number, lock: Object|null} | {ok: false, code: string, hint: string}}
+ * @returns {{ok: true, pid: number, lock: Object} | {ok: false, code: string, hint: string}}
  */
 function resolveRunnerPid(projectRoot) {
   const lock = readPipelineLock(projectRoot);
@@ -59,20 +62,11 @@ function resolveRunnerPid(projectRoot) {
     return { ok: true, pid: lock.pid, lock };
   }
 
-  try {
-    const content = fs.readFileSync(path.join(projectRoot, '.runner-pids'), 'utf-8');
-    const pids = content
-      .split('\n')
-      .map((line) => parseInt(line.trim(), 10))
-      .filter((n) => !Number.isNaN(n));
-
-    if (pids.length > 0) {
-      return { ok: true, pid: pids[pids.length - 1], lock: null };
-    }
-    return { ok: false, code: 'NO_RUNNER_PIDS', hint: '.runner-pids file is empty or invalid' };
-  } catch (err) {
-    return { ok: false, code: 'NO_RUNNER_PIDS', hint: `Failed to read .runner-pids: ${err.message}` };
-  }
+  return {
+    ok: false,
+    code: 'PIPELINE_NOT_RUNNING',
+    hint: 'No pipeline lock found — nothing is running for this project'
+  };
 }
 
 /**
@@ -802,14 +796,12 @@ export async function abortPipelineImpl(project, options = {}) {
         const liveLock = readPipelineLock(projectRoot);
         // В lock'е уже другой pid — наш раннер вышел, а на его место встал чужой
         // запуск. Добивать старый pid незачем и опасно.
-        if (liveLock && runner.lock && liveLock.pid !== pid) {
+        if (liveLock && liveLock.pid !== pid) {
           return { escalate: false, reason: 'RUNNER_GONE' };
         }
-        if (!liveLock && runner.lock) {
+        if (!liveLock) {
           // lock был в начале и исчез — раннер завершился сам. Добивать некого,
           // а pid к этому моменту может уже принадлежать чужому процессу.
-          // Если lock'а не было изначально (pid из `.runner-pids`), сокращать нечего:
-          // иначе отказ внешней команды выглядел бы как успешный abort.
           return { escalate: false, reason: 'RUNNER_GONE' };
         }
         const ownership = validateRunOwnership(

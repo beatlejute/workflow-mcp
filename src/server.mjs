@@ -157,10 +157,22 @@ async function main() {
   // Get cwd from environment or use process.cwd()
   const cwd = mcpCwd();
 
+  // Версия берётся из package.json, а не из хардкода: три разных номера
+  // одного сервера (package.json, CHANGELOG и это место) расходились,
+  // и клиент видел 0.1.0 при пакете 1.2.0.
+  let serverVersion = '0.0.0';
+  try {
+    serverVersion = JSON.parse(
+      fs.readFileSync(resolve(__dirname, '../package.json'), 'utf8')
+    ).version || serverVersion;
+  } catch {
+    // Версия не критична для работы: сервер поднимется и без неё.
+  }
+
   // Create MCP server
   const server = new McpServer({
     name: 'workflow-mcp',
-    version: '0.1.0',
+    version: serverVersion,
   });
 
   const transport = new StdioServerTransport();

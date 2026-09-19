@@ -17,6 +17,7 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import * as resourcesIndex from '../../src/resources/index.mjs';
+import { writeRunnerLock, removeRunnerLock, runnerLockPath } from '../helpers/pipeline-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -65,8 +66,8 @@ describe('Pipeline State Resource (subscribable)', () => {
 
   describe('TC-001: subscribe → получен initial snapshot', () => {
     it('should return initial snapshot on subscribe', async () => {
-      // Setup: create .runner-pids with a PID
-      fs.writeFileSync(path.join(projectPath, '.runner-pids'), '12345\n');
+      // Положить lock раннера с pid
+      writeRunnerLock(projectPath, process.pid);
 
       // Act: get initial snapshot through resource
       const result = await resourcesIndex.get_workflow_pipeline_state(process.cwd());
@@ -79,9 +80,8 @@ describe('Pipeline State Resource (subscribable)', () => {
     });
 
     it('should include project data in snapshot', async () => {
-      // Setup: create .runner-pids
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, '12345\n');
+      // Положить lock раннера
+      writeRunnerLock(projectPath, process.pid);
 
       // Create a log file
       const logContent = '[start] pipeline\nInitializing...\n';
@@ -97,12 +97,12 @@ describe('Pipeline State Resource (subscribable)', () => {
       expect(data.length).toBeGreaterThan(0);
       const entry = data.find(e => e.project === projectName);
       expect(entry).toBeDefined();
-      expect(entry?.pid).toBe(12345);
+      expect(entry?.pid).toBe(process.pid);
       expect(entry?.run_id).toBeDefined();
     });
 
-    it('should return empty array when no .runner-pids exist', async () => {
-      // Act: get snapshot with no running pipelines (no .runner-pids file)
+    it('should return empty array when нет lock раннера', async () => {
+      // Act: get snapshot with no running pipelines (нет lock раннера)
       const result = await resourcesIndex.get_workflow_pipeline_state(process.cwd());
       const data = JSON.parse(result.text);
 
@@ -148,12 +148,12 @@ describe('Pipeline State Resource (subscribable)', () => {
   describe('TC-003: pause/resume/abort/stop → каждая операция = 1 notification', () => {
     it('should reflect paused state in snapshot', async () => {
       // Setup
-      fs.writeFileSync(path.join(projectPath, '.runner-pids'), '12345\n');
+      writeRunnerLock(projectPath, process.pid);
       fs.writeFileSync(path.join(projectPath, '.workflow', 'logs', 'pipeline_2026-04-27_10-00-00.log'), '[start]\n');
 
       // Create pause marker
       const pauseFile = path.join(projectPath, '.workflow', 'state', 'pipeline-pause.json');
-      fs.writeFileSync(pauseFile, JSON.stringify({ pid: 12345 }));
+      fs.writeFileSync(pauseFile, JSON.stringify({ pid: process.pid }));
 
       // Act: read snapshot
       const result = await resourcesIndex.get_workflow_pipeline_state(process.cwd());
@@ -167,7 +167,7 @@ describe('Pipeline State Resource (subscribable)', () => {
 
     it('should reflect state changes in successive snapshots', async () => {
       // Setup
-      fs.writeFileSync(path.join(projectPath, '.runner-pids'), '12345\n');
+      writeRunnerLock(projectPath, process.pid);
       fs.writeFileSync(path.join(projectPath, '.workflow', 'logs', 'pipeline_2026-04-27_10-00-00.log'), '[start]\n');
 
       // Act: first snapshot - running
@@ -178,7 +178,7 @@ describe('Pipeline State Resource (subscribable)', () => {
 
       // Apply pause
       const pauseFile = path.join(projectPath, '.workflow', 'state', 'pipeline-pause.json');
-      fs.writeFileSync(pauseFile, JSON.stringify({ pid: 12345 }));
+      fs.writeFileSync(pauseFile, JSON.stringify({ pid: process.pid }));
 
       // Second snapshot - paused (clear cache to pick up file changes)
       resourcesIndex.clearPipelineStateCache();
@@ -206,7 +206,7 @@ describe('Pipeline State Resource (subscribable)', () => {
   describe('TC-004: 10 событий за 50 мс → 1 notification (coalescing)', () => {
     it('should include all pending approvals in snapshot', async () => {
       // Setup
-      fs.writeFileSync(path.join(projectPath, '.runner-pids'), '12345\n');
+      writeRunnerLock(projectPath, process.pid);
       fs.writeFileSync(path.join(projectPath, '.workflow', 'logs', 'pipeline_2026-04-27_10-00-00.log'), '[start]\n');
       const approvalsDir = path.join(projectPath, '.workflow', 'approvals');
 
@@ -234,7 +234,7 @@ describe('Pipeline State Resource (subscribable)', () => {
   describe('TC-005: unsubscribe освобождает fs.watch handles', () => {
     it('should support subscribing and unsubscribing', async () => {
       // Setup
-      fs.writeFileSync(path.join(projectPath, '.runner-pids'), '12345\n');
+      writeRunnerLock(projectPath, process.pid);
 
       // Act: subscribe
       const unsubscribe = resourcesIndex.subscribe_workflow_pipeline_state(() => {
@@ -252,7 +252,7 @@ describe('Pipeline State Resource (subscribable)', () => {
 
     it('should allow multiple subscribers and independent unsubscription', async () => {
       // Setup
-      fs.writeFileSync(path.join(projectPath, '.runner-pids'), '12345\n');
+      writeRunnerLock(projectPath, process.pid);
       const callCounts = { sub1: 0, sub2: 0 };
 
       // Act: subscribe with two subscribers
@@ -287,7 +287,7 @@ describe('Pipeline State Resource (subscribable)', () => {
   describe('TC-006: смена pending-approval → notification содержит `awaiting_approval`', () => {
     it('should include awaiting_approval in snapshot when pending approval exists', async () => {
       // Setup: create pipeline and approval file
-      fs.writeFileSync(path.join(projectPath, '.runner-pids'), '12345\n');
+      writeRunnerLock(projectPath, process.pid);
       const logPath = path.join(projectPath, '.workflow', 'logs', 'pipeline_2026-04-27_10-00-00.log');
       fs.writeFileSync(logPath, '[start] pipeline\n');
 
@@ -313,7 +313,7 @@ describe('Pipeline State Resource (subscribable)', () => {
 
     it('should update snapshot when approval status changes from pending to approved', async () => {
       // Setup
-      fs.writeFileSync(path.join(projectPath, '.runner-pids'), '12345\n');
+      writeRunnerLock(projectPath, process.pid);
       const logPath = path.join(projectPath, '.workflow', 'logs', 'pipeline_2026-04-27_10-00-00.log');
       fs.writeFileSync(logPath, '[start] pipeline\n');
 
@@ -354,7 +354,7 @@ describe('Pipeline State Resource (subscribable)', () => {
 
     it('should not show approved approvals in awaiting_approval', async () => {
       // Setup - use unique step ID to avoid conflicts
-      fs.writeFileSync(path.join(projectPath, '.runner-pids'), '12345\n');
+      writeRunnerLock(projectPath, process.pid);
       const logPath = path.join(projectPath, '.workflow', 'logs', 'pipeline_2026-04-27_10-00-00.log');
       fs.writeFileSync(logPath, '[start] pipeline\n');
 
@@ -398,7 +398,7 @@ describe('Pipeline State Resource (subscribable)', () => {
   describe('Integration: Full subscription lifecycle', () => {
     it('should handle multiple state changes in snapshot', async () => {
       // Setup
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
+      const runnerPidsPath = runnerLockPath(projectPath);
       const logPath = path.join(projectPath, '.workflow', 'logs', 'pipeline_2026-04-27_10-00-00.log');
       const approvalsDir = path.join(projectPath, '.workflow', 'approvals');
       const stateDir = path.join(projectPath, '.workflow', 'state');
@@ -406,17 +406,17 @@ describe('Pipeline State Resource (subscribable)', () => {
       // Act: sequence of operations
       // 1. Start pipeline
       fs.writeFileSync(logPath, '[start] pipeline\n');
-      fs.writeFileSync(runnerPidsPath, '12345\n');
+      writeRunnerLock(projectPath, process.pid);
 
       let result = await resourcesIndex.get_workflow_pipeline_state(process.cwd());
       let data = JSON.parse(result.text);
       let entry = data.find(e => e.project === projectName);
-      expect(entry?.pid).toBe(12345);
+      expect(entry?.pid).toBe(process.pid);
 
       // 2. Add pause state marker
       fs.writeFileSync(
         path.join(stateDir, 'pipeline-pause.json'),
-        JSON.stringify({ pid: 12345 })
+        JSON.stringify({ pid: process.pid })
       );
 
       resourcesIndex.clearPipelineStateCache();
@@ -442,7 +442,7 @@ describe('Pipeline State Resource (subscribable)', () => {
       data = JSON.parse(result.text);
       entry = data.find(e => e.project === projectName);
       expect(entry).toBeDefined();
-      expect(entry?.pid).toBe(12345);
+      expect(entry?.pid).toBe(process.pid);
       expect(entry?.awaiting_approval?.step_id).toBe('step-integration');
     });
   });

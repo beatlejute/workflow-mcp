@@ -14,15 +14,9 @@ function isProcessAlive(pid) {
 }
 
 /**
- * Read latest PID from .runner-pids.
+ * Pid раннера. Единственный источник — lock; `.runner-pids` убран как фантом
+ * (писателя нет ни в одном из трёх репозиториев).
  */
-function readLatestPid(projectRoot) {
-  try {
-    const raw = fs.readFileSync(path.join(projectRoot, '.runner-pids'), 'utf-8');
-    const pids = raw.split('\n').map(l => parseInt(l.trim(), 10)).filter(n => !isNaN(n) && n > 0);
-    return pids.length > 0 ? pids[pids.length - 1] : null;
-  } catch { return null; }
-}
 
 /**
  * Get paused state for a PID.
@@ -176,10 +170,10 @@ export function get_workflow_pipeline_state(absoluteCwd) {
 
   for (const project of projects) {
     const projectRoot = project.path;
-    // Источник правды — lock раннера; .runner-pids остаётся как fallback.
+    // Единственный источник pid — lock, который пишет раннер.
     const lock = readPipelineLock(projectRoot);
-    const pid = lock ? lock.pid : readLatestPid(projectRoot);
-    if (!pid) continue;
+    if (!lock) continue;
+    const pid = lock.pid;
 
     // Владение привязано к запуску, а не к номеру процесса. Битый маркер
     // внутри читается безопасно: раньше один такой файл ронял снимок целиком.

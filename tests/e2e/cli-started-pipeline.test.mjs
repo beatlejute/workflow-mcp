@@ -90,7 +90,7 @@ describe('FIX-002: видимость и управление чужими па�
     }
   });
 
-  it('видит пайплайн, запущенный извне: только .pipeline.lock, без .runner-pids', () => {
+  it('видит пайплайн, запущенный извне: только .pipeline.lock, без lock раннера', () => {
     // Живой процесс = текущий: pid точно существует.
     writeRunnerLock(projectPath, process.pid, '2026-09-18T10:00:00.000Z');
     writeLog(projectPath);
@@ -117,7 +117,7 @@ describe('FIX-002: видимость и управление чужими па�
     expect(entry.stale_lock).toBe(true);
   });
 
-  it('без lock и без .runner-pids проект в снапшот не попадает', () => {
+  it('без lock и без lock раннера проект в снапшот не попадает', () => {
     writeLog(projectPath);
 
     const snapshot = get_workflow_pipeline_state(workspaceDir);

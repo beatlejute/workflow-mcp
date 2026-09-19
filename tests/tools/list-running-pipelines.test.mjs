@@ -106,7 +106,7 @@ afterEach(() => {
 });
 
 describe('источник pid', () => {
-  it('проект без lock и без .runner-pids пропускается', async () => {
+  it('проект без lock пропускается', async () => {
     makeProject('proj');
 
     await expect(list_running_pipelines.execute({})).resolves.toEqual([]);
@@ -124,15 +124,6 @@ describe('источник pid', () => {
     expect(entry.project).toBe('proj');
   });
 
-  it('.runner-pids работает как запасной источник и читается из корня проекта', async () => {
-    const victim = await spawnVictim();
-    const root = makeProject('proj');
-    // Именно корень проекта, не `.workflow/logs/`.
-    fs.writeFileSync(path.join(root, '.runner-pids'), String(victim.pid));
-    writeLog(root);
-
-    expect((await snapshotOne()).pid).toBe(victim.pid);
-  });
 });
 
 describe('определение состояния', () => {

@@ -5,8 +5,8 @@
  * `.mcp-started-by` pid порождённого раннера, а `pause`/`resume`/`abort`/`stop`
  * сверяли это поле с `process.pid` самого сервера — совпасть нельзя никогда,
  * и управление своим же пайплайном всегда отвечало `PID_MISMATCH`. Затем pid
- * для сигналов брался только из `.runner-pids`, которого не пишет никто, — и
- * отказ просто переехал в `NO_RUNNER_PIDS`.
+ * для сигналов брался только из `lock раннера`, которого не пишет никто, — и
+ * отказ просто переехал в `PIPELINE_NOT_RUNNING`.
  *
  * Сейчас в маркере лежит pid раннера, а сверяется он с живым pid из
  * `.pipeline.lock`. Из этого следуют три свойства, каждое проверено ниже:
@@ -31,6 +31,7 @@ import {
 } from '../../src/tools/pipeline.mjs';
 import { readMarker } from '../../src/process/marker.mjs';
 import { mcpInstanceId } from '../../src/lib/project-root.mjs';
+import { writeRunnerLock, removeRunnerLock } from '../helpers/pipeline-lock.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.dirname(path.dirname(__dirname));
@@ -58,7 +59,7 @@ const OWNERSHIP_FAILURES = [
   'MARKER_VALIDATION_FAILED',
   'FOREIGN_PIPELINE',
   'STALE_PIPELINE_LOCK',
-  'NO_RUNNER_PIDS'
+  'PIPELINE_NOT_RUNNING'
 ];
 
 function makeProject(root, name) {
@@ -291,31 +292,10 @@ describe('владение пайплайном, запущенным через
     }
   });
 
-  it('без lock\'а переиспользование ловится по времени из маркера', { timeout: 30000 }, async () => {
-    // pid приходит из `.runner-pids`, lock'а нет. Раньше в этой ветке вся защита
-    // сводилась к равенству pid — то есть к тому, что признано недостаточным.
-    const victim = await spawnVictim();
-    try {
-      const dir = makeProject(root, 'projH');
-      const ancient = '2020-01-01T00:00:00.000Z';
-      fs.writeFileSync(path.join(dir, '.runner-pids'), String(victim.pid));
-      fs.writeFileSync(path.join(dir, '.workflow', 'logs', '.mcp-started-by'), JSON.stringify({
-        version: 1,
-        mcp_instance_id: mcpInstanceId(),
-        started_at: ancient,
-        pid: victim.pid
-      }));
-
-      const stopped = await stop_pipeline.execute({ project: 'projH' });
-
-      expect(stopped.ok).toBe(false);
-      expect(stopped.code).toBe('STALE_PIPELINE_LOCK');
-      expect(stopped.reason).toBe('PID_REUSED');
-      expect(() => process.kill(victim.pid, 0), 'посторонний процесс убит').not.toThrow();
-    } finally {
-      try { victim.kill(); } catch { /* мог завершиться */ }
-    }
-  });
+  // Сценарий «pid есть, lock'а нет» через инструменты больше недостижим:
+  // `.runner-pids` убран, и единственный источник pid — сам lock. Ветка
+  // `validateRunOwnership` для отсутствующего lock'а осталась и проверяется
+  // на уровне модуля в `tests/process/run-lock.test.mjs`.
 
   it('list_running_pipelines помечает чужие пайплайны и не помечает свой', async () => {
     // Признак `foreign` был инвертирован и не покрыт ничем: два теста на него в

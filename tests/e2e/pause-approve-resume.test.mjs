@@ -11,6 +11,7 @@ import os from 'os';
 import { spawn } from 'child_process';
 import process from 'process';
 import { fileURLToPath } from 'url';
+import { writeRunnerLock, removeRunnerLock, runnerLockPath } from '../helpers/pipeline-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -64,7 +65,7 @@ stages:
     process.chdir(originalCwd);
 
     // Kill any remaining test processes
-    const runnerPidsPath = path.join(projectPath, '.runner-pids');
+    const runnerPidsPath = runnerLockPath(projectPath);
     if (fs.existsSync(runnerPidsPath)) {
       try {
         const pidStr = fs.readFileSync(runnerPidsPath, 'utf-8').trim();
@@ -245,8 +246,8 @@ stages:
 
       fs.writeFileSync(markerPath, JSON.stringify(marker, null, 2));
 
-      // Write .runner-pids
-      fs.writeFileSync(path.join(projectPath, '.runner-pids'), process.pid.toString());
+      // Write lock раннера
+      writeRunnerLock(projectPath, process.pid);
 
       // Verify marker exists
       expect(fs.existsSync(markerPath)).toBe(true);

@@ -12,6 +12,8 @@ import { spawn } from 'child_process';
 import { createHash } from 'crypto';
 import process from 'process';
 import { stopPipelineImpl } from '../../src/tools/pipeline.mjs';
+import { writeRunnerLock, removeRunnerLock, runnerLockPath } from '../helpers/pipeline-lock.mjs';
+import { readPipelineLock } from '../../src/process/run-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,20 +61,13 @@ describe('stop_pipeline tool', () => {
 
   // Helper to create marker file (must be in .workflow/logs/)
   /**
-   * pid из `.runner-pids` — тот, кого тест выдаёт за идущий раннер.
+   * pid из `lock раннера` — тот, кого тест выдаёт за идущий раннер.
    * Владение привязано к запуску, поэтому именно этот pid должен лежать
    * в маркере; раньше туда писался `process.pid` самого теста.
    */
   function runnerPidFromFile() {
-    try {
-      const pids = fs.readFileSync(path.join(projectPath, '.runner-pids'), 'utf-8')
-        .split('\n')
-        .map((line) => parseInt(line.trim(), 10))
-        .filter((n) => !Number.isNaN(n));
-      return pids.length > 0 ? pids[pids.length - 1] : process.pid;
-    } catch {
-      return process.pid;
-    }
+    const lock = readPipelineLock(projectPath);
+    return lock ? lock.pid : process.pid;
   }
 
   function createMarker(pid = runnerPidFromFile()) {
@@ -110,9 +105,8 @@ describe('stop_pipeline tool', () => {
         });
       });
 
-      // Create .runner-pids file with the PID
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
+      // Положить lock раннера с этим pid
+      writeRunnerLock(projectPath, childPid);
 
       // Create marker file (so validation passes)
       createMarker();
@@ -152,9 +146,8 @@ describe('stop_pipeline tool', () => {
       const parentPid = proc.pid;
       expect(parentPid).toBeGreaterThan(0);
 
-      // Create .runner-pids file
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, parentPid.toString(), 'utf-8');
+      // Положить lock раннера
+      writeRunnerLock(projectPath, parentPid);
 
       // Create marker file
       createMarker();
@@ -205,8 +198,7 @@ describe('stop_pipeline tool', () => {
   describe('TC-003: Windows mock test — taskkill /F /T is invoked', () => {
     it('should use taskkill on Windows or SIGKILL on POSIX', async () => {
       const dummyPid = 99999; // Non-existent PID for safe testing
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, dummyPid.toString(), 'utf-8');
+      writeRunnerLock(projectPath, dummyPid);
 
       // Create marker file
       createMarker();
@@ -228,9 +220,8 @@ describe('stop_pipeline tool', () => {
     it('should reject kill of foreign pipeline without force=true', async () => {
       const dummyPid = 12345;
 
-      // Create .runner-pids file (so PID exists)
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, dummyPid.toString(), 'utf-8');
+      // Положить lock раннера, чтобы pid существовал
+      writeRunnerLock(projectPath, dummyPid);
 
       // Create marker file with DIFFERENT mcp_instance_id (foreign)
       const markerPath = path.join(logsDir, '.mcp-started-by');
@@ -262,9 +253,8 @@ describe('stop_pipeline tool', () => {
 
       const childPid = proc.pid;
 
-      // Create .runner-pids file
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
+      // Положить lock раннера
+      writeRunnerLock(projectPath, childPid);
 
       // Create marker file with DIFFERENT mcp_instance_id (foreign)
       const markerPath = path.join(logsDir, '.mcp-started-by');
@@ -306,9 +296,8 @@ describe('stop_pipeline tool', () => {
 
       const childPid = proc.pid;
 
-      // Create .runner-pids file
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
+      // Положить lock раннера
+      writeRunnerLock(projectPath, childPid);
 
       // Create marker file
       createMarker();
@@ -327,24 +316,23 @@ describe('stop_pipeline tool', () => {
     });
   });
 
-  describe('TC-007: No .runner-pids file → NO_RUNNER_PIDS error', () => {
-    it('should return NO_RUNNER_PIDS when .runner-pids does not exist', async () => {
-      // Create marker file but no .runner-pids
+  describe('TC-007: Нет lock раннера → PIPELINE_NOT_RUNNING error', () => {
+    it('should return PIPELINE_NOT_RUNNING when lock раннера отсутствует', async () => {
+      // Create marker file but no lock раннера
       createMarker();
 
       // Call stop_pipeline with force=true to bypass marker validation
-      // (since we're testing the NO_RUNNER_PIDS path)
+      // (since we're testing the PIPELINE_NOT_RUNNING path)
       const result = await stopPipelineImpl('.', { force: true });
 
       expect(result.ok).toBe(false);
-      expect(result.code).toBe('NO_RUNNER_PIDS');
+      expect(result.code).toBe('PIPELINE_NOT_RUNNING');
     });
   });
 
-  describe('TC-008: Empty .runner-pids file → NO_RUNNER_PIDS error', () => {
-    it('should return NO_RUNNER_PIDS when .runner-pids is empty', async () => {
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, '', 'utf-8');  // Empty file
+  describe('TC-008: Пустой lock раннера → PIPELINE_NOT_RUNNING error', () => {
+    it('should return PIPELINE_NOT_RUNNING when lock раннера пуст', async () => {
+      removeRunnerLock(projectPath);  // Empty file
 
       // Create marker file
       createMarker();
@@ -353,7 +341,7 @@ describe('stop_pipeline tool', () => {
       const result = await stopPipelineImpl('.', { force: true });
 
       expect(result.ok).toBe(false);
-      expect(result.code).toBe('NO_RUNNER_PIDS');
+      expect(result.code).toBe('PIPELINE_NOT_RUNNING');
     });
   });
 
@@ -383,8 +371,7 @@ describe('stop_pipeline tool', () => {
       const childPid = proc.pid;
 
       // Setup
-      const runnerPidsPath = path.join(projectPath, '.runner-pids');
-      fs.writeFileSync(runnerPidsPath, childPid.toString(), 'utf-8');
+      writeRunnerLock(projectPath, childPid);
 
       createMarker();
 
