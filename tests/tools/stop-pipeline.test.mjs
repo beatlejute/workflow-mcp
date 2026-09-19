@@ -334,16 +334,16 @@ describe('stop_pipeline tool', () => {
     it.each([['empty'], ['garbage'], ['no-pid'], ['bad-pid']])(
       'should return PIPELINE_NOT_RUNNING when lock испорчен (%s)',
       async (kind) => {
-      writeBrokenLock(projectPath, kind);
+        writeBrokenLock(projectPath, kind);
 
-      // Create marker file
-      createMarker();
+        // Create marker file
+        createMarker();
 
-      // Call stop_pipeline with force=true
-      const result = await stopPipelineImpl('.', { force: true });
+        // Call stop_pipeline with force=true
+        const result = await stopPipelineImpl('.', { force: true });
 
-      expect(result.ok).toBe(false);
-      expect(result.code).toBe('PIPELINE_NOT_RUNNING');
+        expect(result.ok).toBe(false);
+        expect(result.code).toBe('PIPELINE_NOT_RUNNING');
       }
     );
   });

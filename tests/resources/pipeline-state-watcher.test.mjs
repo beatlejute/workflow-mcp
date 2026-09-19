@@ -62,7 +62,7 @@ beforeEach(() => {
   clearPipelineStateCache();
 });
 
-afterEach(() => {
+afterEach(async () => {
   if (unsubscribe) {
     try {
       unsubscribe();
@@ -71,6 +71,10 @@ afterEach(() => {
     }
     unsubscribe = undefined;
   }
+  // Дать закрытию наблюдателей дойти до событийного цикла: иначе следующий
+  // тест замеряет базовое число хэндлов, когда предыдущие ещё открыты, и
+  // проверка возврата к базе становится бессмысленной.
+  await new Promise((resolve) => setTimeout(resolve, 150));
   if (prevMcpCwd === undefined) delete process.env.MCP_CWD;
   else process.env.MCP_CWD = prevMcpCwd;
   fs.rmSync(workspace, { recursive: true, force: true });
@@ -183,10 +187,11 @@ describe('наблюдатель за состоянием пайплайна', 
       return;
     }
 
-    // Абсолютное число сравнивать нельзя: соседние тесты в файле могут
-    // оставить свои наблюдатели, а `stopAllPipelineStateWatchers` закрывает их
-    // все разом. Проверяемое свойство — что закрытие вообще происходит.
-    expect(during, 'наблюдатель остался открытым после отписки').toBeGreaterThan(after);
+    // Сравнивать `during > after` недостаточно: наблюдателей на проект два
+    // (логи и одобрения), и утечка одного из них такую проверку проходит —
+    // 2 > 1. Требуем возврата ровно к исходному числу.
+    expect(during, 'наблюдатели не были созданы').toBeGreaterThan(baseline);
+    expect(after, 'после отписки остались открытые наблюдатели').toBe(baseline);
   });
 
   it('после отписки уведомления не приходят', async () => {
