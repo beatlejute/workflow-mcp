@@ -68,19 +68,26 @@ describe('Alerts MCP Resources', () => {
     // её за текущее состояние — разрешившееся условие висело в списке сутки.
     let workspace;
     let prevMcpCwd;
+    let prevStateDir;
 
     beforeEach(() => {
       workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'alerts-live-'));
       prevMcpCwd = process.env.MCP_CWD;
+      prevStateDir = process.env.WORKFLOW_STATE_DIR;
       process.env.MCP_CWD = workspace;
+      // Каталог состояния — внутри рабочей области теста. Иначе `serverStateDir`
+      // вернул бы путь из `WORKFLOW_STATE_DIR`, и уборка снесла бы каталог,
+      // заданный окружением, — то есть живое состояние сервера.
+      process.env.WORKFLOW_STATE_DIR = path.join(workspace, '.state');
     });
 
     afterEach(() => {
       vi.restoreAllMocks();
-      const stateDir = serverStateDir(workspace);
-      if (stateDir.dir) fs.rmSync(stateDir.dir, { recursive: true, force: true });
       if (prevMcpCwd === undefined) delete process.env.MCP_CWD;
       else process.env.MCP_CWD = prevMcpCwd;
+      if (prevStateDir === undefined) delete process.env.WORKFLOW_STATE_DIR;
+      else process.env.WORKFLOW_STATE_DIR = prevStateDir;
+      // Сносится только то, что тест сам и создал.
       fs.rmSync(workspace, { recursive: true, force: true });
     });
 

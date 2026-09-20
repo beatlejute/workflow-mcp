@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`.gitkeep.md` числился тикетом, планом и отчётом.** `workflow init` кладёт его в каждый каталог, а фильтр везде проверял только расширение. `list_blocked_tickets` отдавал «тикет» с id `.gitkeep`, `list_plans` — два «плана» со статусом `unknown`. Общий фильтр `isWorkflowDoc` в 14 местах, включая обоих наблюдателей за файлами — `.gitkeep.md` будил их на каждое своё изменение. В workflow-ai 1.6.1 — в планах и в сборке тикетов плана, где оставалась отсечка по точному имени файла.
 
 ### BREAKING
-- `workflow://alerts` больше не выжимка из истории, а обход детекторов на момент запроса. Подписчик узнаёт и об исчезновении условия: тик сравнивает отпечатки с прошлым проходом и шлёт `resources/updated`, когда список сократился — прежде такого события не порождал никто, потому что дедуп ловит только появление. Ресурс называл себя «current list of active alerts», хотя отдавал последнюю запись по каждому отпечатку за сутки: после починки детектора `stuck` и закрытия зависшего гейта в списке ещё сутки висели бы четыре несуществующих прогона и одобренный шаг. Поля `_fingerprint` и `_published_at` в ответе пропали — они относятся к публикации, а не к состоянию; за историей публикаций остаётся `workflow://alerts/history`. Обход вынесен в `health/sweep.mjs` и общий с тиком службы здоровья.
+- `workflow://alerts` больше не выжимка из истории, а обход детекторов на момент запроса. Подписчик узнаёт о любом изменении набора: тик сравнивает отпечатки с прошлым проходом и шлёт `resources/updated`, когда состав отличается в любую сторону. Уведомление отвязано от публикации алерта — та дедуплицируется на `dedup_fingerprint_ttl_sec`, и условие, которое разрешилось и вернулось внутри часа, не порождало бы события вовсе. Ресурс называл себя «current list of active alerts», хотя отдавал последнюю запись по каждому отпечатку за сутки: после починки детектора `stuck` и закрытия зависшего гейта в списке ещё сутки висели бы четыре несуществующих прогона и одобренный шаг. Поля `_fingerprint` и `_published_at` в ответе пропали — они относятся к публикации, а не к состоянию; за историей публикаций остаётся `workflow://alerts/history`. Обход вынесен в `health/sweep.mjs` и общий с тиком службы здоровья.
 - `list_skill_tests` отвечает данными, а не конвертом CLI: `{tests, warnings}` вместо `{exit_code, stdout, stderr, duration_ms}`, при отказе — `{error, message, tests: [], warnings: []}`. Инструмент ничего не запускает: `duration_ms` был всегда 0, а `exit_code` — выдуманным. `run_skill` и `run_skill_tests` конверт сохраняют: они действительно запускают процесс, и обе величины у них настоящие. Отсюда мажорная версия.
 - `mcp_instance_id` считается по новому ключу (см. ниже). Маркер прежнего формата принимается и дальше, но сервер, который откатят на 1.x, свой же новый маркер уже не признает.
 - Экспорт `clearPipelineStateCache` заменён на `cancelPipelineStateNotification`.
@@ -34,14 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Снимок состояния получил поле `killed_by`.
 
 ### Tests
-- Новые файлы: `tests/resources/pipeline-state-freshness.test.mjs` (5), `tests/health/publisher-lazy-state-dir.test.mjs` (4), `tests/lib/workflow-docs.test.mjs` (6), `tests/health/sweep.test.mjs` (7), `tests/health/watcher-resolved.test.mjs` (5).
+- Новые файлы: `tests/resources/pipeline-state-freshness.test.mjs` (5), `tests/health/publisher-lazy-state-dir.test.mjs` (4), `tests/lib/workflow-docs.test.mjs` (6), `tests/health/sweep.test.mjs` (7), `tests/health/watcher-changed.test.mjs` (8).
 - `tests/setup/isolate-state-dir.mjs` — набор больше не пишет в профиль пользователя; проверка этого факта лежит в `state-dir`.
 - Дополнены: `stuck` (+3), `list_running_pipelines` (+3), `ticket-tools` (+3), `analytics` (+2), `state-dir` (+3), `git-client` (+1).
 - Два теста считали `mcp_instance_id` своей копией формулы вместо вызова кода — из-за этого падали на смене правила. Копии убраны.
 - Дополнены по итогам ревью: `state-dir` (+4, включая проверку самой изоляции), `list-running-pipelines` (+1 тест и проверка `foreign` у живого прогона), `marker` (+4 на переходную сверку, включая регрессию на дыру первой редакции), `git-client` (кеш `gh` проверяется через сам клиент, а не сравнением двух вызовов `machineStateDir`), новый `tests/watchers/relevant-file.test.mjs` (4).
 - Ещё две копии формулы `mcp_instance_id` в фикстурах (`abort-pipeline`, `stop-pipeline`) заменены вызовом кода: обе считали по старому правилу и на Windows проходили только потому, что позитивные сценарии там пропускаются.
 - `marker`, `abort-pipeline`, `stop-pipeline` и `pause-resume-pipeline` больше не зависят от окружения запускающего: `MCP_CWD` фиксируется на каталог теста. Прежде набор молча опирался на то, что в пути временного каталога есть заглавные буквы, а при заданном в среде `MCP_CWD` позитивные сценарии получали `FOREIGN_PIPELINE`.
-- Полный прогон: 99 файлов, 1572 passed, 30 skipped, 4 todo, 0 failed.
+- Полный прогон: 99 файлов, 1575 passed, 30 skipped, 4 todo, 0 failed.
 
 ### Саботаж
 
@@ -84,10 +84,12 @@ node --test src/tests/operations-tickets.test.mjs src/tests/operations-plans.tes
 Живой `workflow://alerts` меряется на наборе
 `tests/resources/alerts-resources.test.mjs tests/e2e/health-alerts.test.mjs
 tests/health/service.test.mjs tests/health/sweep.test.mjs
-tests/health/watcher-resolved.test.mjs` (54 проверки): возврат прежнего тела
+tests/health/watcher-changed.test.mjs` (57 проверок): возврат прежнего тела
 функции — чтения истории из каталога состояния — валит 6, снятие сортировки по
 времени — 2, снятие защиты вокруг каждого детектора — 2, отказ сообщать об
-исчезнувшем условии — 2, отказ обновлять память об отпечатках — 2.
+изменении набора — 7, сравнение набора только на исчезновение (как в первой
+редакции этой правки) — 4, сравнение только по размеру набора — 1, отказ
+обновлять память об отпечатках — 3.
 
 Переходная сверка идентификатора экземпляра меряется на наборе
 `tests/process/marker.test.mjs tests/tools/list-running-pipelines.test.mjs`

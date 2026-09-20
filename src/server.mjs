@@ -607,13 +607,14 @@ async function main() {
       projects: () => discoveredProjects,
       stateDir: healthStateDir,
       onAlert: (alert) => {
-        resources.notify_workflow_alerts(alert);
         console.error(`[health] ${alert.severity ?? 'warning'} ${alert.type} in ${alert.project}: ${alert.message ?? ''}`);
       },
-      // Ресурс отвечает обходом, значит его содержимое меняется и когда
-      // условие исчезло. Дедуп такого события не порождает — о нём сообщает
-      // сам обход, сравнивая отпечатки с прошлым тиком.
-      onResolved: () => {
+      // Уведомление идёт от изменения набора условий, а не от публикации
+      // отдельного алерта: ресурс отвечает обходом, и его содержимое меняется
+      // в обе стороны. Публикация же дедуплицируется на `dedup_fingerprint_ttl_sec`
+      // — условие, которое разрешилось и вернулось внутри этого часа, события
+      // не породило бы вовсе.
+      onChanged: () => {
         resources.notify_workflow_alerts();
       }
     });

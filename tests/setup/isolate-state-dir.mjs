@@ -24,6 +24,12 @@ const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-mcp-state-'));
 process.env.LOCALAPPDATA = stateRoot;
 process.env.XDG_STATE_HOME = stateRoot;
 
+// `WORKFLOW_STATE_DIR` перекрывает оба каталога и у `serverStateDir`, и у
+// `machineStateDir`. Оставить её от окружения значило бы пустить набор в
+// живое состояние сервера — а тесты в нём ещё и прибираются за собой.
+delete process.env.WORKFLOW_STATE_DIR;
+delete process.env.WORKFLOW_STATE_MODE;
+
 afterAll(() => {
   try {
     fs.rmSync(stateRoot, { recursive: true, force: true });

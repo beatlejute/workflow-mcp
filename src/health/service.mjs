@@ -22,12 +22,13 @@ import { getMcpConfig } from './thresholds.mjs';
  *   Каталог состояния для истории алертов.
  * @param {(alert: Object) => void} options.onAlert Вызывается для каждого
  *   алерта, прошедшего дедуп.
- * @param {() => void} [options.onResolved] Вызывается, когда условие из
- *   прошлого обхода больше не срабатывает: ресурс `workflow://alerts` отвечает
- *   обходом, и его содержимое меняется в обе стороны.
+ * @param {() => void} [options.onChanged] Вызывается, когда набор сработавших
+ *   условий отличается от прошлого обхода — в любую сторону. Ресурс
+ *   `workflow://alerts` отвечает обходом, значит его содержимое меняется и при
+ *   появлении условия, и при исчезновении.
  * @returns {{start: () => boolean, stop: () => void, enabled: boolean}}
  */
-export function createHealthService({ cwd, projects, stateDir, onAlert, onResolved }) {
+export function createHealthService({ cwd, projects, stateDir, onAlert, onChanged }) {
   const config = getMcpConfig(cwd);
   const enabled = config.enabled !== false;
 
@@ -59,7 +60,7 @@ export function createHealthService({ cwd, projects, stateDir, onAlert, onResolv
   const watcher = createWatcher({
     cwd,
     projects,
-    onResolved,
+    onChanged,
     onAlert: (alert) => {
       try {
         publisher.publishAlert(alert);

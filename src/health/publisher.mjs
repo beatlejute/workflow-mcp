@@ -1,6 +1,6 @@
-import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { fingerprintOf } from './fingerprint.mjs';
 
 /**
  * Compute fingerprint = first 12 chars of SHA-256(...).
@@ -9,13 +9,7 @@ import path from 'path';
  * стадии, ни номера шага, поэтому общая формула схлопывала бы все падения
  * проекта в один отпечаток и глушила второй крах на целый TTL.
  */
-function fingerprint(alert) {
-  const own = typeof alert.fingerprint === 'string' && alert.fingerprint.length > 0
-    ? alert.fingerprint
-    : null;
-  const str = own ?? `${alert.type}${alert.project}${alert.stage}${alert.step_number}`;
-  return crypto.createHash('sha256').update(str).digest('hex').slice(0, 12);
-}
+const fingerprint = fingerprintOf;
 
 /**
  * Ensure directory exists (recursive).

@@ -1,5 +1,6 @@
 import { getMcpConfig } from './thresholds.mjs';
 import { sweepProjects } from './sweep.mjs';
+import { fingerprintOf } from './fingerprint.mjs';
 
 /**
  * Creates a health watcher factory
@@ -10,13 +11,16 @@ import { sweepProjects } from './sweep.mjs';
  *   на лету, и захваченный при старте массив устаревает после первой же правки
  *   состава проектов.
  * @param {Function} options.onAlert - Callback for alerts
- * @param {Function} [options.onResolved] - Вызывается, когда условие, которое
- *   было в прошлом обходе, больше не срабатывает. Нужен подписчику на
- *   `workflow://alerts`: ресурс отвечает обходом, значит его содержимое
- *   меняется и при исчезновении условия, а не только при появлении.
+ * @param {Function} [options.onChanged] - Вызывается, когда набор сработавших
+ *   условий отличается от прошлого обхода — в любую сторону. Нужен подписчику
+ *   на `workflow://alerts`: ресурс отвечает обходом, и его содержимое меняется
+ *   и при появлении условия, и при исчезновении. На появление полагаться на
+ *   дедуп публикации нельзя: он глушит повтор отпечатка на весь
+ *   `dedup_fingerprint_ttl_sec` (по умолчанию час), а условие за это время
+ *   успевает разрешиться и вернуться.
  * @returns {Object} Object with start() and stop() methods
  */
-export function createWatcher({ cwd, projects, onAlert, onResolved }) {
+export function createWatcher({ cwd, projects, onAlert, onChanged }) {
   let intervalId = null;
 
   /** Отпечатки прошлого обхода — чтобы заметить исчезнувшие условия. */
@@ -38,11 +42,6 @@ export function createWatcher({ cwd, projects, onAlert, onResolved }) {
     }
   }
 
-  /** Отпечаток алерта: по нему же дедуплицирует publisher. */
-  function fingerprintOf(alert) {
-    return alert.fingerprint ?? `${alert.type}:${alert.project}`;
-  }
-
   /**
    * Один проход: обход детекторов, публикация и сравнение с прошлым проходом.
    */
@@ -59,23 +58,19 @@ export function createWatcher({ cwd, projects, onAlert, onResolved }) {
         onAlert(alert);
       }
 
-      // Дедуп глушит повторное появление, но исчезновение он не заметит: там
-      // события нет вовсе. Сообщаем о нём отдельно — иначе подписчик держит в
-      // руках список, из которого условие уже ушло.
-      let resolved = false;
-      for (const fingerprint of previousFingerprints) {
-        if (!currentFingerprints.has(fingerprint)) {
-          resolved = true;
-          break;
-        }
-      }
+      // Содержимое ресурса — это набор сработавших условий, поэтому событием
+      // считается любое его изменение. Дедуп публикации для этого не годится:
+      // он глушит повтор отпечатка на весь TTL, и условие, которое разрешилось
+      // и вернулось внутри часа, не порождало бы уведомления вовсе.
+      const changed = currentFingerprints.size !== previousFingerprints.size
+        || [...currentFingerprints].some((fingerprint) => !previousFingerprints.has(fingerprint));
       previousFingerprints = currentFingerprints;
 
-      if (resolved && typeof onResolved === 'function') {
+      if (changed && typeof onChanged === 'function') {
         try {
-          onResolved();
+          onChanged();
         } catch (err) {
-          console.error('[health] resolved callback failed:', err.message);
+          console.error('[health] change callback failed:', err.message);
         }
       }
     } catch (err) {
