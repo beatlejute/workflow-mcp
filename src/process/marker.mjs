@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { mcpInstanceId as getMcpInstanceId } from '../lib/project-root.mjs';
+import { mcpInstanceId as getMcpInstanceId, legacyMcpInstanceId } from '../lib/project-root.mjs';
 
 /**
  * Atomic write via temp file + rename.
@@ -179,7 +179,13 @@ export function validateMarker(projectPath, expectedPid, expectedInstanceId) {
   }
 
   // Instance ID check
-  if (marker.mcp_instance_id !== expectedInstanceId) {
+  //
+  // Маркер прогона, запущенного сервером до 2.0.0, несёт идентификатор по
+  // прежнему правилу — с регистром пути. Он принимается на один переход:
+  // иначе обновление посреди прогона делало его чужим, и остановить его без
+  // `force` было нельзя.
+  if (marker.mcp_instance_id !== expectedInstanceId
+      && marker.mcp_instance_id !== legacyMcpInstanceId()) {
     return { valid: false, reason: 'INSTANCE_MISMATCH' };
   }
 

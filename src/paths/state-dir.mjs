@@ -125,11 +125,23 @@ export function serverStateDir(cwd) {
  *
  * @returns {{ dir: string|null, mode: 'writable'|'read-only' }}
  */
-export function machineStateDir() {
+export function machineStateDir(cwd = process.env.MCP_CWD || process.cwd()) {
   if (process.env.WORKFLOW_STATE_DIR) {
     return {
       dir: process.env.WORKFLOW_STATE_DIR,
       mode: process.env.WORKFLOW_STATE_MODE || 'writable'
+    };
+  }
+
+  // `state.dir` из `.workflow-mcp.yaml` уводит всё состояние сервера, включая
+  // машинный кеш: пользователь, задавший каталог явно, не ждёт записи в
+  // `%LOCALAPPDATA%`. Прежний кеш `gh` шёл через `serverStateDir` и настройку
+  // уважал — после переезда на уровень машины она перестала действовать.
+  const configured = readConfig(cwd)?.state?.dir;
+  if (configured) {
+    return {
+      dir: path.isAbsolute(configured) ? configured : path.resolve(cwd, configured),
+      mode: 'writable'
     };
   }
 

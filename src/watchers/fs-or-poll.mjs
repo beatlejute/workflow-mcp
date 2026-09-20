@@ -6,6 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import { EventEmitter } from 'events';
+import { isWorkflowDoc } from '../lib/workflow-docs.mjs';
 
 export class FsOrPollWatcher extends EventEmitter {
   constructor(options = {}) {
@@ -202,8 +203,10 @@ export class FsOrPollWatcher extends EventEmitter {
       return true;
     }
 
-    // Also include all .md files to allow handler to check frontmatter for type: human
-    if (filename.endsWith('.md')) {
+    // Also include all .md files to allow handler to check frontmatter for type: human.
+    // Точечные файлы — служебные: `.gitkeep.md` от `workflow init` будил
+    // наблюдателя на каждое своё изменение, хотя тикетом не является.
+    if (isWorkflowDoc(filename)) {
       return true;
     }
 

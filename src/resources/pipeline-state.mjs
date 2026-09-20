@@ -170,19 +170,20 @@ export function get_workflow_pipeline_state(absoluteCwd) {
     // убийство: маркер после kill'а снимаем мы сами.
     const killOutcome = killOutcomeForRun(projectRoot, lock);
 
-    // Чужой — любой, чей маркер не доказывает наше владение: нет маркера
-    // (запущен из CLI), чужой идентификатор или чужой pid. Проверка только на
-    // PID_MISMATCH давала ровно обратный ответ: свои пайплайны считались чужими,
-    // а запущенные из CLI (маркера нет вовсе) — своими.
-    // Убитый нами прогон под «чужой» не подпадает: маркера нет ровно потому,
-    // что мы его и убрали, — иначе снимок сразу после своего же
-    // `stop_pipeline` объявлял прогон чужим.
-    const isForeign = !markerValid.valid && killOutcome === null;
-
     const pidAlive = isProcessAlive(pid);
     const paused = getPausedState(projectRoot, pid);
     const aborting = isAbortingRun(projectRoot, lock);
     const killed = !pidAlive && killOutcome !== null;
+
+    // Чужой — любой, чей маркер не доказывает наше владение: нет маркера
+    // (запущен из CLI), чужой идентификатор или чужой pid. Проверка только на
+    // PID_MISMATCH давала ровно обратный ответ: свои пайплайны считались чужими,
+    // а запущенные из CLI (маркера нет вовсе) — своими.
+    // Исключение — прогон, который мы сами же убили: маркера нет ровно потому,
+    // что мы его убрали. Признак снимается только вместе с `killed`, то есть
+    // при мёртвом pid: у живого процесса запись о прошлом убийстве ничего не
+    // доказывает — номер мог переиспользоваться.
+    const isForeign = !markerValid.valid && !killed;
     const awaiting = getAwaitingApproval(projectRoot);
     const { runId, currentStage, stepNumber } = getRunInfo(projectRoot);
 

@@ -20,7 +20,7 @@ import path from 'path';
 
 import {
   subscribe_workflow_pipeline_state,
-  clearPipelineStateCache
+  cancelPipelineStateNotification
 } from '../../src/resources/index.mjs';
 import { writeRunnerLock } from '../helpers/pipeline-lock.mjs';
 
@@ -59,7 +59,7 @@ beforeEach(() => {
   workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'ps-watcher-'));
   prevMcpCwd = process.env.MCP_CWD;
   process.env.MCP_CWD = workspace;
-  clearPipelineStateCache();
+  cancelPipelineStateNotification();
 });
 
 afterEach(async () => {

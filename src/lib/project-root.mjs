@@ -54,6 +54,25 @@ export function mcpInstanceId(cwd = mcpCwd()) {
 }
 
 /**
+ * Идентификатор экземпляра по прежнему правилу — с учётом регистра пути.
+ *
+ * Нужен на один переход: пайплайн, запущенный сервером до 2.0.0, помечен
+ * старым идентификатором. Без этой сверки обновление посреди прогона делало
+ * его чужим: `list_running_pipelines` показывал `foreign: true`, а
+ * `stop_pipeline` и `abort_pipeline` отказывали с `FOREIGN_PIPELINE`, пока не
+ * позовёшь с `force`.
+ *
+ * На POSIX совпадает с `mcpInstanceId`: там регистр и раньше не гасился.
+ *
+ * @param {string} [cwd] - Корень; по умолчанию `mcpCwd()`
+ * @returns {string}
+ */
+export function legacyMcpInstanceId(cwd = mcpCwd()) {
+  const hash = createHash('sha256').update(path.resolve(cwd)).digest('hex');
+  return `workflow-mcp@${hash.slice(0, 12)}`;
+}
+
+/**
  * Абсолютный путь к корню проекта по имени или пути.
  *
  * Резолв чисто путевой: discovery не опрашивается. Имя проекта работает

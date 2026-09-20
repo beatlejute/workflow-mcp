@@ -43,7 +43,6 @@ export function notify_workflow_alerts(alert) {
 // ============================================================
 const pipelineStateSubscribers = new Set();
 let pipelineStateNotificationHandler = null;
-let pipelineStateCache = null;
 let pipelineStateCoalesceTimer = null;
 const pipelineStateWatchers = new Map(); // projectName -> { logsWatcher, approvalsWatcher }
 
@@ -108,23 +107,22 @@ export function stopAllPipelineStateWatchers() {
 
 function scheduleCoalesceUpdate(cwd, coalesceMs) {
   if (pipelineStateCoalesceTimer) { clearTimeout(pipelineStateCoalesceTimer); pipelineStateCoalesceTimer = null; }
-  pipelineStateCoalesceTimer = setTimeout(async () => {
+  pipelineStateCoalesceTimer = setTimeout(() => {
     pipelineStateCoalesceTimer = null;
-    try {
-      await buildPipelineStateSnapshot(cwd);
-      for (const cb of pipelineStateSubscribers) { try { cb(); } catch (e) { console.error('Pipeline-state subscriber error:', e.message); } }
-      if (pipelineStateNotificationHandler) {
-        try { pipelineStateNotificationHandler('workflow://pipeline-state'); } catch (e) { console.error('Pipeline-state notify error:', e.message); }
-      }
-    } catch (e) { console.error('Coalesce update failed:', e.message); }
+    // Снимок здесь не строится: уведомление говорит «перечитай ресурс», а
+    // ресурс строит его сам. Прежде снимок строили и складывали в кеш,
+    // который после перехода на чтение «заново» никто не читал.
+    for (const cb of pipelineStateSubscribers) { try { cb(); } catch (e) { console.error('Pipeline-state subscriber error:', e.message); } }
+    if (pipelineStateNotificationHandler) {
+      try { pipelineStateNotificationHandler('workflow://pipeline-state'); } catch (e) { console.error('Pipeline-state notify error:', e.message); }
+    }
   }, coalesceMs);
 }
 
 async function buildPipelineStateSnapshot(cwd = mcpCwd()) {
   const absoluteCwd = path.resolve(cwd);
   const { get_workflow_pipeline_state: getState } = await import('./pipeline-state.mjs');
-  pipelineStateCache = getState(absoluteCwd);
-  return pipelineStateCache;
+  return getState(absoluteCwd);
 }
 
 /**
@@ -138,7 +136,6 @@ export function subscribe_workflow_pipeline_state(callback) {
     pipelineStateSubscribers.delete(callback);
     if (pipelineStateSubscribers.size === 0) {
       stopAllPipelineStateWatchers();
-      pipelineStateCache = null;
     }
   };
 }
@@ -152,8 +149,14 @@ export function notify_workflow_pipeline_state() {
   scheduleCoalesceUpdate(cwd, getCoalesceWindowMs(cwd));
 }
 
-export function clearPipelineStateCache() {
-  pipelineStateCache = null;
+/**
+ * Снять запланированное уведомление.
+ *
+ * Прежде функция звалась `clearPipelineStateCache` и чистила кеш снимка. Кеша
+ * больше нет: ресурс строит снимок на каждое чтение, а уведомление лишь
+ * просит клиента перечитать его.
+ */
+export function cancelPipelineStateNotification() {
   if (pipelineStateCoalesceTimer) {
     clearTimeout(pipelineStateCoalesceTimer);
     pipelineStateCoalesceTimer = null;
@@ -163,13 +166,12 @@ export function clearPipelineStateCache() {
 /**
  * Снимок состояния пайплайна по запросу клиента.
  *
- * Снимок строится заново на каждое чтение. Кеш остаётся только для рассылки
- * уведомлений: его обновляет наблюдатель, и инвалидировать его больше некому.
- * Наблюдатели встают лишь при подписке, а лог прогона их намеренно не будит —
- * раннер дописывает его непрерывно. Отдавать этот кеш в ответ на чтение
- * значило показывать первый снимок до конца жизни процесса: клиент без
- * подписки видел «killed» от прошлого прогона, пока `list_running_pipelines`
- * рядом отвечал `running`.
+ * Снимок строится заново на каждое чтение, кеша нет вовсе. Кешировать его
+ * было нечем: инвалидировали снимок только наблюдатели за файлами, встают они
+ * лишь при подписке, а лог прогона их намеренно не будит — раннер дописывает
+ * его непрерывно. Клиент без подписки видел первый снимок до конца жизни
+ * процесса: «killed» от прошлого прогона, пока `list_running_pipelines` рядом
+ * отвечал `running`.
  *
  * Чтение стоит столько же, сколько вызов `list_running_pipelines`: он тоже
  * обходит проекты на каждый вызов.

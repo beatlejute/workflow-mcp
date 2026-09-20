@@ -8,6 +8,7 @@ import path from 'path';
 import { FsOrPollWatcher } from './fs-or-poll.mjs';
 import { parseFrontmatter } from 'workflow-ai/lib/utils.mjs';
 import * as resources from '../resources/index.mjs';
+import { isWorkflowDoc } from '../lib/workflow-docs.mjs';
 
 export class HumanQueueWatcher {
   constructor(options = {}) {
@@ -73,8 +74,9 @@ export class HumanQueueWatcher {
       return;
     }
 
-    // Check if this is a human ticket based on filename or content
-    if (!filename.endsWith('.md')) {
+    // Check if this is a human ticket based on filename or content.
+    // Точечные файлы каталога (`.gitkeep.md`) тикетами не являются.
+    if (!isWorkflowDoc(filename)) {
       return;
     }
 

@@ -19,7 +19,7 @@ import os from 'os';
 import { spawn } from 'child_process';
 
 import { list_running_pipelines } from '../../src/tools/pipeline.mjs';
-import { mcpInstanceId } from '../../src/lib/project-root.mjs';
+import { mcpInstanceId, legacyMcpInstanceId } from '../../src/lib/project-root.mjs';
 import { writeAbortState, abortStatePath, ABORT_STATE_TTL_MS } from '../../src/process/abort-state.mjs';
 import { writeKillOutcome } from '../../src/process/kill-outcome.mjs';
 
@@ -322,6 +322,30 @@ describe('определение состояния', () => {
     const entry = await snapshotOne();
     expect(entry.state).toBe('running');
     expect(entry.killed_by).toBeUndefined();
+    // И признак чужого остаётся: у живого процесса запись о прошлом убийстве
+    // владения не доказывает — номер мог переиспользоваться.
+    expect(entry.foreign).toBe(true);
+  });
+
+  it('маркер прежнего формата признаётся своим', async () => {
+    // Идентификатор экземпляра до 2.0.0 считался с регистром пути. Без сверки
+    // со старым ключом обновление посреди прогона делало его чужим, и
+    // остановить прогон без `force` было нельзя.
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid, { run_id: RUN_ID });
+    writeMarker(root, {
+      version: 1,
+      mcp_instance_id: legacyMcpInstanceId(workspace),
+      started_at: new Date().toISOString(),
+      pid: victim.pid,
+      run_id: RUN_ID
+    });
+    writeLog(root);
+
+    const entry = await snapshotOne();
+    expect(entry.marker_valid).toBe(true);
+    expect(entry.foreign).toBeUndefined();
   });
 
   it('запись об убийстве другого pid не даёт killed', async () => {

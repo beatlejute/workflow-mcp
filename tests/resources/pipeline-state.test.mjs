@@ -32,7 +32,7 @@ describe('Pipeline State Resource (subscribable)', () => {
   beforeEach(() => {
     originalCwd = process.cwd();
 
-    resourcesIndex.clearPipelineStateCache();
+    resourcesIndex.cancelPipelineStateNotification();
 
     // Create temporary workspace and project directory structure
     workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pipeline-state-test-'));
@@ -181,7 +181,7 @@ describe('Pipeline State Resource (subscribable)', () => {
       fs.writeFileSync(pauseFile, JSON.stringify({ pid: process.pid }));
 
       // Second snapshot - paused (clear cache to pick up file changes)
-      resourcesIndex.clearPipelineStateCache();
+      resourcesIndex.cancelPipelineStateNotification();
       result = await resourcesIndex.get_workflow_pipeline_state(process.cwd());
       data = JSON.parse(result.text);
       entry = data.find(e => e.project === projectName);
@@ -191,7 +191,7 @@ describe('Pipeline State Resource (subscribable)', () => {
       fs.unlinkSync(pauseFile);
 
       // Third snapshot - resumed (clear cache to pick up file changes)
-      resourcesIndex.clearPipelineStateCache();
+      resourcesIndex.cancelPipelineStateNotification();
       result = await resourcesIndex.get_workflow_pipeline_state(process.cwd());
       data = JSON.parse(result.text);
       entry = data.find(e => e.project === projectName);
@@ -341,7 +341,7 @@ describe('Pipeline State Resource (subscribable)', () => {
         decision: 'approve'
       }));
 
-      resourcesIndex.clearPipelineStateCache();
+      resourcesIndex.cancelPipelineStateNotification();
       result = await resourcesIndex.get_workflow_pipeline_state(process.cwd());
       data = JSON.parse(result.text);
       entry = data.find(e => e.project === projectName);
@@ -419,7 +419,7 @@ describe('Pipeline State Resource (subscribable)', () => {
         JSON.stringify({ pid: process.pid })
       );
 
-      resourcesIndex.clearPipelineStateCache();
+      resourcesIndex.cancelPipelineStateNotification();
       result = await resourcesIndex.get_workflow_pipeline_state(process.cwd());
       data = JSON.parse(result.text);
       entry = data.find(e => e.project === projectName);
@@ -437,7 +437,7 @@ describe('Pipeline State Resource (subscribable)', () => {
       );
 
       // Verify final state
-      resourcesIndex.clearPipelineStateCache();
+      resourcesIndex.cancelPipelineStateNotification();
       result = await resourcesIndex.get_workflow_pipeline_state(process.cwd());
       data = JSON.parse(result.text);
       entry = data.find(e => e.project === projectName);

@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import { resolveStateDir, ensureStateDir } from '../../src/paths/state-dir.mjs';
+import { resolveStateDir, ensureStateDir, machineStateDir } from '../../src/paths/state-dir.mjs';
 import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 
 describe('state-dir: resolveStateDir', () => {
@@ -341,6 +341,79 @@ describe('state-dir: resolveStateDir', () => {
   });
 });
 
+describe('state-dir: machineStateDir', () => {
+  const savedEnv = {};
+
+  beforeEach(() => {
+    for (const key of ['WORKFLOW_STATE_DIR', 'LOCALAPPDATA', 'XDG_STATE_HOME']) {
+      savedEnv[key] = process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it('уважает state.dir из конфига рабочей области', () => {
+    // После переезда кеша `gh` на уровень машины настройка перестала
+    // действовать: пользователь с заданным `state.dir` получал запись в
+    // `%LOCALAPPDATA%` вопреки конфигу.
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'machine-state-'));
+    const configured = path.join(workspace, 'state');
+    fs.writeFileSync(
+      path.join(workspace, '.workflow-mcp.yaml'),
+      ['state:', `  dir: ${JSON.stringify(configured)}`, ''].join('\n'),
+      'utf8'
+    );
+
+    delete process.env.WORKFLOW_STATE_DIR;
+
+    try {
+      expect(machineStateDir(workspace).dir).toBe(configured);
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('WORKFLOW_STATE_DIR старше конфига', () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'machine-state-'));
+    fs.writeFileSync(path.join(workspace, '.workflow-mcp.yaml'), ['state:', '  dir: "from-config"', ''].join('\n'), 'utf8');
+    process.env.WORKFLOW_STATE_DIR = path.join(workspace, 'from-env');
+
+    try {
+      expect(machineStateDir(workspace).dir).toBe(path.join(workspace, 'from-env'));
+    } finally {
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('без конфига и переменной — корень каталога состояния, без подкаталога области', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'machine-base-'));
+    delete process.env.WORKFLOW_STATE_DIR;
+    process.env.LOCALAPPDATA = base;
+    process.env.XDG_STATE_HOME = base;
+
+    try {
+      expect(machineStateDir(path.join(base, 'workspace')).dir).toBe(path.join(base, 'workflow-mcp'));
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('изоляция состояния в тестах', () => {
+  it('каталог состояния уведён во временный, а не в профиль пользователя', () => {
+    // Держит `setupFiles` из vitest.config.js: без него набор тестов пишет в
+    // настоящий `%LOCALAPPDATA%` — там накопилось 16 255 каталогов.
+    const base = process.platform === 'win32' ? process.env.LOCALAPPDATA : process.env.XDG_STATE_HOME;
+    expect(base).toBeTruthy();
+    expect(base.startsWith(os.tmpdir())).toBe(true);
+  });
+});
+
 describe('state-dir: ensureStateDir', () => {
   let testDir;
 
@@ -433,8 +506,13 @@ describe('state-dir: integration scenarios', () => {
     const cwdDir = path.join(testDir, 'project');
     fs.mkdirSync(cwdDir, { recursive: true });
 
-    const result = resolveStateDir(cwdDir);
+    // Каталог задаётся явно и лежит во временном: прежде тест звал резолв без
+    // конфига и создавал настоящий каталог в профиле пользователя — по одному
+    // на каждый прогон набора, и никто их не убирал.
+    const stateDir = path.join(testDir, 'state');
+    const result = resolveStateDir(cwdDir, { state: { dir: stateDir } });
     expect(result.mode).toBe('writable');
+    expect(result.dir).toBe(stateDir);
 
     ensureStateDir(result);
     expect(fs.existsSync(result.dir)).toBe(true);

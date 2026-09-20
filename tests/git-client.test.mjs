@@ -1271,23 +1271,61 @@ describe('Git Client', () => {
       // Кеш лежал в каталоге рабочей области, и каждая новая область (включая
       // временный каталог теста) заводила свой. На машине их набралось 465 с
       // одинаковым содержимым.
-      const { machineStateDir } = await import('../src/paths/state-dir.mjs');
+      //
+      // Проверка идёт через сам клиент: сравнение двух вызовов
+      // `machineStateDir()` ничего не доказывает — прежний код звал
+      // `serverStateDir`, и подменить одно другим тест бы не заметил.
       const savedMcpCwd = process.env.MCP_CWD;
       const savedStateDir = process.env.WORKFLOW_STATE_DIR;
-      delete process.env.WORKFLOW_STATE_DIR;
+      const savedLocalAppData = process.env.LOCALAPPDATA;
+      const savedXdg = process.env.XDG_STATE_HOME;
+      const savedPath = process.env.PATH;
+      let base;
 
       try {
-        process.env.MCP_CWD = path.join(tmpdir(), 'workspace-one');
-        const first = machineStateDir().dir;
+        base = fs.mkdtempSync(path.join(tmpdir(), 'gh-machine-'));
 
-        process.env.MCP_CWD = path.join(tmpdir(), 'workspace-two');
-        const second = machineStateDir().dir;
+        // Каталог состояния считается от этих переменных — уводим в temp.
+        delete process.env.WORKFLOW_STATE_DIR;
+        process.env.LOCALAPPDATA = base;
+        process.env.XDG_STATE_HOME = base;
 
-        expect(first).toBe(second);
-        expect(path.basename(first)).toBe('workflow-mcp');
+        // Свой `gh` в PATH: без него кеш не пишется вовсе.
+        const binDir = path.join(base, 'bin');
+        fs.mkdirSync(binDir, { recursive: true });
+        const ghPath = path.join(binDir, process.platform === 'win32' ? 'gh.bat' : 'gh');
+        const ghScript = process.platform === 'win32'
+          ? ['@echo off', 'exit /b 0', ''].join('\r\n')
+          : ['#!/bin/bash', 'exit 0', ''].join('\n');
+        fs.writeFileSync(ghPath, ghScript);
+        if (process.platform !== 'win32') fs.chmodSync(ghPath, 0o755);
+        process.env.PATH = `${binDir}${path.delimiter}${savedPath}`;
+
+        const workspace = path.join(base, 'workspace');
+        fs.mkdirSync(workspace, { recursive: true });
+        process.env.MCP_CWD = workspace;
+
+        const repo = path.join(base, 'repo');
+        fs.mkdirSync(repo, { recursive: true });
+        execSync('git init', { cwd: repo, stdio: 'pipe' });
+
+        const client = createGitClient(repo);
+        const result = await client.getGhPath();
+        expect(result.found).toBe(true);
+
+        // Кеш лёг рядом с корнем каталога состояния, а не в подкаталог
+        // рабочей области.
+        expect(fs.existsSync(path.join(base, 'workflow-mcp', 'gh-path.cache'))).toBe(true);
+        const perWorkspace = fs.readdirSync(path.join(base, 'workflow-mcp'))
+          .filter((entry) => entry !== 'gh-path.cache');
+        expect(perWorkspace).toEqual([]);
       } finally {
+        process.env.PATH = savedPath;
         if (savedMcpCwd === undefined) { delete process.env.MCP_CWD; } else { process.env.MCP_CWD = savedMcpCwd; }
-        if (savedStateDir !== undefined) { process.env.WORKFLOW_STATE_DIR = savedStateDir; }
+        if (savedStateDir === undefined) { delete process.env.WORKFLOW_STATE_DIR; } else { process.env.WORKFLOW_STATE_DIR = savedStateDir; }
+        if (savedLocalAppData === undefined) { delete process.env.LOCALAPPDATA; } else { process.env.LOCALAPPDATA = savedLocalAppData; }
+        if (savedXdg === undefined) { delete process.env.XDG_STATE_HOME; } else { process.env.XDG_STATE_HOME = savedXdg; }
+        if (base && fs.existsSync(base)) fs.rmSync(base, { recursive: true, force: true });
       }
     });
 

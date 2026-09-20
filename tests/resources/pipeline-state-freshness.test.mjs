@@ -15,7 +15,7 @@ import path from 'path';
 
 import {
   get_workflow_pipeline_state,
-  clearPipelineStateCache
+  cancelPipelineStateNotification
 } from '../../src/resources/index.mjs';
 import { writeRunnerLock, removeRunnerLock } from '../helpers/pipeline-lock.mjs';
 
@@ -26,11 +26,11 @@ beforeEach(() => {
   workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'ps-fresh-'));
   prevMcpCwd = process.env.MCP_CWD;
   process.env.MCP_CWD = workspace;
-  clearPipelineStateCache();
+  cancelPipelineStateNotification();
 });
 
 afterEach(() => {
-  clearPipelineStateCache();
+  cancelPipelineStateNotification();
   if (prevMcpCwd === undefined) delete process.env.MCP_CWD;
   else process.env.MCP_CWD = prevMcpCwd;
   fs.rmSync(workspace, { recursive: true, force: true });

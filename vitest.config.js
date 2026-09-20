@@ -14,6 +14,11 @@ export default defineConfig({
     // and parallel resource contention. Each test file still runs in isolation
     // via vitest's module registry reset between files.
     singleFork: true,
+    // Каталог состояния и машинный кеш `gh` уводятся во временный каталог:
+    // иначе набор тестов пишет в настоящий профиль пользователя — оставлял
+    // пустые каталоги на каждый прогон и подсовывал живому серверу путь к
+    // своему stub'у `gh`.
+    setupFiles: ['./tests/setup/isolate-state-dir.mjs'],
     exclude: [
       // Рабочая папка пайплайна: там лежат тикеты и логи, а также скрипты
       // скилов с именами вида *.test.mjs, которые vitest'у не принадлежат.
