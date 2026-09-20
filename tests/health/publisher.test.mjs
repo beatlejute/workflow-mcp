@@ -200,6 +200,52 @@ describe('publisher.mjs — createPublisher', () => {
     expect(lines.length).toBe(1);
   });
 
+  it('собственный fingerprint детектора важнее вычисленного', () => {
+    // У `crashed` нет ни стадии, ни номера шага: общая формула
+    // type+project+stage+step_number схлопывала все падения проекта в один
+    // отпечаток и глушила второй крах на весь TTL.
+    const { publishAlert } = makePublisher({ ttl: 3600 });
+
+    publishAlert({ type: 'crashed', project: 'proj', fingerprint: 'crashed:proj:111' });
+    publishAlert({ type: 'crashed', project: 'proj', fingerprint: 'crashed:proj:222' });
+
+    expect(onAlert).toHaveBeenCalledTimes(2);
+    const lines = fs.readFileSync(path.join(tempDir, 'alerts-history.jsonl'), 'utf8')
+      .trim().split('\n').filter(Boolean);
+    expect(lines.length).toBe(2);
+  });
+
+  it('одинаковый fingerprint детектора дедуплицируется', () => {
+    const { publishAlert } = makePublisher({ ttl: 3600 });
+    const a = { type: 'crashed', project: 'proj', fingerprint: 'crashed:proj:111' };
+
+    publishAlert(a);
+    publishAlert({ ...a, detected_at: new Date().toISOString() });
+
+    expect(onAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it('запись в историю идёт до колбэка', () => {
+    // Ресурс `workflow://alerts` читается из этого файла, а колбэк шлёт
+    // клиенту `resources/updated`: при обратном порядке клиент успевал
+    // прочитать ресурс без только что поднятого алерта.
+    const jsonlPath = path.join(tempDir, 'alerts-history.jsonl');
+    let linesAtCallback = null;
+    const { publishAlert } = createPublisher({
+      onAlert: () => {
+        linesAtCallback = fs.existsSync(jsonlPath)
+          ? fs.readFileSync(jsonlPath, 'utf8').trim().split('\\n').filter(Boolean).length
+          : 0;
+      },
+      stateDir: { mode: 'writable', dir: tempDir },
+      config: { dedup_fingerprint_ttl_sec: 3600 },
+    });
+
+    publishAlert(alert());
+
+    expect(linesAtCallback).toBe(1);
+  });
+
   it('read-only in-process dedup prevents multiple onAlert calls in same process', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ro-dedup-test-'));
     const { publishAlert } = createPublisher({

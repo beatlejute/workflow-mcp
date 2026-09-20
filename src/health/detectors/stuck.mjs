@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { parsePipelineLog } from '../../parsers/pipeline-log.mjs';
 import { getStageTimeout } from '../thresholds.mjs';
 import { isProcessAlive } from '../pid-check.mjs';
+import { readPipelineLock } from '../../process/run-lock.mjs';
 
 /**
  * Detects stuck stages by checking if the current stage has been running
@@ -16,26 +17,12 @@ import { isProcessAlive } from '../pid-check.mjs';
 export function detectStuck(projectPath, thresholds) {
   const logsDir = resolve(projectPath, '.workflow', 'logs');
 
-  // Check if PID is alive first - if dead, this is crashed detector's responsibility
-  const runnerPidsPath = resolve(projectPath, '.workflow', 'logs', '.runner-pids');
-  try {
-    const content = readFileSync(runnerPidsPath, 'utf8');
-    const pids = content
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line && !line.startsWith('#'))
-      .map(line => parseInt(line, 10))
-      .filter(pid => Number.isInteger(pid) && pid > 0);
-
-    for (const pid of pids) {
-      if (!isProcessAlive(pid)) {
-        // Process is dead - crashed detector's responsibility
-        return null;
-      }
-    }
-  } catch (error) {
-    // File doesn't exist or can't be read - continue (no PIDs to check)
-    // This is acceptable; the pipeline might not have written the file yet
+  // Мёртвый раннер — забота detectCrashed, здесь такой прогон пропускается.
+  // pid берётся из `.pipeline.lock`; раньше читался `.runner-pids`, которого
+  // не пишет никто, и ветка не исполнялась ни разу.
+  const lock = readPipelineLock(projectPath);
+  if (lock && !isProcessAlive(lock.pid)) {
+    return null;
   }
 
   // Find the most recent pipeline_*.log file

@@ -3,7 +3,7 @@
  * Verifies IMPL-29 DoD criteria for alert resources
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -447,6 +447,38 @@ ${JSON.stringify({
 
     afterEach(() => {
       cleanupTestStateDir(stateDir);
+    });
+
+    it('уведомление шлёт клиенту resources/updated для workflow://alerts', () => {
+      // Обработчик ставился сервером и не читался нигде: подписчиков у
+      // `subscribe_workflow_alerts` в живом коде нет, а `resources/updated`
+      // для `workflow://alerts` не уходил никогда — клиент узнавал об алерте,
+      // только если сам решал перечитать ресурс.
+      const updated = [];
+      resources.setResourceNotificationHandler((uri) => updated.push(uri));
+
+      try {
+        resources.notify_workflow_alerts({ type: 'crashed', project: 'proj1' });
+        expect(updated).toEqual(['workflow://alerts']);
+      } finally {
+        resources.setResourceNotificationHandler(null);
+      }
+    });
+
+    it('падение обработчика уведомлений не роняет notify_workflow_alerts', () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const seen = [];
+      const unsubscribe = resources.subscribe_workflow_alerts((alert) => seen.push(alert));
+      resources.setResourceNotificationHandler(() => { throw new Error('transport closed'); });
+
+      try {
+        expect(() => resources.notify_workflow_alerts({ type: 'stuck', project: 'proj1' })).not.toThrow();
+        expect(seen).toHaveLength(1);
+      } finally {
+        resources.setResourceNotificationHandler(null);
+        unsubscribe();
+        errorSpy.mockRestore();
+      }
     });
 
     it('subscribe_workflow_alerts should return unsubscribe function', () => {

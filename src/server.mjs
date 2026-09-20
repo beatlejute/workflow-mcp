@@ -2,6 +2,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { SubscribeRequestSchema, UnsubscribeRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { discoverProjects, watchProjects } from './discovery.mjs';
 import * as resources from './resources/index.mjs';
 import * as configResources from './resources/config.mjs';
@@ -14,6 +15,7 @@ import semver from 'semver';
 import { serverStateDir, ensureStateDir } from './paths/state-dir.mjs';
 import { workflowAiPath, workflowAiPackageJson } from './lib/workflow-ai.mjs';
 import { mcpCwd } from './lib/project-root.mjs';
+import { createHealthService } from './health/service.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -84,29 +86,6 @@ async function loadTools() {
 }
 
 /**
- * Create a health watcher that periodically logs server status
- * @returns {{start: () => void, stop: () => void}}
- */
-function createHealthWatcher() {
-  let intervalId = null;
-
-  return {
-    start() {
-      intervalId = setInterval(() => {
-        console.error(`[healthwatch] server alive at ${new Date().toISOString()}`);
-      }, 30000); // Log every 30 seconds
-      intervalId.unref(); // Don't keep process alive for this timer
-    },
-    stop() {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-    }
-  };
-}
-
-/**
  * Main server initialization and startup
  */
 async function main() {
@@ -157,6 +136,12 @@ async function main() {
   // Get cwd from environment or use process.cwd()
   const cwd = mcpCwd();
 
+  // Каталог состояния: там же, где лежит история алертов, которую читает
+  // ресурс `workflow://alerts`. На read-only дереве служба здоровья работает
+  // без истории — алерты уходят уведомлениями, ресурс остаётся пустым.
+  const healthStateDir = serverStateDir(cwd);
+  ensureStateDir(healthStateDir);
+
   // Версия берётся из package.json, а не из хардкода: три разных номера
   // одного сервера (package.json, CHANGELOG и это место) расходились,
   // и клиент видел 0.1.0 при пакете 1.2.0.
@@ -174,6 +159,41 @@ async function main() {
     name: 'workflow-mcp',
     version: serverVersion,
   });
+
+  // Подписка на ресурсы. `McpServer` её не реализует вовсе: `resources/subscribe`
+  // отвечал «Method not found», хотя `resources_list()` помечает три ресурса как
+  // `subscribable`, а сервер поднимает под них наблюдателей за файлами. Клиенту
+  // оставалось перечитывать ресурсы вручную.
+  const subscribedUris = new Set();
+  server.server.registerCapabilities({ resources: { subscribe: true } });
+  server.server.setRequestHandler(SubscribeRequestSchema, async (request) => {
+    subscribedUris.add(request.params.uri);
+    return {};
+  });
+  server.server.setRequestHandler(UnsubscribeRequestSchema, async (request) => {
+    subscribedUris.delete(request.params.uri);
+    return {};
+  });
+
+  /**
+   * Уведомить клиента об изменении ресурса.
+   *
+   * Прежний код звал `server.sendResourceUpdated(uri)` — метода с таким именем
+   * у `McpServer` нет (он у низкоуровневого `Server`, и принимает объект).
+   * Каждое уведомление падало с `server.sendResourceUpdated is not a function`,
+   * то есть не уходило ни одно: ни по алертам, ни по состоянию пайплайна, ни
+   * по human-очереди, ни по логам.
+   */
+  const sendResourceUpdated = (uri) => {
+    if (!subscribedUris.has(uri)) {
+      return;
+    }
+    try {
+      server.server.sendResourceUpdated({ uri });
+    } catch (err) {
+      console.error(`Failed to send resource update notification for ${uri}:`, err.message);
+    }
+  };
 
   const transport = new StdioServerTransport();
 
@@ -302,13 +322,7 @@ async function main() {
       ensureStateDir(stateDir);
 
       // Set notification handler for alerts and human-queue
-      const notificationHandler = (uri) => {
-        try {
-          server.sendResourceUpdated(uri);
-        } catch (err) {
-          console.error(`Failed to send resource update notification for ${uri}:`, err.message);
-        }
-      };
+      const notificationHandler = sendResourceUpdated;
 
       resources.setResourceNotificationHandler(notificationHandler);
       resources.setHumanQueueNotificationHandler(notificationHandler);
@@ -545,13 +559,7 @@ async function main() {
   });
 
   // Start pipeline log watchers for each project
-  const notificationHandler = (uri) => {
-    try {
-      server.sendResourceUpdated(uri);
-    } catch (err) {
-      console.error(`Failed to send resource update notification:`, err.message);
-    }
-  };
+  const notificationHandler = sendResourceUpdated;
 
   for (const project of discoveredProjects) {
     try {
@@ -569,9 +577,23 @@ async function main() {
   });
   humanQueueWatcher.start();
 
-  // Create and start health watcher
-  const healthWatcher = createHealthWatcher();
-  healthWatcher.start();
+  // Служба здоровья. Раньше на этом месте стоял таймер, который раз в 30
+  // секунд печатал «server alive» в stderr, — от настоящих детекторов у него
+  // было только имя. Сами детекторы, дедуп и ресурс `workflow://alerts` были
+  // написаны, но не связаны ничем, поэтому список алертов всегда был пуст.
+  // Список проектов передаётся функцией: discovery пересобирает его на лету.
+  const healthService = createHealthService({
+    cwd,
+    projects: () => discoveredProjects,
+    stateDir: healthStateDir,
+    onAlert: (alert) => {
+      resources.notify_workflow_alerts(alert);
+      console.error(`[health] ${alert.severity ?? 'warning'} ${alert.type} in ${alert.project}: ${alert.message ?? ''}`);
+    }
+  });
+  if (!healthService.start()) {
+    console.error('[health] detectors disabled by config (health.enabled: false)');
+  }
 
   // Handle graceful shutdown
   const shutdown = async () => {
@@ -579,7 +601,7 @@ async function main() {
     if (humanQueueWatcher) {
       humanQueueWatcher.stop();
     }
-    healthWatcher.stop();
+    healthService.stop();
     // Stop pipeline log watchers
     for (const projectName of pipelineLogWatchers.keys()) {
       try {

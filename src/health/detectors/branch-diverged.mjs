@@ -29,9 +29,15 @@ export function detectBranchDiverged(projectPath, config) {
   
   try {
     // Execute git status
-    const output = execSync(`git ${gitArgs.join(' ')}`, { 
-      cwd: projectPath, 
-      encoding: 'utf8'
+    // stderr закрыт намеренно: детектор ходит по всем обнаруженным проектам,
+    // и на каждом не-репозитории git писал `fatal: not a git repository`
+    // прямо в stderr сервера — раз в тик, вечно. Таймаут нужен, потому что
+    // тик ждёт детектор: `git` на недоступной сетевой шаре висит минутами.
+    const output = execSync(`git ${gitArgs.join(' ')}`, {
+      cwd: projectPath,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 5000
     });
     
     // Parse output to find current branch line

@@ -12,13 +12,22 @@ import { detectBranchDiverged } from './detectors/branch-diverged.mjs';
  * Creates a health watcher factory
  * @param {Object} options - Configuration options
  * @param {string} options.cwd - Current working directory
- * @param {Array} options.projects - List of projects to monitor
+ * @param {Array|Function} options.projects - List of projects to monitor, or a
+ *   function returning it. Функция нужна серверу: discovery пересобирает список
+ *   на лету, и захваченный при старте массив устаревает после первой же правки
+ *   состава проектов.
  * @param {Function} options.onAlert - Callback for alerts
  * @returns {Object} Object with start() and stop() methods
  */
 export function createWatcher({ cwd, projects, onAlert }) {
   let intervalId = null;
-  
+
+  /** Текущий список проектов — массив либо результат вызова функции. */
+  function currentProjects() {
+    const list = typeof projects === 'function' ? projects() : projects;
+    return Array.isArray(list) ? list : [];
+  }
+
   /**
    * Run all detectors for a single project and collect alerts
    * @param {string} projectPath - Project path
@@ -106,8 +115,9 @@ export function createWatcher({ cwd, projects, onAlert }) {
    */
   function start() {
     // Warn if too many projects
-    if (projects.length > 20) {
-      console.warn(`Health watcher monitoring ${projects.length} projects. Consider configuring a whitelist for better performance.`);
+    const initialProjects = currentProjects();
+    if (initialProjects.length > 20) {
+      console.warn(`Health watcher monitoring ${initialProjects.length} projects. Consider configuring a whitelist for better performance.`);
     }
     
     // Get tick interval from config
@@ -121,7 +131,7 @@ export function createWatcher({ cwd, projects, onAlert }) {
       const config = getMcpConfig(cwd);
       
       // Loop through projects and run all detectors
-      for (const project of projects) {
+      for (const project of currentProjects()) {
         // Run each detector and collect non-null alerts
         const alerts = runDetectorsForProject(project.path, config);
         

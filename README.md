@@ -10,6 +10,22 @@ MCP-сервер, агрегирующий операции по несколь�
 - мониторинг здоровья пайплайнов;
 - единую конфигурацию.
 
+## Новые возможности версии 1.4.0
+
+### Health-мониторинг начал работать
+
+Детекторы, дедуп алертов и ресурсы `workflow://alerts` и `workflow://alerts/history` существовали по отдельности, но не были связаны ничем: наблюдателя никто не запускал, и список алертов всегда был пуст. Теперь сервер поднимает службу здоровья при старте и останавливает при завершении.
+
+Что даёт алерт: `crashed` (процесс раннера умер, а лог свежий), `stuck` (стадия идёт дольше своего таймаута плюс запас), `stage-error`, `retry-loop`, `blocked-accumulation`, `approval-pending`, `branch-diverged`, `ghost-execution`. Алерт уходит клиенту уведомлением `resources/updated` для `workflow://alerts` и пишется в `alerts-history.jsonl` в каталоге состояния. Повторы внутри `dedup_fingerprint_ttl_sec` глушатся.
+
+Отключается целиком: `health.enabled: false`.
+
+### Подписка на ресурсы
+
+`resources/subscribe` и `resources/unsubscribe` реализованы. Прежде сервер отвечал на них `Method not found`, хотя три ресурса — `workflow://alerts`, `workflow://pipeline-state` и `workflow://human-queue` — числились подписываемыми и под них поднимались наблюдатели за файлами. Уведомления `resources/updated` уходят только по тем URI, на которые клиент подписался.
+
+Две оговорки. Детекторы `crashed` и `stuck` определяли pid раннера по `.runner-pids` — файлу, которого не пишет никто, — и не срабатывали ни разу; теперь pid берётся из `.workflow/logs/.pipeline.lock`. Детектор `ghost-execution` по-прежнему молчит: маркер `[GHOST-EXECUTION]` в лог не пишет ни раннер, ни сервер, так что истинных срабатываний у него не будет до правки workflow-ai.
+
 ## Новые возможности версии 1.3.0
 
 ### 14 инструментов, которых клиент не видел
@@ -277,6 +293,7 @@ await client.callTool('move_ticket', {
 
 ```yaml
 health:
+  enabled: true          # false — служба здоровья не запускается вовсе
   tick_interval_sec: 15
   stuck_headroom_sec: 60
   blocked_accumulation_threshold: 5

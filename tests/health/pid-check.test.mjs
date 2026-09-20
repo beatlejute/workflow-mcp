@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { isProcessAlive } from '../../src/health/pid-check.mjs';
 import process from 'node:process';
+import { spawn } from 'node:child_process';
 
 describe('pid-check.mjs', () => {
   describe('isProcessAlive', () => {
@@ -21,6 +22,21 @@ describe('pid-check.mjs', () => {
     it('should return true for current process', () => {
       // Current process (this test process) should always be alive
       expect(isProcessAlive(process.pid)).toBe(true);
+    });
+
+    it('завершившийся процесс считается мёртвым', async () => {
+      // Единственная проверка настоящей ветки платформы: все остальные тесты
+      // здоровья подменяют `isProcessAlive`. Из-за этого на Windows годами
+      // жила поломка — `tasklist` печатает «No tasks are running which match
+      // the specified criteria», а код искал подстроку «No tasks running» и
+      // считал живым любой мёртвый pid. Детектор `crashed` не мог сработать.
+      const child = spawn(process.execPath, ['-e', '0'], { stdio: 'ignore' });
+      const pid = child.pid;
+      await new Promise((resolve) => child.on('exit', resolve));
+      // Дать системе снять запись о процессе.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      expect(isProcessAlive(pid)).toBe(false);
     });
 
     it('should use mocked isProcessAlive result in crashed detector tests', () => {

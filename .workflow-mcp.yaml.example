@@ -40,14 +40,20 @@ state:
 # --- Health-мониторинг (src/health/thresholds.mjs) ---------------------------
 # Значения ниже — ровно те, что зашиты как defaults.
 #
-# ВАЖНО: сервер не запускает health-watcher. Ни один модуль вне `src/health/`
-# не импортирует `watcher.mjs`, детекторы или `publisher.mjs`, поэтому
-# `alerts-history.jsonl` никто не пишет и ресурс `workflow://alerts` всегда
-# пуст. Реально влияет один ключ — `ghost_execution_log_marker`: его читает
-# `list_ghost_executions`, причём из `<project>/.workflow-mcp.yaml`, а не из
-# конфига в cwd сервера. Остальные пороги ниже задокументированы как контракт
-# детекторов и вступят в силу, когда watcher начнут запускать.
+# Сервер запускает службу здоровья при старте (src/health/service.mjs) и
+# останавливает при завершении. Алерты пишутся в `alerts-history.jsonl` в
+# каталоге состояния и отдаются ресурсом `workflow://alerts`; про каждый новый
+# клиент узнаёт уведомлением `resources/updated`.
+#
+# Все ключи ниже читаются из конфига в cwd сервера. Исключение —
+# `ghost_execution_log_marker`: его читает ещё и `list_ghost_executions`, но
+# из `<project>/.workflow-mcp.yaml`.
+#
+# Детектор `ghost-execution` пока не даст истинных срабатываний: маркер
+# `[GHOST-EXECUTION]` в лог не пишет ни раннер, ни сервер.
 health:
+  # Выключатель всей службы здоровья (src/health/service.mjs).
+  enabled: true
   # Период опроса детекторов.
   tick_interval_sec: 15
   # Надбавка к таймауту стадии, после которой пайплайн считается зависшим.

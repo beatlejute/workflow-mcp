@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { detectStuck } from '../../../src/health/detectors/stuck.mjs';
 import * as pidCheck from '../../../src/health/pid-check.mjs';
+import { writeRunnerLock } from '../../helpers/pipeline-lock.mjs';
 import * as thresholds from '../../../src/health/thresholds.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -89,9 +90,11 @@ describe('detectStuck (tests/health/detectors/stuck.test.mjs)', () => {
       const oldMtime = Date.now() - 20000;
       fs.utimesSync(logPath, oldMtime / 1000, oldMtime / 1000);
 
-      // Create .runner-pids with a dead PID
+      // Lock раннера с мёртвым pid: такой прогон разбирает detectCrashed.
+      // Прежде здесь писался `.runner-pids`, которого не пишет никто, и ветка
+      // «pid мёртв» не проверялась вовсе.
       const deadPid = 999999;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), `${deadPid}\n`, 'utf8');
+      writeRunnerLock(projectPath, deadPid);
 
       // Mock isProcessAlive to return false
       vi.spyOn(pidCheck, 'isProcessAlive').mockReturnValue(false);
@@ -265,7 +268,7 @@ describe('detectStuck (tests/health/detectors/stuck.test.mjs)', () => {
       consoleErrorSpy.mockRestore();
     });
 
-    it('should return null when .runner-pids does not exist', () => {
+    it('should alert when lock раннера отсутствует', () => {
       // Create a running stage log
       const logContent = `[2026-04-26 12:00:00] [INFO] [PipelineRunner] Step 1
 [2026-04-26 12:00:00] [INFO] [PipelineRunner] Current stage: execute-task
@@ -278,9 +281,9 @@ describe('detectStuck (tests/health/detectors/stuck.test.mjs)', () => {
       const oldMtime = Date.now() - 20000;
       fs.utimesSync(logPath, oldMtime / 1000, oldMtime / 1000);
 
-      // .runner-pids doesn't exist, but that shouldn't cause error
-      // The detector should treat missing .runner-pids as "no PIDs to check"
-      // and continue to check the log age
+      // Lock'а нет — pid проверять не у чего. Это не повод молчать: лог
+      // висит, и стадия всё равно просрочена. Прежде здесь ожидался тот же
+      // исход, но по другой причине — из-за отсутствия `.runner-pids`.
 
       const result = detectStuck(projectPath, { stuck_headroom_sec: 5 });
       // Should alert because no PIDs means process is assumed alive

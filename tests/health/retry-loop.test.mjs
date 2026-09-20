@@ -62,15 +62,15 @@ describe('retry-loop.mjs', () => {
       // Create counter file with some data
       fs.writeFileSync(countersPath, JSON.stringify({ task_attempts: 2 }), 'utf8');
 
-      // Capture console.warn
+      // Ненастроенный лимит — выбор конфигурации, а не ошибка: детектор
+      // молчит. Предупреждение убрано, потому что печаталось каждый тик по
+      // каждому проекту, а тик теперь действительно происходит.
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       const result = detectRetryLoop(projectPath, {});
 
       expect(result).toBeNull();
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('counter limit not defined')
-      );
+      expect(warnSpy).not.toHaveBeenCalled();
       warnSpy.mockRestore();
     });
 

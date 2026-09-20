@@ -33,6 +33,13 @@ export function notify_workflow_alerts(alert) {
   for (const cb of alertSubscribers) {
     try { cb(alert); } catch (e) { console.error('Error in workflow alerts subscriber:', e.message); }
   }
+  // Обработчик ставился сервером и не читался нигде: подписчиков у
+  // `subscribe_workflow_alerts` в живом коде нет, а `resources/updated` для
+  // `workflow://alerts` не уходил никогда. Без этой строки клиент узнавал бы
+  // про алерт, только если сам решит перечитать ресурс.
+  if (notificationHandler) {
+    try { notificationHandler('workflow://alerts'); } catch (e) { console.error('Error notifying workflow://alerts update:', e.message); }
+  }
 }
 
 // ============================================================

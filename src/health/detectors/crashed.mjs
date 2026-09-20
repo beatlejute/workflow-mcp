@@ -1,66 +1,50 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isProcessAlive } from '../pid-check.mjs';
+import { readPipelineLock } from '../../process/run-lock.mjs';
 
 /**
- * Detects crashed pipelines by checking if PIDs from .runner-pids are still alive.
- * Returns an Alert if a PID is dead AND its last log is fresh.
+ * Детектор упавшего пайплайна: pid раннера мёртв, а лог ещё свежий.
  *
- * @param {string} projectPath - Path to the project directory
- * @param {Object} config - Configuration object with crash_mtime_freshness_sec
- * @returns {Object|null} Alert object or null
+ * Источник pid — `.workflow/logs/.pipeline.lock`, который пишет сам раннер
+ * workflow-ai при любом запуске. Прежде детектор читал `.runner-pids` — файл,
+ * которого не пишет никто, поэтому он не срабатывал ни разу за всё время
+ * существования. Прогон всегда один: lock держит синглтон, так что и pid один.
+ *
+ * @param {string} projectPath Путь к каталогу проекта
+ * @param {Object} config Конфигурация с `crash_mtime_freshness_sec`
+ * @returns {Object|null} Алерт или null
  */
 export function detectCrashed(projectPath, config) {
-  const runnerPidsPath = resolve(projectPath, '.workflow', 'logs', '.runner-pids');
+  const lock = readPipelineLock(projectPath);
+
+  // Нет lock'а — нет прогона, падать нечему. Битый lock `readPipelineLock`
+  // отдаёт как отсутствующий: по мусору нельзя утверждать, что процесс умер.
+  if (!lock) {
+    return null;
+  }
+
+  if (isProcessAlive(lock.pid)) {
+    return null;
+  }
+
   const logsDir = resolve(projectPath, '.workflow', 'logs');
-
-  // Read .runner-pids file
-  let pids;
-  try {
-    const content = readFileSync(runnerPidsPath, 'utf8');
-    pids = content
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line && !line.startsWith('#'))
-      .map(line => parseInt(line, 10))
-      .filter(pid => Number.isInteger(pid) && pid > 0);
-  } catch (error) {
-    // File doesn't exist or can't be read - no PIDs to check
-    if (error.code === 'ENOENT') {
-      return null;
-    }
-    // Other errors - return null (can't check)
-    return null;
-  }
-
-  if (pids.length === 0) {
-    return null;
-  }
-
-  // Check each PID for liveness
-  for (const pid of pids) {
-    if (!isProcessAlive(pid)) {
-      // Process is dead - check if log is fresh
-      const alert = checkDeadPidAlert(projectPath, logsDir, pid, config);
-      if (alert) {
-        return alert;
-      }
-    }
-  }
-
-  // All processes alive
-  return null;
+  return checkDeadPidAlert(projectPath, logsDir, lock, config);
 }
 
 /**
- * Check if a dead PID should generate an alert based on log freshness
- * @param {string} projectPath - Project path
- * @param {string} logsDir - Path to logs directory
- * @param {number} deadPid - The dead PID
- * @param {Object} config - Config with crash_mtime_freshness_sec
- * @returns {Object|null} Alert or null
+ * Решает, поднимать ли алерт по мёртвому pid, по свежести лога.
+ *
+ * Свежесть обязательна: lock нормально переживает конец прогона на доли
+ * секунды, и без проверки каждый завершившийся пайплайн выглядел бы крахом.
+ *
+ * @param {string} projectPath Путь к проекту
+ * @param {string} logsDir Каталог логов
+ * @param {{pid: number, run_id: string|null}} lock Прочитанный lock раннера
+ * @param {Object} config Конфигурация с `crash_mtime_freshness_sec`
+ * @returns {Object|null} Алерт или null
  */
-function checkDeadPidAlert(projectPath, logsDir, deadPid, config) {
+function checkDeadPidAlert(projectPath, logsDir, lock, config) {
   const freshnessSec = config?.crash_mtime_freshness_sec ?? 60;
   const freshnessMs = freshnessSec * 1000;
   const now = Date.now();
@@ -99,17 +83,17 @@ function checkDeadPidAlert(projectPath, logsDir, deadPid, config) {
   }
 
   // Process is dead AND log is fresh - generate alert
-  const runId = latestLog.match(/pipeline_(.+?)\.log$/)?.[1] || 'unknown';
+  const runId = lock.run_id || latestLog.match(/pipeline_(.+?)\.log$/)?.[1] || 'unknown';
   const projectName = projectPath.split(/[\\/]/).filter(Boolean).pop() || 'unknown';
 
   const alert = {
-    fingerprint: `crashed:${projectName}:${deadPid}`,
+    fingerprint: `crashed:${projectName}:${lock.pid}`,
     type: 'crashed',
     severity: 'critical',
     project: projectName,
     run_id: runId,
-    pid: deadPid,
-    message: `Pipeline process ${deadPid} has crashed`,
+    pid: lock.pid,
+    message: `Pipeline process ${lock.pid} has crashed`,
     detected_at: new Date().toISOString(),
     suggested_actions: ['get_pipeline_log', 'restart_pipeline']
   };

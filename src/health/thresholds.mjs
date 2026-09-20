@@ -112,6 +112,7 @@ export function getMcpConfig(cwd) {
   
    // Default configuration
    const defaults = {
+     enabled: true,
      tick_interval_sec: 15,
      stuck_headroom_sec: 60,
      blocked_accumulation_threshold: 5,

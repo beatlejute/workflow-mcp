@@ -12,9 +12,10 @@ import { resolve } from 'node:path';
 export function detectBlockedAccumulation(projectPath, threshold) {
   const blockedDir = resolve(projectPath, '.workflow', 'tickets', 'blocked');
 
-  // If blocked directory does not exist → null + warning
+  // Каталога нет — заблокированных тикетов нет. Обычное состояние проекта,
+  // а не повод писать в stderr: детектор зовётся каждый тик, и предупреждение
+  // повторялось бы бесконечно.
   if (!existsSync(blockedDir)) {
-    console.warn(`[blocked_accumulation] directory does not exist: ${blockedDir}`);
     return null;
   }
 

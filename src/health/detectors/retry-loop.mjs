@@ -16,8 +16,8 @@ export function detectRetryLoop(projectPath, thresholds) {
   // Read limit from pipeline.yaml via getCounterLimit
   const limit = getCounterLimit(projectPath, counterName);
   if (limit === null) {
-    // Limit not configured → not a retry-loop condition
-    console.warn(`[retry_loop] counter limit not defined for "${counterName}" in pipeline.yaml`);
+    // Лимит не настроен — условия для retry-loop нет. Это выбор конфигурации,
+    // а не ошибка: предупреждение печаталось каждый тик по каждому проекту.
     return null;
   }
 

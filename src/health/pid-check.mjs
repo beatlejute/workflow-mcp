@@ -53,19 +53,29 @@ function isProcessAlivePosix(pid) {
  */
 function isProcessAliveWindows(pid) {
   try {
-    // tasklist /FI "PID eq <n>" /NH
-    // /FI filter by PID, /NH no header
-    // If process exists: prints process info
-    // If process doesn't exist: prints "No tasks running"
-    const output = execSync(`tasklist /FI "PID eq ${pid}" /NH`, {
+    // tasklist /FI "PID eq <n>" /NH /FO CSV
+    // Живой процесс: "node.exe","1234","Console","1","12 345 КБ"
+    // Мёртвый: одна строка вида «INFO: No tasks are running which match…»
+    const output = execSync(`tasklist /FI "PID eq ${pid}" /NH /FO CSV`, {
       timeout: 5000,
       stdio: ['pipe', 'pipe', 'pipe'],
       encoding: 'utf8'
     });
 
-    // If output is empty or contains "No tasks", process is not alive
-    const trimmed = output.trim();
-    return trimmed.length > 0 && !trimmed.includes('No tasks running');
+    // Решение принимается по формату строки, а не по тексту сообщения.
+    // Прежняя проверка искала подстроку «No tasks running», которой нет даже
+    // в английском ответе («No tasks are running which match the specified
+    // criteria»), не говоря о локализованных системах, — и любой мёртвый pid
+    // считался живым. Из-за этого детектор `crashed` не мог сработать на
+    // Windows в принципе, а тесты этого не видели: все они подменяют
+    // `isProcessAlive`.
+    for (const line of output.split('\n')) {
+      const fields = line.trim().split('","');
+      if (fields.length >= 2 && fields[1] === String(pid)) {
+        return true;
+      }
+    }
+    return false;
   } catch (error) {
     // Timeout or command error - assume process doesn't exist
     return false;

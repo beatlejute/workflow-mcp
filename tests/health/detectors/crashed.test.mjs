@@ -1,401 +1,251 @@
+/**
+ * Детектор упавшего пайплайна.
+ *
+ * Фикстуры переведены с `.runner-pids` на `.workflow/logs/.pipeline.lock`.
+ * Прежние воспроизводили контракт, которого нет: `.runner-pids` не пишет ни
+ * раннер, ни сервер, ни расширение, поэтому детектор не срабатывал ни разу,
+ * а тесты были зелёными. Прогон всегда один — lock держит синглтон, — поэтому
+ * случаи «несколько pid, часть мертва» исчезли вместе с файлом.
+ */
+
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { detectCrashed } from '../../../src/health/detectors/crashed.mjs';
 import * as pidCheck from '../../../src/health/pid-check.mjs';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { writeRunnerLock, writeBrokenLock } from '../../helpers/pipeline-lock.mjs';
 
 describe('detectCrashed (tests/health/detectors/crashed.test.mjs)', () => {
+  const DEAD_PID = 999999;
+
   let testDir;
   let projectPath;
   let logsDir;
 
+  /** Помечает pid мёртвым, остальные — живыми. */
+  function killPid(pid = DEAD_PID) {
+    vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(p => p !== pid);
+  }
+
+  /** Лог прогона с заданным возрастом в секундах. */
+  function writeLog(name, ageSec = 0) {
+    const logPath = path.join(logsDir, name);
+    fs.writeFileSync(logPath, 'test log', 'utf8');
+    if (ageSec > 0) {
+      const when = (Date.now() - ageSec * 1000) / 1000;
+      fs.utimesSync(logPath, when, when);
+    }
+    return logPath;
+  }
+
   beforeEach(() => {
-    // Create temporary test directory
-    testDir = fs.mkdtempSync(path.join('/tmp', 'crashed-detector-test-'));
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crashed-detector-test-'));
     projectPath = testDir;
     logsDir = path.join(projectPath, '.workflow', 'logs');
-
-    // Create .workflow/logs directory
     fs.mkdirSync(logsDir, { recursive: true });
   });
 
   afterEach(() => {
-    // Clean up test directory
     try {
       fs.rmSync(testDir, { recursive: true, force: true });
     } catch (err) {
       // ignore cleanup errors
     }
-    // Clear all mocks
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   describe('Basic functionality', () => {
-    it('should return null when .runner-pids does not exist', () => {
-      const result = detectCrashed(projectPath, {});
-      expect(result).toBeNull();
+    it('should return null when lock раннера отсутствует', () => {
+      writeLog('pipeline_test-run-1.log');
+      expect(detectCrashed(projectPath, {})).toBeNull();
     });
 
-    it('should return null when .runner-pids is empty', () => {
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), '', 'utf8');
-      const result = detectCrashed(projectPath, {});
-      expect(result).toBeNull();
-    });
+    it.each([['empty'], ['garbage'], ['no-pid'], ['bad-pid']])(
+      'should return null when lock испорчен (%s)',
+      (kind) => {
+        // По мусору нельзя утверждать, что процесс умер: pid неизвестен.
+        writeBrokenLock(projectPath, kind);
+        writeLog('pipeline_test-run-1.log');
+        killPid();
 
-    it('should return null when .runner-pids contains only comments', () => {
-      const pidsContent = '# Comment line\n# Another comment\n';
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent, 'utf8');
-      const result = detectCrashed(projectPath, {});
-      expect(result).toBeNull();
-    });
+        expect(detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 })).toBeNull();
+      }
+    );
 
-    it('should return null when .runner-pids contains invalid lines', () => {
-      const pidsContent = 'abc\n\n123notvalid\n  \n';
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent, 'utf8');
-      const result = detectCrashed(projectPath, {});
-      expect(result).toBeNull();
-    });
+    it('should return null when pid раннера жив', () => {
+      writeRunnerLock(projectPath, process.pid);
+      writeLog('pipeline_test-run-1.log');
 
-    it('should return null when all PIDs are alive', () => {
-      // Use current process PID (known to be alive)
-      const pidsContent = `${process.pid}\n`;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent, 'utf8');
-
-      // Create a fresh log file
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-
-      const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-      expect(result).toBeNull();
+      expect(detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 })).toBeNull();
     });
   });
 
   describe('Dead PID detection', () => {
     it('should return alert for dead PID with fresh log', () => {
-      // Use a non-existent PID
-      const deadPid = 999999;
-      const pidsContent = `${deadPid}\n`;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent, 'utf8');
-
-      // Create a fresh log file
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-
-      // Mock isProcessAlive to return false for our test PID
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(pid => {
-        return pid !== deadPid;
-      });
+      writeRunnerLock(projectPath, DEAD_PID, { run_id: 'test-run-1' });
+      writeLog('pipeline_test-run-1.log');
+      killPid();
 
       const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
 
       expect(result).not.toBeNull();
       expect(result.type).toBe('crashed');
       expect(result.severity).toBe('critical');
-      expect(result.pid).toBe(deadPid);
+      expect(result.pid).toBe(DEAD_PID);
+      expect(result.run_id).toBe('test-run-1');
       expect(result.fingerprint).toContain('crashed');
-      expect(result.fingerprint).toContain(String(deadPid));
-      expect(result.message).toContain(String(deadPid));
+      expect(result.fingerprint).toContain(String(DEAD_PID));
+      expect(result.message).toContain(String(DEAD_PID));
       expect(result.suggested_actions).toEqual(['get_pipeline_log', 'restart_pipeline']);
     });
 
     it('should return null for dead PID with stale log (old mtime)', () => {
-      const deadPid = 999999;
-      const pidsContent = `${deadPid}\n`;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent, 'utf8');
+      // Lock переживает конец прогона на доли секунды. Без проверки свежести
+      // каждый нормально завершившийся пайплайн выглядел бы крахом.
+      writeRunnerLock(projectPath, DEAD_PID);
+      writeLog('pipeline_test-run-1.log', 120);
+      killPid();
 
-      // Create an old log file (more than 60 seconds old)
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-      const oldMtime = Date.now() - 120000; // 2 minutes ago
-      fs.utimesSync(logPath, oldMtime / 1000, oldMtime / 1000);
-
-      // Mock isProcessAlive to return false for our test PID
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(pid => {
-        return pid !== deadPid;
-      });
-
-      const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-      expect(result).toBeNull();
+      expect(detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 })).toBeNull();
     });
 
-    it('should handle multiple PIDs and return alert for first dead one with fresh log', () => {
-      const livePid = process.pid;
-      const deadPid = 999999;
-      const pidsContent = `${livePid}\n${deadPid}\n`;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent, 'utf8');
+    it('should return null when no pipeline logs exist', () => {
+      writeRunnerLock(projectPath, DEAD_PID);
+      killPid();
 
-      // Create a fresh log
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-
-      // Mock isProcessAlive
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(pid => {
-        return pid === livePid;
-      });
-
-      const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-
-      expect(result).not.toBeNull();
-      expect(result.pid).toBe(deadPid);
+      expect(detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 })).toBeNull();
     });
 
-    it('should return null when multiple PIDs but all are alive', () => {
-      const livePid1 = process.pid;
-      const livePid2 = process.pid + 1;
-      const pidsContent = `${livePid1}\n${livePid2}\n`;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent, 'utf8');
+    it('should return null when logs directory cannot be read', () => {
+      writeRunnerLock(projectPath, DEAD_PID);
+      killPid();
+      // Lock прочитан, а каталога уже нет — гонка с уборкой рабочей папки.
+      fs.rmSync(logsDir, { recursive: true, force: true });
 
-      // Create a fresh log
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-
-      // Mock isProcessAlive to return true for all
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(() => true);
-
-      const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-      expect(result).toBeNull();
-    });
-  });
-
-  describe('Whitespace and format handling', () => {
-    it('should handle whitespace in .runner-pids correctly', () => {
-      const deadPid = 999999;
-      const pidsContent = `  \n${deadPid}  \n \n`;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent, 'utf8');
-
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(() => false);
-
-      const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-
-      expect(result).not.toBeNull();
-      expect(result.pid).toBe(deadPid);
+      expect(detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 })).toBeNull();
     });
   });
 
   describe('Configuration handling', () => {
     it('should use default freshness (60 sec) when not specified', () => {
-      const deadPid = 999999;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), `${deadPid}\n`, 'utf8');
+      writeRunnerLock(projectPath, DEAD_PID);
+      writeLog('pipeline_test-run-1.log', 30);
+      killPid();
 
-      // Create a log that's 50 seconds old (fresh with default 60-sec threshold)
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-      const oldMtime = Date.now() - 50000;
-      fs.utimesSync(logPath, oldMtime / 1000, oldMtime / 1000);
+      expect(detectCrashed(projectPath, {})).not.toBeNull();
+    });
 
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(() => false);
+    it('should treat log older than default freshness as stale', () => {
+      writeRunnerLock(projectPath, DEAD_PID);
+      writeLog('pipeline_test-run-1.log', 90);
+      killPid();
 
-      // Call without config
-      const result = detectCrashed(projectPath, {});
-      expect(result).not.toBeNull();
+      expect(detectCrashed(projectPath, {})).toBeNull();
     });
 
     it('should respect custom crash_mtime_freshness_sec configuration', () => {
-      const deadPid = 999999;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), `${deadPid}\n`, 'utf8');
+      writeRunnerLock(projectPath, DEAD_PID);
+      writeLog('pipeline_test-run-1.log', 90);
+      killPid();
 
-      // Create a log that's 150 seconds old
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-      const oldMtime = Date.now() - 150000;
-      fs.utimesSync(logPath, oldMtime / 1000, oldMtime / 1000);
-
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(() => false);
-
-      // With custom 200-sec threshold, should return alert
-      const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 200 });
-      expect(result).not.toBeNull();
+      expect(detectCrashed(projectPath, { crash_mtime_freshness_sec: 300 })).not.toBeNull();
+      expect(detectCrashed(projectPath, { crash_mtime_freshness_sec: 30 })).toBeNull();
     });
   });
 
   describe('Log file handling', () => {
     it('should find most recent log when multiple exist', () => {
-      const deadPid = 999999;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), `${deadPid}\n`, 'utf8');
+      // Свежесть считается по самому новому логу: старые прогоны проекта не
+      // должны глушить алерт по текущему.
+      writeRunnerLock(projectPath, DEAD_PID);
+      writeLog('pipeline_old-run.log', 600);
+      writeLog('pipeline_new-run.log');
+      killPid();
 
-      // Create multiple log files
-      const oldLogPath = path.join(logsDir, 'pipeline_old-run.log');
-      const newLogPath = path.join(logsDir, 'pipeline_new-run.log');
+      expect(detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 })).not.toBeNull();
+    });
 
-      fs.writeFileSync(oldLogPath, 'old log', 'utf8');
-      fs.writeFileSync(newLogPath, 'new log', 'utf8');
-
-      // Make old log actually old
-      const oldMtime = Date.now() - 100000;
-      fs.utimesSync(oldLogPath, oldMtime / 1000, oldMtime / 1000);
-
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(() => false);
+    it('should take run_id from the newest log when lock не содержит его', () => {
+      writeRunnerLock(projectPath, DEAD_PID, { run_id: null });
+      writeLog('pipeline_old-run.log', 600);
+      writeLog('pipeline_new-run.log');
+      killPid();
 
       const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-
-      expect(result).not.toBeNull();
       expect(result.run_id).toBe('new-run');
     });
 
-    it('should return null when logs directory cannot be read', () => {
-      const deadPid = 999999;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), `${deadPid}\n`, 'utf8');
-
-      // Remove logs directory to simulate read error
-      fs.rmSync(logsDir, { recursive: true });
-
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(() => false);
+    it('should prefer run_id from lock over log file name', () => {
+      // Лог может остаться от прошлого прогона: имя файла — запасной источник.
+      writeRunnerLock(projectPath, DEAD_PID, { run_id: 'run-from-lock' });
+      writeLog('pipeline_run-from-file.log');
+      killPid();
 
       const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-      expect(result).toBeNull();
-    });
-
-    it('should return null when no pipeline logs exist', () => {
-      const deadPid = 999999;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), `${deadPid}\n`, 'utf8');
-
-      // Create a non-pipeline log file
-      fs.writeFileSync(path.join(logsDir, 'other.log'), 'other log', 'utf8');
-
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(() => false);
-
-      const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-      expect(result).toBeNull();
+      expect(result.run_id).toBe('run-from-lock');
     });
   });
 
   describe('Alert object properties', () => {
     it('should include detected_at timestamp in alert', () => {
-      const deadPid = 999999;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), `${deadPid}\n`, 'utf8');
+      writeRunnerLock(projectPath, DEAD_PID);
+      writeLog('pipeline_test-run-1.log');
+      killPid();
 
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(() => false);
-
-      const beforeTime = new Date().toISOString();
       const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-      const afterTime = new Date().toISOString();
 
-      expect(result).not.toBeNull();
       expect(result.detected_at).toBeDefined();
-      expect(result.detected_at >= beforeTime).toBe(true);
-      expect(result.detected_at <= afterTime).toBe(true);
+      expect(new Date(result.detected_at).toISOString()).toBe(result.detected_at);
     });
 
     it('should include project name in fingerprint and alert', () => {
-      // Create a project with a specific name
-      const projectName = 'my-test-project';
-      const namedTestDir = path.join('/tmp', 'crashed-detector-test-', projectName);
-      const namedLogsDir = path.join(namedTestDir, '.workflow', 'logs');
-      fs.mkdirSync(namedLogsDir, { recursive: true });
+      writeRunnerLock(projectPath, DEAD_PID);
+      writeLog('pipeline_test-run-1.log');
+      killPid();
 
-      const deadPid = 999999;
-      fs.writeFileSync(path.join(namedLogsDir, '.runner-pids'), `${deadPid}\n`, 'utf8');
+      const projectName = path.basename(projectPath);
+      const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
 
-      const logPath = path.join(namedLogsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(() => false);
-
-      const result = detectCrashed(namedTestDir, { crash_mtime_freshness_sec: 60 });
-
-      expect(result).not.toBeNull();
-      expect(result.fingerprint).toContain(projectName);
       expect(result.project).toBe(projectName);
-
-      // Cleanup
-      fs.rmSync(namedTestDir, { recursive: true, force: true });
+      expect(result.fingerprint).toBe(`crashed:${projectName}:${DEAD_PID}`);
     });
   });
 
   describe('Windows platform support', () => {
     it('should work with Windows-specific isProcessAlive behavior (mocked)', () => {
-      const deadPid = 999999;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), `${deadPid}\n`, 'utf8');
-
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-
-      // Mock Windows tasklist response: "No tasks running"
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(pid => {
-        if (pid === deadPid) {
-          // Simulate Windows tasklist command returning "No tasks running"
-          return false;
-        }
-        return true;
-      });
+      // На Windows проверка pid уходит в `tasklist`; детектор про это не знает
+      // и обязан верить ответу `isProcessAlive`.
+      writeRunnerLock(projectPath, DEAD_PID);
+      writeLog('pipeline_test-run-1.log');
+      vi.spyOn(pidCheck, 'isProcessAlive').mockReturnValue(false);
 
       const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-
       expect(result).not.toBeNull();
-      expect(result.pid).toBe(deadPid);
-      expect(result.type).toBe('crashed');
-    });
-
-    it('should handle multiple PIDs with Windows mock where some are dead', () => {
-      const livePid1 = 100;
-      const deadPid1 = 200;
-      const deadPid2 = 300;
-      const pidsContent = `${livePid1}\n${deadPid1}\n${deadPid2}\n`;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent, 'utf8');
-
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-
-      // Mock Windows behavior: only livePid1 is alive
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(pid => {
-        return pid === livePid1;
-      });
-
-      const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-
-      // Should return alert for first dead PID
-      expect(result).not.toBeNull();
-      expect([deadPid1, deadPid2]).toContain(result.pid);
+      expect(result.pid).toBe(DEAD_PID);
     });
   });
 
   describe('Edge cases', () => {
-    it('should handle negative PIDs gracefully', () => {
-      const pidsContent = '-1\n-100\n';
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent, 'utf8');
-
-      const result = detectCrashed(projectPath, {});
-      expect(result).toBeNull();
-    });
-
     it('should handle very large PID numbers', () => {
-      const largePid = 2147483647; // Max 32-bit int
-      const pidsContent = `${largePid}\n`;
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent, 'utf8');
-
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(() => false);
+      const bigPid = 4294967295;
+      writeRunnerLock(projectPath, bigPid);
+      writeLog('pipeline_test-run-1.log');
+      killPid(bigPid);
 
       const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-      expect(result).not.toBeNull();
-      expect(result.pid).toBe(largePid);
+      expect(result.pid).toBe(bigPid);
     });
 
-    it('should handle floating-point PID values (should be ignored)', () => {
-      const pidsContent = '123.456\n789\n';
-      fs.writeFileSync(path.join(logsDir, '.runner-pids'), pidsContent, 'utf8');
-
-      const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
-      fs.writeFileSync(logPath, 'test log', 'utf8');
-
-      vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation(pid => pid !== 789);
+    it('should accept pid записанный строкой', () => {
+      // Раннер пишет число, но формат lock'а общий с другими реализациями:
+      // `readPipelineLock` приводит строку к числу, детектор получает число.
+      writeRunnerLock(projectPath, String(DEAD_PID));
+      writeLog('pipeline_test-run-1.log');
+      killPid();
 
       const result = detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 });
-      // Should only detect issue with valid PID 789
-      expect(result).not.toBeNull();
-      expect(result.pid).toBe(789);
+      expect(result.pid).toBe(DEAD_PID);
     });
   });
 });

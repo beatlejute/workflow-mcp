@@ -3,10 +3,17 @@ import fs from 'fs';
 import path from 'path';
 
 /**
- * Compute fingerprint = first 12 chars of SHA-256(type+project+stage+step_number).
+ * Compute fingerprint = first 12 chars of SHA-256(...).
+ *
+ * Своё поле `fingerprint` детектора важнее вычисленного: у `crashed` нет ни
+ * стадии, ни номера шага, поэтому общая формула схлопывала бы все падения
+ * проекта в один отпечаток и глушила второй крах на целый TTL.
  */
 function fingerprint(alert) {
-  const str = `${alert.type}${alert.project}${alert.stage}${alert.step_number}`;
+  const own = typeof alert.fingerprint === 'string' && alert.fingerprint.length > 0
+    ? alert.fingerprint
+    : null;
+  const str = own ?? `${alert.type}${alert.project}${alert.stage}${alert.step_number}`;
   return crypto.createHash('sha256').update(str).digest('hex').slice(0, 12);
 }
 
@@ -70,16 +77,11 @@ export function createPublisher({ onAlert, stateDir, config = {} }) {
     // Update map (do this before calling onAlert so even if callback throws we've marked it published).
     lastPublished.set(fp, now);
 
-    // Invoke callback.
-    try {
-      onAlert(alert);
-    } catch (err) {
-      // Do not let callback failure prevent persistence (if requested).
-      // Re-throw so caller can handle.
-      throw err;
-    }
-
-    // Persist if writable and history path available.
+    // Запись в историю идёт до колбэка. Колбэк на сервере шлёт клиенту
+    // `resources/updated` для `workflow://alerts`, а этот ресурс читается из
+    // того же jsonl: при обратном порядке клиент успевал прочитать файл без
+    // только что поднятого алерта. Плюс исключение из колбэка больше не
+    // отменяет запись — прежний код это обещал в комментарии и не делал.
     if (!isReadonly && historyPath) {
       const record = {
         ...alert,
@@ -95,6 +97,9 @@ export function createPublisher({ onAlert, stateDir, config = {} }) {
         throw err;
       }
     }
+
+    // Invoke callback.
+    onAlert(alert);
   }
 
   /** Expose internals for testing/debugging (non-enumerable). */

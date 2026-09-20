@@ -232,6 +232,7 @@ pipeline:
       const config = getMcpConfig(projectPath);
 
       expect(config).toEqual({
+        enabled: true,
         tick_interval_sec: 15,
         stuck_headroom_sec: 60,
         blocked_accumulation_threshold: 5,
@@ -339,6 +340,7 @@ someOtherSection:
 
       // All values should be defaults
       expect(config).toEqual({
+        enabled: true,
         tick_interval_sec: 15,
         stuck_headroom_sec: 60,
         blocked_accumulation_threshold: 5,
@@ -363,6 +365,7 @@ invalid: [unclosed bracket
 
       // Should return defaults despite parsing error
       expect(config).toEqual({
+        enabled: true,
         tick_interval_sec: 15,
         stuck_headroom_sec: 60,
         blocked_accumulation_threshold: 5,
