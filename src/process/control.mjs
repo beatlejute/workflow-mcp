@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import process from 'process';
 import os from 'os';
+import { probeProcess } from '../health/pid-check.mjs';
 
 /**
  * Cross-platform process control module.
@@ -61,6 +62,8 @@ function callExternal(command, args) {
           resolve({
             ok: false,
             code: 'EXTERNAL_COMMAND_FAILED',
+            exitCode: code,
+            stderr,
             hint: `${command} exited with code ${code}: ${stderr}`,
           });
         }
@@ -73,6 +76,68 @@ function callExternal(command, args) {
   } catch (err) {
     return { ok: false, code: 'SPAWN_FAILED', hint: err.message };
   }
+}
+
+/**
+ * Почему не сработал `taskkill`.
+ *
+ * Прежде ответ искался подстроками `'not found'` и `'denied'` в stderr. Текст
+ * этих сообщений локализован: на русской Windows не совпадает ни одна, и
+ * мёртвый номер уезжал в grace-ожидание, а оттуда — в принудительную ветку.
+ *
+ * Теперь решают две вещи, от языка не зависящие:
+ *
+ * - код возврата: `taskkill` отдаёт 128, когда процесса с таким номером нет —
+ *   это документированное значение;
+ * - живость: если после отказа процесс мёртв, дело было в нём, а если жив —
+ *   нам не хватило прав его тронуть.
+ *
+ * Подстроки оставлены третьим доводом: на английской системе они дают ответ
+ * без похода в `tasklist`.
+ *
+ * Живость спрашивается только после принудительной остановки. Мягкий
+ * `taskkill` без `/F` штатно не проходит для процесса без окна — консольный
+ * раннер как раз такой, — и живой процесс здесь значит «мягко нельзя», а не
+ * «не хватило прав»: дальше идёт grace-окно и жёсткий сигнал.
+ *
+ * @param {{exitCode?: number, stderr?: string, hint?: string}} failure
+ * @param {number} pid
+ * @param {Object} [options]
+ * @param {boolean} [options.probeLiveness] спросить ОС, жив ли процесс, когда
+ *   ни код возврата, ни текст ответа ничего не сказали
+ * Экспортируется ради тестов: воспроизвести отказ `taskkill` с нужным кодом
+ * возврата на живом процессе иначе нечем, а правило здесь — чистая функция от
+ * ответа утилиты и номера процесса.
+ *
+ * @returns {'NO_SUCH_PROCESS'|'PERMISSION_DENIED'|null} null — причина неясна
+ */
+export function classifyTaskkillFailure(failure, pid, { probeLiveness = false } = {}) {
+  if (failure.exitCode === 128) {
+    return 'NO_SUCH_PROCESS';
+  }
+
+  const text = `${failure.stderr ?? ''} ${failure.hint ?? ''}`.toLowerCase();
+  if (text.includes('not found')) {
+    return 'NO_SUCH_PROCESS';
+  }
+  if (text.includes('denied')) {
+    return 'PERMISSION_DENIED';
+  }
+
+  if (!probeLiveness) {
+    return null;
+  }
+
+  const state = probeProcess(pid, { fresh: true });
+  if (state === 'dead') {
+    return 'NO_SUCH_PROCESS';
+  }
+  if (state === 'alive') {
+    // Принудительная остановка не прошла, а процесс на месте — это про права.
+    return 'PERMISSION_DENIED';
+  }
+  // Спросить не удалось — гадать не будем.
+  return null;
 }
 
 /**
@@ -187,14 +252,12 @@ export async function abort(pid, options = {}) {
     // First attempt: graceful taskkill (without /F)
     const gracefulResult = await callExternal('taskkill', ['/PID', pid.toString()]);
     if (!gracefulResult.ok) {
-      // If process not found, return NO_SUCH_PROCESS
-      if (gracefulResult.hint && gracefulResult.hint.includes('not found')) {
-        return { ok: false, code: 'NO_SUCH_PROCESS', hint: gracefulResult.hint };
+      const reason = classifyTaskkillFailure(gracefulResult, pid);
+      if (reason) {
+        return { ok: false, code: reason, hint: gracefulResult.hint };
       }
-      // If access denied, return PERMISSION_DENIED
-      if (gracefulResult.hint && gracefulResult.hint.includes('denied')) {
-        return { ok: false, code: 'PERMISSION_DENIED', hint: gracefulResult.hint };
-      }
+      // Причина неясна — идём дальше по обычному пути: grace-окно и, если
+      // владение подтвердится, принудительная остановка.
     }
 
     // Wait for grace period
@@ -277,7 +340,8 @@ export async function kill(pid) {
     if (result.ok) {
       return { ok: true, pid, state: 'killed' };
     }
-    return result;
+    const reason = classifyTaskkillFailure(result, pid, { probeLiveness: true });
+    return reason ? { ok: false, code: reason, hint: result.hint } : result;
   }
 
    // POSIX: SIGKILL to process group
@@ -293,21 +357,21 @@ export async function kill(pid) {
 }
 
 /**
- * Check if a process exists and we can signal it.
+ * Существует ли процесс.
+ *
+ * Обёртка над общей проверкой: здесь была четвёртая по счёту собственная
+ * реализация живости — со своим прочтением `EPERM` и без Windows-ветки.
+ * Ответ берётся свежим: зовут это сразу после сигнала, а память держит прежний
+ * ответ секунду.
+ *
+ * `unknown` («спросить не удалось») считается существованием: по отрицанию
+ * вызывающие снимают lock и шлют сигналы.
+ *
  * @param {number} pid - Process ID to check
  * @returns {{exists: true} | {exists: false, code: string}}
  */
 export function checkProcess(pid) {
-  try {
-    process.kill(pid, 0);
-    return { exists: true };
-  } catch (err) {
-    if (err.code === 'ESRCH') {
-      return { exists: false, code: 'NO_SUCH_PROCESS' };
-    }
-    if (err.code === 'EPERM') {
-      return { exists: true }; // Process exists but we can't signal it
-    }
-    return { exists: false, code: 'UNKNOWN_ERROR' };
-  }
+  return probeProcess(pid, { fresh: true }) === 'dead'
+    ? { exists: false, code: 'NO_SUCH_PROCESS' }
+    : { exists: true };
 }

@@ -31,18 +31,36 @@ import { pidCouldBeFromRun } from './process-start.mjs';
  * @returns {{pid: number, timestamp: string|null, started_at: string|null, started_by: string|null, started_by_id: string|null, run_id: string|null}|null}
  */
 export function readPipelineLock(projectRoot) {
+  const lockPath = path.join(projectRoot, '.workflow', 'logs', '.pipeline.lock');
   try {
-    const raw = fs.readFileSync(path.join(projectRoot, '.workflow', 'logs', '.pipeline.lock'), 'utf-8');
+    const raw = fs.readFileSync(lockPath, 'utf-8');
     const data = JSON.parse(raw);
     const pid = typeof data.pid === 'number' ? data.pid : parseInt(data.pid, 10);
     if (!pid || Number.isNaN(pid) || pid <= 0) {
       return null;
     }
     const str = (value) => (typeof value === 'string' && value.length > 0 ? value : null);
+
+    // Время записи нужно для проверки переиспользованного номера: настоящий
+    // раннер стартовал не позже, чем записал lock. Раннер до 1.5.2 полей
+    // времени не писал вовсе, и такой lock проверку молча пропускал — то есть
+    // сигнал уходил по номеру, про который ничего не известно.
+    //
+    // Запасной источник — время изменения самого файла: раннер пишет lock
+    // один раз, при захвате. Ровно так же поступает и он сам, когда читает
+    // чужой lock (`markerStartedAt` в workflow-ai).
+    const fileWrittenAt = () => {
+      try {
+        return fs.statSync(lockPath).mtime.toISOString();
+      } catch {
+        return null;
+      }
+    };
+
     return {
       pid,
       timestamp: str(data.timestamp),
-      started_at: str(data.started_at) ?? str(data.timestamp),
+      started_at: str(data.started_at) ?? str(data.timestamp) ?? fileWrittenAt(),
       started_by: str(data.started_by),
       started_by_id: str(data.started_by_id),
       run_id: str(data.run_id)

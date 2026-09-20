@@ -21,15 +21,19 @@ import process from 'node:process';
  *   не даёт ответа — `unknown`.
  *
  * @param {number} pid
+ * @param {Object} [options]
+ * @param {boolean} [options.fresh] спросить ОС, минуя память. Нужно тому, кто
+ *   только что сам менял положение дел: после сигнала память ещё секунду
+ *   отвечала бы прежним.
  * @returns {'alive'|'dead'|'unknown'}
  */
-export function probeProcess(pid) {
+export function probeProcess(pid, { fresh = false } = {}) {
   if (!Number.isInteger(pid) || pid <= 0) {
     return 'dead';
   }
 
   const cached = recentChecks.get(pid);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+  if (!fresh && cached && Date.now() - cached.at < CACHE_TTL_MS) {
     return cached.state;
   }
 

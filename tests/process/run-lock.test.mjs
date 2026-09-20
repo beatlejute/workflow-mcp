@@ -114,6 +114,44 @@ describe('readPipelineLock', () => {
     expect(lock.run_id).toBeNull();
   });
 
+  it('lock без полей времени берёт время записи самого файла', async () => {
+    // Раннер до 1.5.2 времени не писал вовсе. Без запасного источника такой
+    // lock проходил проверку переиспользованного номера молча: сверять не с
+    // чем — значит не сверяем.
+    const before = new Date();
+    writeLock({ pid: 4242 });
+
+    const lock = readPipelineLock(projectRoot);
+
+    expect(lock.timestamp).toBeNull();
+    expect(lock.started_at).not.toBeNull();
+    const startedAt = new Date(lock.started_at).getTime();
+    expect(startedAt).toBeGreaterThanOrEqual(before.getTime() - 2000);
+    expect(startedAt).toBeLessThanOrEqual(Date.now() + 2000);
+  });
+
+  it('время из файла работает и в проверке переиспользования', () => {
+    // Процесс теста стартовал заведомо раньше, чем создан файл, — значит по
+    // одному лишь времени он проверку проходит; важно, что она вообще идёт.
+    writeLock({ pid: process.pid, started_by: 'mcp', started_by_id: INSTANCE });
+    const lock = readPipelineLock(projectRoot);
+
+    expect(validateRunOwnership(lock, process.pid, INSTANCE, { verifyProcessStart: true }).valid).toBe(true);
+
+    // А теперь наоборот: файл «записан» задолго до старта процесса.
+    fs.utimesSync(
+      path.join(logsDir(), '.pipeline.lock'),
+      new Date('2020-01-01T00:00:00.000Z'),
+      new Date('2020-01-01T00:00:00.000Z')
+    );
+    const ancient = readPipelineLock(projectRoot);
+
+    expect(validateRunOwnership(ancient, process.pid, INSTANCE, { verifyProcessStart: true })).toEqual({
+      valid: false,
+      reason: 'PID_REUSED'
+    });
+  });
+
   it('lock раннера до 1.7.0 отдаёт started_by_id как null', () => {
     writeLock({ pid: 4242, timestamp: '2026-09-20T10:00:00.000Z', started_by: 'mcp' });
     expect(readPipelineLock(projectRoot).started_by_id).toBeNull();
