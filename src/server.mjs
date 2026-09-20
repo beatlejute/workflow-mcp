@@ -373,7 +373,7 @@ async function main() {
           'workflow-alerts',
           'workflow://alerts',
           {
-            description: 'Current list of active alerts from health monitoring',
+            description: 'Alerts published in the last 24 hours, latest per fingerprint (not re-checked on read)',
             mimeType: 'application/json'
           },
           async () => wrapResource(await resources.get_workflow_alerts(stateDir))

@@ -197,7 +197,7 @@ export function resources_list() {
     { uri: 'workflow://{project}/config/ticket-movement-rules', format: 'YAML', description: 'Ticket movement rules configuration YAML', mimeType: 'application/yaml' },
     { uri: 'workflow://skills/{skill_name}/SKILL.md', format: 'Markdown', description: 'Skill definition from the installed workflow-ai package' },
     { uri: 'workflow://templates/{type}', format: 'Markdown', description: 'Global template (ticket, plan, or report)' },
-    { uri: 'workflow://alerts', format: 'JSON', description: 'Current list of active alerts from health monitoring', mimeType: 'application/json', subscribable: true },
+    { uri: 'workflow://alerts', format: 'JSON', description: 'Alerts published in the last 24 hours, latest per fingerprint (not re-checked on read)', mimeType: 'application/json', subscribable: true },
     { uri: 'workflow://alerts/history', format: 'JSON', description: 'Historical alerts from alerts-history.jsonl with optional since parameter', mimeType: 'application/json' },
     { uri: 'workflow://human-queue', format: 'JSON', description: 'Aggregated human tickets across all projects', mimeType: 'application/json', subscribable: true },
     { uri: 'workflow://pipeline-state', format: 'JSON', description: 'Aggregated running pipeline state across all projects', mimeType: 'application/json', subscribable: true }
