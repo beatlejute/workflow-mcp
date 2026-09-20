@@ -197,7 +197,7 @@ export function resources_list() {
     { uri: 'workflow://{project}/config/ticket-movement-rules', format: 'YAML', description: 'Ticket movement rules configuration YAML', mimeType: 'application/yaml' },
     { uri: 'workflow://skills/{skill_name}/SKILL.md', format: 'Markdown', description: 'Skill definition from the installed workflow-ai package' },
     { uri: 'workflow://templates/{type}', format: 'Markdown', description: 'Global template (ticket, plan, or report)' },
-    { uri: 'workflow://alerts', format: 'JSON', description: 'Alerts published in the last 24 hours, latest per fingerprint (not re-checked on read)', mimeType: 'application/json', subscribable: true },
+    { uri: 'workflow://alerts', format: 'JSON', description: 'Health detectors run on request: what is wrong right now', mimeType: 'application/json', subscribable: true },
     { uri: 'workflow://alerts/history', format: 'JSON', description: 'Historical alerts from alerts-history.jsonl with optional since parameter', mimeType: 'application/json' },
     { uri: 'workflow://human-queue', format: 'JSON', description: 'Aggregated human tickets across all projects', mimeType: 'application/json', subscribable: true },
     { uri: 'workflow://pipeline-state', format: 'JSON', description: 'Aggregated running pipeline state across all projects', mimeType: 'application/json', subscribable: true }
@@ -311,26 +311,31 @@ export async function get_workflow_template(templateType) {
   } catch (error) { throw new Error(`Failed to get template: ${error.message}`); }
 }
 
-export async function get_workflow_alerts(stateDir) {
+/**
+ * Что не так прямо сейчас: детекторы прогоняются на каждый запрос.
+ *
+ * Прежде ресурс читал `alerts-history.jsonl` и отдавал последнюю запись по
+ * каждому отпечатку за сутки, называя это «current list of active alerts».
+ * Живьём из-за этого в списке висели четыре `stuck` о прогонах, которых давно
+ * нет, и `approval_pending` по уже одобренному шагу: условие разрешилось, а
+ * запись осталась до истечения суток. История никуда не делась — она в
+ * `workflow://alerts/history`.
+ *
+ * Дедуп по отпечатку здесь не применяется: он глушит повторные *уведомления*,
+ * а на вопрос «что сейчас не так» ответ не зависит от того, сообщали ли об
+ * этом час назад.
+ *
+ * Обход синхронный и стоит столько же, сколько тик службы здоровья: на проект
+ * с живым lock'ом — один `tasklist`, на git-проект — один `git status`,
+ * таймаут у каждого 5 секунд.
+ *
+ * @param {string} [cwd] - Корень рабочей области; по умолчанию `mcpCwd()`
+ */
+export async function get_workflow_alerts(cwd = mcpCwd()) {
   try {
-    if (!stateDir || !stateDir.dir || stateDir.mode === 'read-only') return { uri: 'workflow://alerts', mimeType: 'application/json', text: JSON.stringify([]) };
-    const historyPath = path.join(stateDir.dir, 'alerts-history.jsonl');
-    if (!fs.existsSync(historyPath)) return { uri: 'workflow://alerts', mimeType: 'application/json', text: JSON.stringify([]) };
-    const lines = fs.readFileSync(historyPath, 'utf8').split('\n').filter(l => l.trim().length > 0);
-    if (lines.length === 0) return { uri: 'workflow://alerts', mimeType: 'application/json', text: JSON.stringify([]) };
-    const now = Date.now(), oneDay = 24*60*60*1000;
-    const recent = new Map();
-    for (const line of lines) {
-      try {
-        const r = JSON.parse(line);
-        const t = r.detected_at ? new Date(r.detected_at).getTime() : NaN;
-        if (Number.isNaN(t) || now - t > oneDay) continue;
-        const fp = r._fingerprint || r.fingerprint;
-        const ex = recent.get(fp);
-        if (!ex || t > new Date(ex.detected_at).getTime()) recent.set(fp, r);
-      } catch { continue }
-    }
-    const alerts = Array.from(recent.values()).sort((a,b) => new Date(b.detected_at) - new Date(a.detected_at));
+    const absoluteCwd = path.resolve(cwd);
+    const { sweepProjects } = await import('../health/sweep.mjs');
+    const alerts = sweepProjects(absoluteCwd, discoverProjects(absoluteCwd));
     return { uri: 'workflow://alerts', mimeType: 'application/json', text: JSON.stringify(alerts, null, 2) };
   } catch (error) { throw new Error(`Failed to get alerts: ${error.message}`); }
 }

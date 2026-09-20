@@ -373,10 +373,10 @@ async function main() {
           'workflow-alerts',
           'workflow://alerts',
           {
-            description: 'Alerts published in the last 24 hours, latest per fingerprint (not re-checked on read)',
+            description: 'Health detectors run on request: what is wrong right now',
             mimeType: 'application/json'
           },
-          async () => wrapResource(await resources.get_workflow_alerts(stateDir))
+          async () => wrapResource(await resources.get_workflow_alerts(cwd))
         );
       } catch (err) {
         console.error('Failed to register workflow://alerts resource:', err.message);

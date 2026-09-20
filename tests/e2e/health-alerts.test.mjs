@@ -166,9 +166,18 @@ describe('E2E: алерты здоровья доходят до клиента'
     expect(crashed.project).toBe('demo');
   }, 30000);
 
-  it('история алертов записана в каталог состояния', () => {
-    expect(fs.existsSync(path.join(stateDir, 'alerts-history.jsonl'))).toBe(true);
-  });
+  it('история алертов записана в каталог состояния', async () => {
+    // Ресурс `workflow://alerts` отвечает обходом детекторов и появляется
+    // раньше первой публикации, поэтому историю ждём отдельно: её пишет тик
+    // службы здоровья (здесь он раз в секунду).
+    const historyPath = path.join(stateDir, 'alerts-history.jsonl');
+    const started = Date.now();
+    while (Date.now() - started < 15000 && !fs.existsSync(historyPath)) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
+    expect(fs.existsSync(historyPath)).toBe(true);
+  }, 30000);
 
   it('клиент получил notifications/resources/updated', async () => {
     const got = await waitUntil(() => notifications.some(

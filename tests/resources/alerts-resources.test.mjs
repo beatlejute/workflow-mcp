@@ -61,210 +61,142 @@ describe('Alerts MCP Resources', () => {
   });
 
   describe('get_workflow_alerts()', () => {
-    let stateDir;
+    // Ресурс отвечает на вопрос «что не так сейчас»: прогоняет детекторы по
+    // проектам рабочей области. Прежде он читал историю публикаций и выдавал
+    // её за текущее состояние — разрешившееся условие висело в списке сутки.
+    let workspace;
+    let prevMcpCwd;
 
     beforeEach(() => {
-      stateDir = createTestStateDir();
+      workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'alerts-live-'));
+      prevMcpCwd = process.env.MCP_CWD;
+      process.env.MCP_CWD = workspace;
     });
 
     afterEach(() => {
-      cleanupTestStateDir(stateDir);
+      if (prevMcpCwd === undefined) delete process.env.MCP_CWD;
+      else process.env.MCP_CWD = prevMcpCwd;
+      fs.rmSync(workspace, { recursive: true, force: true });
     });
 
-    it('should return empty array when no alerts-history.jsonl exists', async () => {
-      const result = await resources.get_workflow_alerts(stateDir);
+    /** Проект без единого условия для детекторов. */
+    function makeProject(name = 'proj') {
+      const root = path.join(workspace, name);
+      fs.mkdirSync(path.join(root, '.workflow', 'logs'), { recursive: true });
+      return root;
+    }
 
-      expect(result.uri).toBe('workflow://alerts');
-      expect(result.mimeType).toBe('application/json');
-      expect(() => JSON.parse(result.text)).not.toThrow();
+    /** Условие для detectCrashed: lock с мёртвым pid и свежий лог прогона. */
+    function makeCrashedRun(root, { pid = 999999, runId = 'pipeline_2026-09-20_10-00-00' } = {}) {
+      const logsDir = path.join(root, '.workflow', 'logs');
+      const now = new Date().toISOString();
+      fs.writeFileSync(
+        path.join(logsDir, '.pipeline.lock'),
+        JSON.stringify({ pid, timestamp: now, started_at: now, started_by: 'mcp', run_id: runId }, null, 2)
+      );
+      fs.writeFileSync(
+        path.join(logsDir, runId + '.log'),
+        [
+          '[2026-09-20 10:00:00] [INFO] [PipelineRunner] Step 1',
+          '[2026-09-20 10:00:00] [INFO] START stage="execute-task" agent="claude"'
+        ].join('\n')
+      );
+      return path.join(logsDir, '.pipeline.lock');
+    }
 
-      const alerts = JSON.parse(result.text);
+    async function readAlerts() {
+      const result = await resources.get_workflow_alerts();
+      return JSON.parse(result.text);
+    }
+
+    it('пустая рабочая область — пустой список', async () => {
+      makeProject();
+
+      expect(await readAlerts()).toEqual([]);
+    });
+
+    it('сработавший детектор виден сразу', async () => {
+      const root = makeProject();
+      makeCrashedRun(root);
+
+      const alerts = await readAlerts();
+
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0].type).toBe('crashed');
+      expect(alerts[0].project).toBe('proj');
+      expect(alerts[0].severity).toBe('critical');
+      expect(alerts[0].detected_at).toBeTruthy();
+    });
+
+    it('исчезнувшее условие из списка уходит', async () => {
+      // Главное отличие от прежнего поведения: тогда запись держалась сутки.
+      const root = makeProject();
+      const lockPath = makeCrashedRun(root);
+      expect(await readAlerts()).toHaveLength(1);
+
+      fs.rmSync(lockPath);
+
+      expect(await readAlerts()).toEqual([]);
+    });
+
+    it('история публикаций на ответ не влияет', async () => {
+      // Файл истории лежит рядом и полон записей — ресурс на него не смотрит.
+      const root = makeProject();
+      const stateDir = createTestStateDir();
+      try {
+        createAlertsHistoryFile(stateDir, [
+          {
+            type: 'stuck',
+            project: 'proj',
+            severity: 'critical',
+            detected_at: new Date().toISOString(),
+            fingerprint: 'stuck:proj:execute-task:run-1',
+            _fingerprint: 'deadbeef',
+            _published_at: new Date().toISOString()
+          }
+        ]);
+
+        expect(await readAlerts()).toEqual([]);
+
+        makeCrashedRun(root);
+        expect((await readAlerts()).map((alert) => alert.type)).toEqual(['crashed']);
+      } finally {
+        cleanupTestStateDir(stateDir);
+      }
+    });
+
+    it('алерты по нескольким проектам отсортированы по detected_at, свежие первыми', async () => {
+      const first = makeProject('proj-a');
+      const second = makeProject('proj-b');
+      makeCrashedRun(first, { runId: 'pipeline_2026-09-20_10-00-00' });
+      makeCrashedRun(second, { runId: 'pipeline_2026-09-20_11-00-00' });
+
+      const alerts = await readAlerts();
+
+      expect(alerts).toHaveLength(2);
+      const times = alerts.map((alert) => new Date(alert.detected_at).getTime());
+      expect(times[0]).toBeGreaterThanOrEqual(times[1]);
+    });
+
+    it('поломка одного детектора не отменяет остальные', async () => {
+      // Битый lock ломает чтение прогона, но остальные детекторы по проекту
+      // отрабатывают: ответ остаётся валидным JSON.
+      const root = makeProject();
+      fs.writeFileSync(path.join(root, '.workflow', 'logs', '.pipeline.lock'), '{ это не json');
+
+      const alerts = await readAlerts();
+
       expect(Array.isArray(alerts)).toBe(true);
-      expect(alerts.length).toBe(0);
     });
 
-    it('should return empty array when alerts-history.jsonl is empty', async () => {
-      fs.writeFileSync(path.join(stateDir.dir, 'alerts-history.jsonl'), '');
+    it('каталог без .workflow в обход не попадает', async () => {
+      fs.mkdirSync(path.join(workspace, 'not-a-project'), { recursive: true });
+      const root = makeProject();
+      makeCrashedRun(root);
 
-      const result = await resources.get_workflow_alerts(stateDir);
-      const alerts = JSON.parse(result.text);
+      const alerts = await readAlerts();
 
-      expect(Array.isArray(alerts)).toBe(true);
-      expect(alerts.length).toBe(0);
-    });
-
-    it('should parse single active alert with type, project, severity fields', async () => {
-      const testAlerts = [
-        {
-          type: 'stuck',
-          project: 'workflow-ai',
-          severity: 'high',
-          detected_at: new Date(Date.now() - 1000 * 60 * 10).toISOString(), // 10 min ago
-          fingerprint: 'fp-001',
-          message: 'Process stuck in ready stage'
-        }
-      ];
-
-      createAlertsHistoryFile(stateDir, testAlerts);
-
-      const result = await resources.get_workflow_alerts(stateDir);
-      const alerts = JSON.parse(result.text);
-
-      expect(alerts.length).toBe(1);
-      expect(alerts[0].type).toBe('stuck');
-      expect(alerts[0].project).toBe('workflow-ai');
-      expect(alerts[0].severity).toBe('high');
-      expect(alerts[0].fingerprint).toBe('fp-001');
-    });
-
-    it('should return multiple active alerts sorted by detected_at DESC', async () => {
-      const now = Date.now();
-      const testAlerts = [
-        {
-          type: 'crashed',
-          project: 'proj1',
-          severity: 'critical',
-          detected_at: new Date(now - 1000 * 60 * 15).toISOString(), // 15 min ago
-          fingerprint: 'fp-001',
-          message: 'Process crashed'
-        },
-        {
-          type: 'stuck',
-          project: 'proj2',
-          severity: 'high',
-          detected_at: new Date(now - 1000 * 60 * 5).toISOString(), // 5 min ago
-          fingerprint: 'fp-002',
-          message: 'Process stuck'
-        },
-        {
-          type: 'error',
-          project: 'proj3',
-          severity: 'medium',
-          detected_at: new Date(now - 1000 * 60 * 20).toISOString(), // 20 min ago
-          fingerprint: 'fp-003',
-          message: 'Pipeline error'
-        }
-      ];
-
-      createAlertsHistoryFile(stateDir, testAlerts);
-
-      const result = await resources.get_workflow_alerts(stateDir);
-      const alerts = JSON.parse(result.text);
-
-      expect(alerts.length).toBe(3);
-      // Should be sorted by detected_at DESC (most recent first)
-      expect(alerts[0].fingerprint).toBe('fp-002'); // 5 min ago (most recent)
-      expect(alerts[1].fingerprint).toBe('fp-001'); // 15 min ago
-      expect(alerts[2].fingerprint).toBe('fp-003'); // 20 min ago (oldest)
-    });
-
-    it('should filter out alerts older than 24 hours', async () => {
-      const now = Date.now();
-      const testAlerts = [
-        {
-          type: 'stuck',
-          project: 'proj1',
-          severity: 'high',
-          detected_at: new Date(now - 1000 * 60 * 60 * 12).toISOString(), // 12 hours ago
-          fingerprint: 'fp-001'
-        },
-        {
-          type: 'error',
-          project: 'proj2',
-          severity: 'medium',
-          detected_at: new Date(now - 1000 * 60 * 60 * 30).toISOString(), // 30 hours ago
-          fingerprint: 'fp-002'
-        }
-      ];
-
-      createAlertsHistoryFile(stateDir, testAlerts);
-
-      const result = await resources.get_workflow_alerts(stateDir);
-      const alerts = JSON.parse(result.text);
-
-      // Only the 12-hour-old alert should be included
-      expect(alerts.length).toBe(1);
-      expect(alerts[0].fingerprint).toBe('fp-001');
-    });
-
-    it('should keep most recent alert per fingerprint', async () => {
-      const now = Date.now();
-      const testAlerts = [
-        {
-          type: 'stuck',
-          project: 'proj1',
-          severity: 'high',
-          detected_at: new Date(now - 1000 * 60 * 10).toISOString(),
-          fingerprint: 'fp-001',
-          message: 'First occurrence'
-        },
-        {
-          type: 'stuck',
-          project: 'proj1',
-          severity: 'high',
-          detected_at: new Date(now - 1000 * 60 * 5).toISOString(),
-          fingerprint: 'fp-001',
-          message: 'Updated occurrence'
-        }
-      ];
-
-      createAlertsHistoryFile(stateDir, testAlerts);
-
-      const result = await resources.get_workflow_alerts(stateDir);
-      const alerts = JSON.parse(result.text);
-
-      // Should have only 1 alert (the most recent one)
-      expect(alerts.length).toBe(1);
-      expect(alerts[0].message).toBe('Updated occurrence');
-    });
-
-    it('should handle read-only mode by returning empty array', async () => {
-      const readOnlyStateDir = { dir: stateDir.dir, mode: 'read-only' };
-
-      // Even if file exists, read-only mode should return empty
-      createAlertsHistoryFile(stateDir, [
-        {
-          type: 'stuck',
-          project: 'proj1',
-          severity: 'high',
-          detected_at: new Date().toISOString(),
-          fingerprint: 'fp-001'
-        }
-      ]);
-
-      const result = await resources.get_workflow_alerts(readOnlyStateDir);
-      const alerts = JSON.parse(result.text);
-
-      expect(alerts.length).toBe(0);
-    });
-
-    it('should handle malformed JSON lines by skipping them', async () => {
-      const historyPath = path.join(stateDir.dir, 'alerts-history.jsonl');
-      const content = `${JSON.stringify({
-        type: 'stuck',
-        project: 'proj1',
-        severity: 'high',
-        detected_at: new Date().toISOString(),
-        fingerprint: 'fp-001'
-      })}
-invalid json line
-${JSON.stringify({
-        type: 'error',
-        project: 'proj2',
-        severity: 'medium',
-        detected_at: new Date().toISOString(),
-        fingerprint: 'fp-002'
-      })}`;
-
-      fs.writeFileSync(historyPath, content);
-
-      const result = await resources.get_workflow_alerts(stateDir);
-      const alerts = JSON.parse(result.text);
-
-      // Should have 2 valid alerts, skipped the invalid line
-      expect(alerts.length).toBe(2);
-      expect(alerts.some(a => a.fingerprint === 'fp-001')).toBe(true);
-      expect(alerts.some(a => a.fingerprint === 'fp-002')).toBe(true);
+      expect(alerts.map((alert) => alert.project)).toEqual(['proj']);
     });
   });
 
@@ -492,21 +424,19 @@ ${JSON.stringify({
       cleanupTestStateDir(stateDir);
     });
 
-    it('should return empty array if stateDir is null', async () => {
-      const result = await resources.get_workflow_alerts(null);
-      const alerts = JSON.parse(result.text);
-      expect(Array.isArray(alerts)).toBe(true);
-      expect(alerts.length).toBe(0);
+    it('несуществующий корень рабочей области даёт пустой список', async () => {
+      const prev = process.env.MCP_CWD;
+      process.env.MCP_CWD = path.join(os.tmpdir(), 'no-such-workspace-12345');
+      try {
+        const result = await resources.get_workflow_alerts();
+        expect(JSON.parse(result.text)).toEqual([]);
+      } finally {
+        if (prev === undefined) delete process.env.MCP_CWD;
+        else process.env.MCP_CWD = prev;
+      }
     });
 
-    it('should return empty array if stateDir.dir is invalid', async () => {
-      const result = await resources.get_workflow_alerts({ dir: '/nonexistent/path/12345', mode: 'read-write' });
-      const alerts = JSON.parse(result.text);
-      expect(Array.isArray(alerts)).toBe(true);
-      expect(alerts.length).toBe(0);
-    });
-
-    it('should handle alerts with missing detected_at gracefully', async () => {
+    it('история: запись без detected_at пропускается', async () => {
       const historyPath = path.join(stateDir.dir, 'alerts-history.jsonl');
       const content = `${JSON.stringify({
         type: 'stuck',
@@ -524,15 +454,14 @@ ${JSON.stringify({
 
       fs.writeFileSync(historyPath, content);
 
-      const result = await resources.get_workflow_alerts(stateDir);
-      const alerts = JSON.parse(result.text);
+      const result = await resources.get_workflow_alerts_history(stateDir);
+      const history = JSON.parse(result.text);
 
-      // Only valid alert with detected_at should be included
-      expect(alerts.length).toBe(1);
-      expect(alerts[0].fingerprint).toBe('fp-002');
+      // Обе записи попадают в историю: она отдаёт то, что публиковалось.
+      expect(history.map((entry) => entry.fingerprint)).toContain('fp-002');
     });
 
-    it('should handle alerts with _fingerprint or fingerprint fields', async () => {
+    it('история: отпечаток читается и из _fingerprint, и из fingerprint', async () => {
       const now = Date.now();
       const testAlerts = [
         {
@@ -553,10 +482,10 @@ ${JSON.stringify({
 
       createAlertsHistoryFile(stateDir, testAlerts);
 
-      const result = await resources.get_workflow_alerts(stateDir);
-      const alerts = JSON.parse(result.text);
+      const result = await resources.get_workflow_alerts_history(stateDir);
+      const history = JSON.parse(result.text);
 
-      expect(alerts.length).toBe(2);
+      expect(history.length).toBe(2);
     });
 
     it('should return valid JSON in all cases', async () => {
@@ -572,7 +501,7 @@ ${JSON.stringify({
 
       createAlertsHistoryFile(stateDir, testAlerts);
 
-      const alertsResult = await resources.get_workflow_alerts(stateDir);
+      const alertsResult = await resources.get_workflow_alerts();
       const historyResult = await resources.get_workflow_alerts_history(stateDir);
 
       expect(() => JSON.parse(alertsResult.text)).not.toThrow();
@@ -592,7 +521,7 @@ ${JSON.stringify({
     });
 
     it('get_workflow_alerts should return correct URI', async () => {
-      const result = await resources.get_workflow_alerts(stateDir);
+      const result = await resources.get_workflow_alerts();
       expect(result.uri).toBe('workflow://alerts');
     });
 
@@ -608,7 +537,7 @@ ${JSON.stringify({
     });
 
     it('both resources should have application/json mimeType', async () => {
-      const alertsResult = await resources.get_workflow_alerts(stateDir);
+      const alertsResult = await resources.get_workflow_alerts();
       const historyResult = await resources.get_workflow_alerts_history(stateDir);
 
       expect(alertsResult.mimeType).toBe('application/json');
