@@ -3,6 +3,7 @@ import path from 'path';
 import { discoverProjects } from '../discovery.mjs';
 import { acceptedInstanceIds } from '../lib/project-root.mjs';
 import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
+import { pidCouldBeFromRun } from '../process/process-start.mjs';
 import { readAbortState } from '../process/abort-state.mjs';
 import { killOutcomeForRun } from '../process/kill-outcome.mjs';
 import { parsePipelineLog } from '../parsers/pipeline-log.mjs';
@@ -160,9 +161,10 @@ export function get_workflow_pipeline_state(absoluteCwd) {
     if (!lock) continue;
     const pid = lock.pid;
 
-    // Владение привязано к запуску, а не к номеру процесса. Битый маркер
-    // внутри читается безопасно: раньше один такой файл ронял снимок целиком.
-    const markerValid = validateRunOwnership(projectRoot, pid, lock, acceptedInstanceIds(absoluteCwd));
+    // Владение привязано к запуску, а не к номеру процесса, и читается из того
+    // же lock'а: `started_by` говорит, кто запускал, `started_by_id` — какой
+    // именно экземпляр.
+    const ownership = validateRunOwnership(lock, pid, acceptedInstanceIds(absoluteCwd), { verifyProcessStart: true });
 
     // Запись об исходе делает только MCP — `stop_pipeline` и эскалация
     // `abort_pipeline`, — и она привязана к pid и `run_id` прогона. Значит это
@@ -170,20 +172,26 @@ export function get_workflow_pipeline_state(absoluteCwd) {
     // убийство: маркер после kill'а снимаем мы сами.
     const killOutcome = killOutcomeForRun(projectRoot, lock);
 
-    const pidAlive = isProcessAlive(pid);
+    // Номер занят — но тем ли процессом. Раннер, убитый без снятия lock'а,
+    // оставляет номер, который система переиспользует, и список показывал
+    // чужой процесс как идущий свой пайплайн. Опрос ОС стоит сотни
+    // миллисекунд, поэтому ответ помнится минуту (`processStartedAtCached`), и
+    // сверка владения ниже платит за тот же pid повторно уже ноль.
+    const pidBusy = isProcessAlive(pid);
+    const pidReused = pidBusy && !pidCouldBeFromRun(pid, lock.started_at);
+    const pidAlive = pidBusy && !pidReused;
     const paused = getPausedState(projectRoot, pid);
     const aborting = isAbortingRun(projectRoot, lock);
     const killed = !pidAlive && killOutcome !== null;
 
-    // Чужой — любой, чей маркер не доказывает наше владение: нет маркера
-    // (запущен из CLI), чужой идентификатор или чужой pid. Проверка только на
-    // PID_MISMATCH давала ровно обратный ответ: свои пайплайны считались чужими,
-    // а запущенные из CLI (маркера нет вовсе) — своими.
-    // Исключение — прогон, который мы сами же убили: маркера нет ровно потому,
-    // что мы его убрали. Признак снимается только вместе с `killed`, то есть
-    // при мёртвом pid: у живого процесса запись о прошлом убийстве ничего не
-    // доказывает — номер мог переиспользоваться.
-    const isForeign = !markerValid.valid && !killed;
+    // Чужой — любой, чьё владение не доказано lock'ом: запущен из CLI или из
+    // расширения, помечен чужим экземпляром или несёт чужой pid.
+    // Исключение — прогон, который мы сами же убили: запись об исходе делает
+    // только MCP, и она доказывает владение не хуже метки в lock'е. Признак
+    // снимается лишь вместе с `killed`, то есть при мёртвом pid: у живого
+    // процесса запись о прошлом убийстве ничего не доказывает — номер мог
+    // переиспользоваться.
+    const isForeign = !ownership.valid && !killed;
     const awaiting = getAwaitingApproval(projectRoot);
     const { runId, currentStage, stepNumber } = getRunInfo(projectRoot);
 
@@ -203,29 +211,27 @@ export function get_workflow_pipeline_state(absoluteCwd) {
       project: project.name,
       pid,
       state,
-      marker_valid: markerValid.valid,
+      owned: ownership.valid,
       run_id: runId,
       current_stage: currentStage,
       step_number: stepNumber,
       ...(isForeign && { foreign: true }),
       ...(staleLock && { stale_lock: true }),
-      ...(markerValid.reason && { marker_reason: markerValid.reason }),
+      // Номер из lock'а занят посторонним процессом: сигнал по нему уйдёт не
+      // раннеру. Признак отдельный от `stale_lock` — тот говорит лишь «процесса
+      // нет», а этот «процесс есть, но не тот».
+      ...(pidReused && { pid_reused: true }),
+      ...(ownership.reason && { ownership_reason: ownership.reason }),
       // Кто именно добивал: `stop_pipeline` или эскалация `abort_pipeline`.
-      // Заодно это объяснение, почему у убитого прогона нет маркера.
       ...(killed && killOutcome.by ? { killed_by: killOutcome.by } : {}),
       ...(awaiting && { awaiting_approval: awaiting })
     };
 
-    // Timestamps
-    if (lock && lock.timestamp) {
-      entry.started_at = lock.timestamp;
-    } else {
-      try {
-        const startedMarker = path.join(projectRoot, '.workflow', 'logs', '.mcp-started-by');
-        if (fs.existsSync(startedMarker)) {
-          entry.started_at = new Date(fs.statSync(startedMarker).mtime).toISOString();
-        }
-      } catch { }
+    // Время старта берётся из lock'а. Запасной путь через mtime файла
+    // `.mcp-started-by` убран вместе с самим файлом: у lock'а есть и
+    // `started_at`, и `timestamp`, а второго источника времени больше нет.
+    if (lock.started_at) {
+      entry.started_at = lock.started_at;
     }
     try {
       const logsDir = path.join(projectRoot, '.workflow', 'logs');

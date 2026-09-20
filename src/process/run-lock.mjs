@@ -6,21 +6,28 @@
  * «пайплайн идёт», общий для всех способов старта, и единственное место, где
  * есть pid живого раннера: `.runner-pids` не пишет никто.
  *
- * Владение проверяется здесь же, потому что одного маркера мало. Маркер
- * `.mcp-started-by` говорит «этот запуск сделали мы», но сам по себе не
- * доказывает, что процесс с записанным pid — всё ещё тот самый раннер.
+ * Владение читается отсюда же. Прежде рядом лежал второй файл —
+ * `.workflow/logs/.mcp-started-by`, — и каждая проверка сверяла два файла про
+ * один запуск. Весь класс дефектов, на который ушло восемь кругов ревью
+ * (`PID_MISMATCH` на собственном пайплайне, инвертированный признак `foreign`,
+ * расхождение идентификатора между писателем и читателем, `RUN_MISMATCH` на
+ * остатках прошлого запуска), порождён именно этой парой. Теперь сервер
+ * представляется раннеру через `WORKFLOW_STARTED_BY_ID`, раннер кладёт метку в
+ * lock полем `started_by_id`, и файл владения остался один.
+ *
+ * Требует workflow-ai ≥ 1.7.0: раннер постарше поля не пишет, и его запуск
+ * виден как `INSTANCE_UNKNOWN` — «запущен MCP, но каким, неизвестно».
  */
 
 import fs from 'fs';
 import path from 'path';
-import { validateMarker, readMarker } from './marker.mjs';
 import { pidCouldBeFromRun } from './process-start.mjs';
 
 /**
  * Прочитать lock-файл пайплайна.
  *
  * @param {string} projectRoot
- * @returns {{pid: number, timestamp: string|null, started_at: string|null, started_by: string|null, run_id: string|null}|null}
+ * @returns {{pid: number, timestamp: string|null, started_at: string|null, started_by: string|null, started_by_id: string|null, run_id: string|null}|null}
  */
 export function readPipelineLock(projectRoot) {
   try {
@@ -36,17 +43,9 @@ export function readPipelineLock(projectRoot) {
       timestamp: str(data.timestamp),
       started_at: str(data.started_at) ?? str(data.timestamp),
       started_by: str(data.started_by),
+      started_by_id: str(data.started_by_id),
       run_id: str(data.run_id)
     };
-  } catch {
-    return null;
-  }
-}
-
-/** Маркер, не роняющий вызывающего на битом JSON. */
-export function safeReadMarker(projectRoot) {
-  try {
-    return readMarker(projectRoot);
   } catch {
     return null;
   }
@@ -55,60 +54,60 @@ export function safeReadMarker(projectRoot) {
 /**
  * Принадлежит ли идущий пайплайн нам.
  *
- * Поверх проверки маркера (pid + `mcp_instance_id`) сверяются три вещи, каждая
- * из которых закрывает свой способ ошибиться:
+ * Сверяются четыре вещи, каждая закрывает свой способ ошибиться:
  *
- * - `started_by` из lock'а: запуск из CLI не наш, даже если рядом лежит наш
- *   маркер от прошлого раза;
- * - `run_id`: маркер и lock должны описывать один и тот же запуск, иначе это
- *   остаток от предыдущего;
+ * - lock есть: без него запуска нет вовсе, а значит нет и владения;
+ * - `pid`: сигнал уходит тому номеру, который записал раннер, и никакому другому;
+ * - `started_by`: запуск из CLI или из расширения не наш;
+ * - `started_by_id`: наша рабочая область, а не соседняя, запущенная другим
+ *   сервером на той же машине;
  * - время старта процесса: раннер, убитый без снятия lock'а, оставляет номер,
  *   который система переиспользует. Без этой проверки `stop_pipeline` слал бы
  *   `taskkill /F /T` постороннему дереву процессов.
  *
- * @param {string} projectRoot
+ * @param {{pid: number, started_at: string|null, started_by: string|null, started_by_id: string|null, run_id: string|null}|null} lock
  * @param {number} pid pid, которому собираемся слать сигнал
- * @param {{pid: number, started_at: string|null, started_by: string|null, run_id: string|null}|null} lock
- * @param {string|string[]} instanceId ожидаемый `mcp_instance_id` либо список принимаемых
- *   (`acceptedInstanceIds`: текущий плюс прежнего формата)
+ * @param {string|string[]} instanceId ожидаемый идентификатор экземпляра либо список
+ *   принимаемых (`acceptedInstanceIds`: текущий плюс прежнего формата)
  * @param {Object} [options]
  * @param {boolean} [options.verifyProcessStart] спрашивать у ОС время старта процесса.
- *   Это внешний вызов ценой в сотни миллисекунд, поэтому он включается только
- *   там, где собираемся послать сигнал. Для чтения состояния хватает дешёвых
- *   проверок: список пайплайнов запрашивают часто и по всем проектам сразу.
+ *   Внешний вызов ценой в сотни миллисекунд; ответ кешируется на минуту
+ *   (`pidCouldBeFromRun`), поэтому частые чтения состояния платят за него один раз.
  * @returns {{valid: boolean, reason?: string, override?: boolean}}
  */
-export function validateRunOwnership(projectRoot, pid, lock, instanceId, options = {}) {
-  const base = validateMarker(projectRoot, pid, instanceId);
-  if (!base.valid || base.override) {
-    return base;
+export function validateRunOwnership(lock, pid, instanceId, options = {}) {
+  // Аварийный ключ: снимает проверку целиком. Остался с тех пор, когда файлов
+  // владения было два и разойтись они могли молча.
+  if (process.env.WORKFLOW_MCP_FORCE_FOREIGN === '1') {
+    return { valid: true, override: true };
   }
 
-  // Без lock'а нет ни `run_id`, ни `started_by`, но время запуска есть в самом
-  // маркере — его пишет MCP в момент spawn'а. Без этой ветки вся защита
-  // сводилась бы к равенству pid всякий раз, когда lock уже снят.
   if (!lock) {
-    const markerWithoutLock = safeReadMarker(projectRoot);
-    if (options.verifyProcessStart
-        && markerWithoutLock
-        && !pidCouldBeFromRun(pid, markerWithoutLock.started_at)) {
-      return { valid: false, reason: 'PID_REUSED' };
-    }
-    return base;
+    return { valid: false, reason: 'NO_LOCK' };
   }
 
-  if (lock.started_by && lock.started_by !== 'mcp') {
+  if (lock.pid !== pid) {
+    return { valid: false, reason: 'PID_MISMATCH' };
+  }
+
+  if (lock.started_by !== 'mcp') {
     return { valid: false, reason: 'STARTED_BY_MISMATCH' };
   }
 
-  const marker = safeReadMarker(projectRoot);
-  if (marker && marker.run_id && lock.run_id && marker.run_id !== lock.run_id) {
-    return { valid: false, reason: 'RUN_MISMATCH' };
+  // Раннер до 1.7.0 метку не пишет. Отличать этот случай от чужой метки важно:
+  // первое чинится обновлением workflow-ai, второе — не чинится вовсе.
+  if (!lock.started_by_id) {
+    return { valid: false, reason: 'INSTANCE_UNKNOWN' };
+  }
+
+  const accepted = Array.isArray(instanceId) ? instanceId : [instanceId];
+  if (!accepted.includes(lock.started_by_id)) {
+    return { valid: false, reason: 'INSTANCE_MISMATCH' };
   }
 
   if (options.verifyProcessStart && !pidCouldBeFromRun(pid, lock.started_at)) {
     return { valid: false, reason: 'PID_REUSED' };
   }
 
-  return base;
+  return { valid: true };
 }

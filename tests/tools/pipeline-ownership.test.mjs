@@ -1,17 +1,18 @@
 /**
  * Владение пайплайном привязано к запуску, а не к процессу сервера.
  *
- * Было две разные поломки. Сначала `start_pipeline` писал в маркер
- * `.mcp-started-by` pid порождённого раннера, а `pause`/`resume`/`abort`/`stop`
- * сверяли это поле с `process.pid` самого сервера — совпасть нельзя никогда,
- * и управление своим же пайплайном всегда отвечало `PID_MISMATCH`. Затем pid
- * для сигналов брался только из `.runner-pids`, которого не писал никто, — и
- * отказ просто переехал в `NO_RUNNER_PIDS`.
+ * Проверка идёт на настоящем раннере: пайплайн действительно запускается,
+ * паркуется на manual-gate и управляется через инструменты.
  *
- * Сейчас в маркере лежит pid раннера, а сверяется он с живым pid из
- * `.pipeline.lock`. Из этого следуют три свойства, каждое проверено ниже:
- * свой пайплайн управляется; он остаётся своим после рестарта сервера;
- * протухший маркер не даёт власти над чужим пайплайном.
+ * Файл владения один — `.pipeline.lock`, который пишет раннер. Сервер
+ * представляется ему через `WORKFLOW_STARTED_BY_ID`, раннер кладёт метку полем
+ * `started_by_id`. Прежде рядом лежал второй файл (`.mcp-started-by`), и
+ * проверка сверяла два файла про один запуск; отсюда росли `PID_MISMATCH` на
+ * собственном пайплайне и `RUN_MISMATCH` на остатках прошлого прогона.
+ *
+ * Отсюда свойства, проверенные ниже: свой пайплайн управляется; он остаётся
+ * своим после рестарта сервера; чужая или отсутствующая метка власти не даёт;
+ * переиспользованный системой номер не выдаётся за раннера.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -29,7 +30,6 @@ import {
   list_running_pipelines,
   abortPipelineImpl
 } from '../../src/tools/pipeline.mjs';
-import { readMarker } from '../../src/process/marker.mjs';
 import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.dirname(path.dirname(__dirname));
@@ -54,7 +54,7 @@ const PIPELINE_YAML = `pipeline:
 
 /** Отказ из-за владения, а не из-за отсутствия средств управления процессом. */
 const OWNERSHIP_FAILURES = [
-  'MARKER_VALIDATION_FAILED',
+  'OWNERSHIP_VALIDATION_FAILED',
   'FOREIGN_PIPELINE',
   'STALE_PIPELINE_LOCK',
   'PIPELINE_NOT_RUNNING'
@@ -114,9 +114,16 @@ describe('владение пайплайном, запущенным через
     const resumed = await resume_pipeline.execute({ project: 'projA' });
     expect(OWNERSHIP_FAILURES, `resume: ${JSON.stringify(resumed)}`).not.toContain(resumed.code);
 
-    // В маркере — pid раннера; он же лежит в lock'е, по нему и сверяются.
-    const marker = readMarker(project);
-    expect(marker.pid).toBe(started.pid);
+    // Метку владения кладёт сам раннер — в тот же lock, где лежит его pid.
+    const lock = JSON.parse(fs.readFileSync(
+      path.join(project, '.workflow', 'logs', '.pipeline.lock'),
+      'utf8'
+    ));
+    expect(lock.pid).toBe(started.pid);
+    expect(lock.started_by).toBe('mcp');
+    expect(lock.started_by_id).toBe(mcpInstanceId());
+    // Своего файла владения сервер не пишет.
+    expect(fs.existsSync(path.join(project, '.workflow', 'logs', '.mcp-started-by'))).toBe(false);
   });
 
   it('пайплайн остаётся своим после рестарта сервера', { timeout: 60000 }, async () => {
@@ -142,10 +149,10 @@ describe('владение пайплайном, запущенным через
   });
 
   /**
-   * Проект с готовой парой lock + маркер. По умолчанию они согласованы и
-   * описывают наш запуск; каждый тест портит ровно одну составляющую.
+   * Проект с готовым lock'ом. По умолчанию lock описывает наш запуск; каждый
+   * тест портит ровно одно поле.
    */
-  function makeRun(name, { lock = {}, marker = {} } = {}) {
+  function makeRun(name, { lock = {} } = {}) {
     const dir = makeProject(root, name);
     const logsDir = path.join(dir, '.workflow', 'logs');
     // Заведомо мёртвый pid: если защита сломается, убивать нечего.
@@ -158,33 +165,34 @@ describe('владение пайплайном, запущенным через
       timestamp: now,
       started_at: now,
       started_by: 'mcp',
+      started_by_id: mcpInstanceId(),
       run_id: runId,
       ...lock
-    }));
-    fs.writeFileSync(path.join(logsDir, '.mcp-started-by'), JSON.stringify({
-      version: 1,
-      mcp_instance_id: mcpInstanceId(),
-      started_at: now,
-      pid,
-      run_id: runId,
-      ...marker
     }));
     return { dir, pid, runId };
   }
 
-  it('протухший маркер от прошлого запуска не даёт власти над текущим', async () => {
-    // Самый неприятный случай: pid совпадает, идентификатор совпадает, а запуск
-    // другой — маркер остался от предыдущего (`removeMarker` зовут только stop и
-    // abort). Проверка по одному pid здесь сказала бы «свой».
-    makeRun('projB', { marker: { run_id: 'pipeline_2025-12-31_23-59-59' } });
+  it('запуск другого экземпляра MCP остаётся чужим', async () => {
+    // Тот же способ запуска и та же машина, но другая рабочая область.
+    makeRun('projB', { lock: { started_by_id: 'workflow-mcp@deadbeefdead' } });
 
     const stopped = await stop_pipeline.execute({ project: 'projB' });
     expect(stopped.ok).toBe(false);
     expect(stopped.code).toBe('FOREIGN_PIPELINE');
-    expect(stopped.reason).toBe('RUN_MISMATCH');
+    expect(stopped.reason).toBe('INSTANCE_MISMATCH');
   });
 
-  it('запущенный из CLI не становится своим из-за рядом лежащего маркера', async () => {
+  it('запуск раннером до 1.7.0 без метки не становится своим', async () => {
+    // Отличается от чужой метки: владение неизвестно, а не отдано другому.
+    makeRun('projH', { lock: { started_by_id: null } });
+
+    const stopped = await stop_pipeline.execute({ project: 'projH' });
+    expect(stopped.ok).toBe(false);
+    expect(stopped.code).toBe('FOREIGN_PIPELINE');
+    expect(stopped.reason).toBe('INSTANCE_UNKNOWN');
+  });
+
+  it('запущенный из CLI своим не становится', async () => {
     makeRun('projD', { lock: { started_by: 'cli' } });
 
     const stopped = await stop_pipeline.execute({ project: 'projD' });
@@ -206,10 +214,7 @@ describe('владение пайплайном, запущенным через
       // lock датирован далёким прошлым: процесс с этим pid стартовал позже,
       // значит он не может быть тем раннером, который lock записал.
       const ancient = '2020-01-01T00:00:00.000Z';
-      makeRun('projE', {
-        lock: { pid: victim.pid, started_at: ancient, timestamp: ancient },
-        marker: { pid: victim.pid, started_at: ancient }
-      });
+      makeRun('projE', { lock: { pid: victim.pid, started_at: ancient, timestamp: ancient } });
 
       const stopped = await stop_pipeline.execute({ project: 'projE' });
       expect(stopped.ok).toBe(false);
@@ -245,7 +250,7 @@ describe('владение пайплайном, запущенным через
     // жёсткий сигнал уйдёт по pid, который система могла уже отдать другому.
     const victim = await spawnVictim();
     try {
-      const { dir } = makeRun('projF', { lock: { pid: victim.pid }, marker: { pid: victim.pid } });
+      const { dir } = makeRun('projF', { lock: { pid: victim.pid } });
       const lockPath = path.join(dir, '.workflow', 'logs', '.pipeline.lock');
 
       // Раннер «вышел» посреди grace-окна.
@@ -266,7 +271,7 @@ describe('владение пайплайном, запущенным через
   it('abort не эскалирует, если владение потеряно за grace-окно', { timeout: 30000 }, async () => {
     const victim = await spawnVictim();
     try {
-      const { dir } = makeRun('projG', { lock: { pid: victim.pid }, marker: { pid: victim.pid } });
+      const { dir } = makeRun('projG', { lock: { pid: victim.pid } });
       const lockPath = path.join(dir, '.workflow', 'logs', '.pipeline.lock');
 
       // На месте нашего запуска оказался другой — запущенный из CLI.
@@ -300,8 +305,7 @@ describe('владение пайплайном, запущенным через
     // `list-running-pipelines.test.mjs` — заглушки с комментарием «Would test».
     expect(started?.ok, 'первый тест не поднял пайплайн').toBe(true);
 
-    // Запущенный из CLI: lock есть, маркера нет вовсе. Именно этот случай
-    // старое выражение считало своим: причина отказа MISSING, а не PID_MISMATCH.
+    // Запущенный из CLI: в lock'е нет ни `started_by: 'mcp'`, ни метки.
     const cli = makeProject(root, 'projC');
     fs.writeFileSync(
       path.join(cli, '.workflow', 'logs', '.pipeline.lock'),
@@ -313,13 +317,14 @@ describe('владение пайплайном, запущенным через
 
     expect(byName.projA, `свой пайплайн не попал в список: ${JSON.stringify(pipelines)}`).toBeDefined();
     expect(byName.projA.foreign).toBeUndefined();
-    expect(byName.projA.marker_valid).toBe(true);
+    expect(byName.projA.owned).toBe(true);
 
-    // Протухший маркер от прошлого запуска (создан выше).
+    // Метка чужого экземпляра (создана выше).
     expect(byName.projB?.foreign).toBe(true);
+    expect(byName.projB?.ownership_reason).toBe('INSTANCE_MISMATCH');
     // Запущенный из CLI — тоже чужой.
     expect(byName.projC, 'пайплайн из CLI не попал в список').toBeDefined();
-    expect(byName.projC.marker_reason).toBe('MISSING');
+    expect(byName.projC.ownership_reason).toBe('STARTED_BY_MISMATCH');
     expect(byName.projC.foreign).toBe(true);
   });
 });

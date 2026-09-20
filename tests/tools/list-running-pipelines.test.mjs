@@ -59,18 +59,26 @@ function makeProject(name) {
   return root;
 }
 
+/**
+ * Lock раннера. По умолчанию — наш запуск: `started_by: 'mcp'` и метка нашей
+ * рабочей области. Владение с 3.0.0 читается только отсюда, второго файла нет.
+ */
 function writeLock(root, pid, extra = {}) {
   const now = new Date().toISOString();
   fs.writeFileSync(
     path.join(root, '.workflow', 'logs', '.pipeline.lock'),
-    JSON.stringify({ pid, timestamp: now, started_at: now, started_by: 'mcp', ...extra }, null, 2)
-  );
-}
-
-function writeMarker(root, marker) {
-  fs.writeFileSync(
-    path.join(root, '.workflow', 'logs', '.mcp-started-by'),
-    typeof marker === 'string' ? marker : JSON.stringify(marker, null, 2)
+    JSON.stringify(
+      {
+        pid,
+        timestamp: now,
+        started_at: now,
+        started_by: 'mcp',
+        started_by_id: mcpInstanceId(workspace),
+        ...extra
+      },
+      null,
+      2
+    )
   );
 }
 
@@ -300,7 +308,7 @@ describe('определение состояния', () => {
     // Исход от другого pid ничего не доказывает: прогон в lock'е — не наш.
     const victim = await spawnVictim();
     const root = makeProject('proj');
-    writeLock(root, victim.pid, { run_id: RUN_ID });
+    writeLock(root, victim.pid, { run_id: RUN_ID, started_by: 'cli', started_by_id: null });
     writeLog(root);
     writeKillOutcome(root, { pid: DEAD_PID, runId: RUN_ID, by: 'stop_pipeline' });
 
@@ -322,29 +330,22 @@ describe('определение состояния', () => {
     const entry = await snapshotOne();
     expect(entry.state).toBe('running');
     expect(entry.killed_by).toBeUndefined();
-    // И признак чужого остаётся: у живого процесса запись о прошлом убийстве
-    // владения не доказывает — номер мог переиспользоваться.
-    expect(entry.foreign).toBe(true);
+    // Владение доказывает метка в lock'е, а не запись об убийстве: прогон наш
+    // и остаётся нашим, пока жив.
+    expect(entry.foreign).toBeUndefined();
   });
 
-  it('маркер прежнего формата признаётся своим', async () => {
+  it('метка прежнего формата признаётся своей', async () => {
     // Идентификатор экземпляра до 2.0.0 считался с регистром пути. Без сверки
     // со старым ключом обновление посреди прогона делало его чужим, и
     // остановить прогон без `force` было нельзя.
     const victim = await spawnVictim();
     const root = makeProject('proj');
-    writeLock(root, victim.pid, { run_id: RUN_ID });
-    writeMarker(root, {
-      version: 1,
-      mcp_instance_id: legacyMcpInstanceId(workspace),
-      started_at: new Date().toISOString(),
-      pid: victim.pid,
-      run_id: RUN_ID
-    });
+    writeLock(root, victim.pid, { run_id: RUN_ID, started_by_id: legacyMcpInstanceId(workspace) });
     writeLog(root);
 
     const entry = await snapshotOne();
-    expect(entry.marker_valid).toBe(true);
+    expect(entry.owned).toBe(true);
     expect(entry.foreign).toBeUndefined();
   });
 
@@ -379,80 +380,81 @@ describe('определение состояния', () => {
 });
 
 describe('чужие пайплайны', () => {
-  it('без маркера запуск считается чужим', async () => {
+  it('запуск из CLI считается чужим', async () => {
     const victim = await spawnVictim();
     const root = makeProject('proj');
-    writeLock(root, victim.pid);
+    writeLock(root, victim.pid, { started_by: 'cli', started_by_id: null });
     writeLog(root);
 
     const entry = await snapshotOne();
 
     expect(entry.foreign).toBe(true);
-    expect(entry.marker_valid).toBe(false);
+    expect(entry.owned).toBe(false);
+    expect(entry.ownership_reason).toBe('STARTED_BY_MISMATCH');
   });
 
-  it('свой маркер снимает признак чужого', async () => {
+  it('своя метка в lock снимает признак чужого', async () => {
     const victim = await spawnVictim();
     const root = makeProject('proj');
     writeLock(root, victim.pid);
-    writeMarker(root, {
-      version: 1,
-      mcp_instance_id: mcpInstanceId(workspace),
-      started_at: new Date().toISOString(),
-      pid: victim.pid
-    });
     writeLog(root);
 
     const entry = await snapshotOne();
 
-    expect(entry.marker_valid).toBe(true);
+    expect(entry.owned).toBe(true);
     expect(entry.foreign).toBeUndefined();
   });
 
-  it('чужой идентификатор экземпляра делает пайплайн чужим', async () => {
+  it('чужая метка экземпляра делает пайплайн чужим', async () => {
     const victim = await spawnVictim();
     const root = makeProject('proj');
-    writeLock(root, victim.pid);
-    writeMarker(root, {
-      version: 1,
-      mcp_instance_id: 'workflow-mcp@deadbeefdead',
-      started_at: new Date().toISOString(),
-      pid: victim.pid
-    });
+    writeLock(root, victim.pid, { started_by_id: 'workflow-mcp@deadbeefdead' });
     writeLog(root);
 
     const entry = await snapshotOne();
 
     expect(entry.foreign).toBe(true);
-    expect(entry.marker_reason).toBeTruthy();
+    expect(entry.ownership_reason).toBe('INSTANCE_MISMATCH');
   });
 
-  it('маркер с чужим pid делает пайплайн чужим', async () => {
+  it('раннер до 1.7.0 не пишет метку — запуск виден как INSTANCE_UNKNOWN', async () => {
+    // Отличать это от чужой метки важно: тут чинится обновлением workflow-ai.
     const victim = await spawnVictim();
     const root = makeProject('proj');
-    writeLock(root, victim.pid);
-    writeMarker(root, {
-      version: 1,
-      mcp_instance_id: mcpInstanceId(workspace),
-      started_at: new Date().toISOString(),
-      pid: victim.pid + 1
-    });
-    writeLog(root);
-
-    expect((await snapshotOne()).foreign).toBe(true);
-  });
-
-  it('битый маркер не роняет снимок целиком', async () => {
-    const victim = await spawnVictim();
-    const root = makeProject('proj');
-    writeLock(root, victim.pid);
-    writeMarker(root, '{ это не json');
+    writeLock(root, victim.pid, { started_by_id: null });
     writeLog(root);
 
     const entry = await snapshotOne();
 
-    expect(entry.pid).toBe(victim.pid);
     expect(entry.foreign).toBe(true);
+    expect(entry.ownership_reason).toBe('INSTANCE_UNKNOWN');
+  });
+
+  it('битый lock — проект не попадает в снимок вовсе', async () => {
+    // Раньше рядом лежал маркер, и битый маркер ронял снимок целиком. Теперь
+    // источник один: не разобрали lock — считаем, что пайплайна нет.
+    const root = makeProject('proj');
+    fs.writeFileSync(path.join(root, '.workflow', 'logs', '.pipeline.lock'), '{ это не json');
+    writeLog(root);
+
+    expect(await list_running_pipelines.execute({})).toEqual([]);
+  });
+
+  it('номер из lock занят посторонним процессом — не running, а stale', async () => {
+    // Раннера убили без снятия lock'а, номер система отдала другому процессу.
+    // Проверка «pid жив» говорила бы `running`, и `stop_pipeline` слал бы
+    // `taskkill /F /T` чужому дереву.
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid, { started_at: '2020-01-01T00:00:00.000Z', timestamp: '2020-01-01T00:00:00.000Z' });
+    writeLog(root);
+
+    const entry = await snapshotOne();
+
+    expect(entry.state).toBe('stale');
+    expect(entry.pid_reused).toBe(true);
+    expect(entry.stale_lock).toBe(true);
+    expect(entry.ownership_reason).toBe('PID_REUSED');
   });
 });
 
@@ -509,8 +511,11 @@ describe('данные запуска из лога', () => {
   it('started_at берётся из lock', async () => {
     const victim = await spawnVictim();
     const root = makeProject('proj');
-    const stamp = '2026-09-20T08:30:00.000Z';
-    writeLock(root, victim.pid, { timestamp: stamp });
+    // Время «сейчас»: настоящий раннер пишет lock после своего старта, и
+    // снимок эту связь проверяет. У древнего lock'а с живым pid он справедливо
+    // решит, что номер переиспользован.
+    const stamp = new Date().toISOString();
+    writeLock(root, victim.pid, { timestamp: stamp, started_at: stamp });
     writeLog(root);
 
     expect((await snapshotOne()).started_at).toBe(stamp);
@@ -550,11 +555,11 @@ describe('форма ответа', () => {
 
     const entry = await snapshotOne();
 
-    for (const field of ['project', 'pid', 'state', 'marker_valid', 'run_id', 'current_stage', 'step_number']) {
+    for (const field of ['project', 'pid', 'state', 'owned', 'run_id', 'current_stage', 'step_number']) {
       expect(entry, `отсутствует поле ${field}`).toHaveProperty(field);
     }
     // Внутренняя кухня наружу не выдаётся.
-    for (const field of ['lock', 'marker', 'projectRoot', 'logAgeMs']) {
+    for (const field of ['lock', 'projectRoot', 'logAgeMs']) {
       expect(entry).not.toHaveProperty(field);
     }
   });

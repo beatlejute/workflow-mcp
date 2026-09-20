@@ -12,8 +12,6 @@ import { spawn } from 'child_process';
 import process from 'process';
 import { stopPipelineImpl } from '../../src/tools/pipeline.mjs';
 import { writeRunnerLock, writeBrokenLock } from '../helpers/pipeline-lock.mjs';
-import { readPipelineLock } from '../../src/process/run-lock.mjs';
-import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -68,29 +66,7 @@ describe('stop_pipeline tool', () => {
     }
   });
 
-  // Helper to create marker file (must be in .workflow/logs/)
-  /**
-   * pid из `lock раннера` — тот, кого тест выдаёт за идущий раннер.
-   * Владение привязано к запуску, поэтому именно этот pid должен лежать
-   * в маркере; раньше туда писался `process.pid` самого теста.
-   */
-  function runnerPidFromFile() {
-    const lock = readPipelineLock(projectPath);
-    return lock ? lock.pid : process.pid;
-  }
 
-  function createMarker(pid = runnerPidFromFile()) {
-    const markerPath = path.join(logsDir, '.mcp-started-by');
-    // Идентификатор берётся у самого кода: копия формулы здесь уже разошлась
-    // с оригиналом — считала от пути как есть, без гашения регистра.
-    const mcp_instance_id = mcpInstanceId(projectPath);
-    fs.writeFileSync(markerPath, JSON.stringify({
-      version: 1,
-      mcp_instance_id,
-      started_at: new Date().toISOString(),
-      pid
-    }), 'utf-8');
-  }
 
   describe('TC-001: POSIX kill terminates process', () => {
     it.skipIf(process.platform === 'win32')('should kill a process on POSIX with SIGKILL to process group', async () => {
@@ -116,8 +92,6 @@ describe('stop_pipeline tool', () => {
       // Положить lock раннера с этим pid
       writeRunnerLock(projectPath, childPid);
 
-      // Create marker file (so validation passes)
-      createMarker();
 
       // Call stop_pipeline
       const result = await stopPipelineImpl('.');
@@ -157,8 +131,6 @@ describe('stop_pipeline tool', () => {
       // Положить lock раннера
       writeRunnerLock(projectPath, parentPid);
 
-      // Create marker file
-      createMarker();
 
       // Get initial child count by checking process tree
       const initialChildren = spawn('pgrep', ['-P', parentPid.toString()]);
@@ -208,8 +180,6 @@ describe('stop_pipeline tool', () => {
       const dummyPid = 99999; // Non-existent PID for safe testing
       writeRunnerLock(projectPath, dummyPid);
 
-      // Create marker file
-      createMarker();
 
       // Call stop_pipeline with non-existent PID
       // On Windows, it will try to call taskkill, which will fail gracefully
@@ -228,17 +198,8 @@ describe('stop_pipeline tool', () => {
     it('should reject kill of foreign pipeline without force=true', async () => {
       const dummyPid = 12345;
 
-      // Положить lock раннера, чтобы pid существовал
-      writeRunnerLock(projectPath, dummyPid);
-
-      // Create marker file with DIFFERENT mcp_instance_id (foreign)
-      const markerPath = path.join(logsDir, '.mcp-started-by');
-      fs.writeFileSync(markerPath, JSON.stringify({
-        version: 1,
-        mcp_instance_id: 'workflow-mcp@foreign1234567890abcd', // Different from current
-        started_at: new Date().toISOString(),
-        pid: 99999  // Different PID
-      }), 'utf-8');
+      // Lock помечен другим экземпляром MCP — запуск чужой.
+      writeRunnerLock(projectPath, dummyPid, { started_by_id: 'workflow-mcp@foreign12345' });
 
       // Call stop_pipeline without force
       const result = await stopPipelineImpl('.');
@@ -246,6 +207,7 @@ describe('stop_pipeline tool', () => {
       // Verify it returns FOREIGN_PIPELINE error
       expect(result.ok).toBe(false);
       expect(result.code).toBe('FOREIGN_PIPELINE');
+      expect(result.reason).toBe('INSTANCE_MISMATCH');
       expect(result.hint).toContain('foreign');
     });
   });
@@ -261,22 +223,13 @@ describe('stop_pipeline tool', () => {
 
       const childPid = proc.pid;
 
-      // Положить lock раннера
-      writeRunnerLock(projectPath, childPid);
-
-      // Create marker file with DIFFERENT mcp_instance_id (foreign)
-      const markerPath = path.join(logsDir, '.mcp-started-by');
-      fs.writeFileSync(markerPath, JSON.stringify({
-        version: 1,
-        mcp_instance_id: 'workflow-mcp@foreign1234567890abcd',
-        started_at: new Date().toISOString(),
-        pid: 99999
-      }), 'utf-8');
+      // Lock чужого экземпляра
+      writeRunnerLock(projectPath, childPid, { started_by_id: 'workflow-mcp@foreign12345' });
 
       // Call stop_pipeline with force=true
       const result = await stopPipelineImpl('.', { force: true });
 
-      // Verify success despite foreign marker
+      // Verify success despite foreign ownership
       expect(result.ok).toBe(true);
       expect(result.pid).toBe(childPid);
       expect(result.state).toBe('killed');
@@ -293,9 +246,10 @@ describe('stop_pipeline tool', () => {
     });
   });
 
-  describe('TC-006: Marker removal after successful kill', () => {
-    it.skipIf(process.platform === 'win32')('should remove marker file after successful kill', async () => {
-      // Create a short-lived process
+  describe('TC-006: файл владения остаётся за раннером', () => {
+    it.skipIf(process.platform === 'win32')('не заводит своего файла и не снимает lock', async () => {
+      // Прежде сервер писал `.mcp-started-by` и удалял его после убийства.
+      // Файл владения теперь один, и пишет его раннер.
       const proc = spawn('sleep', ['1'], {
         detached: true,
         stdio: 'ignore'
@@ -304,30 +258,19 @@ describe('stop_pipeline tool', () => {
 
       const childPid = proc.pid;
 
-      // Положить lock раннера
       writeRunnerLock(projectPath, childPid);
 
-      // Create marker file
-      createMarker();
-
-      // Verify marker exists
-      const markerPath = path.join(logsDir, '.mcp-started-by');
-      expect(fs.existsSync(markerPath)).toBe(true);
-
-      // Call stop_pipeline
       const result = await stopPipelineImpl('.');
 
       expect(result.ok).toBe(true);
-
-      // Verify marker is removed
-      expect(fs.existsSync(markerPath)).toBe(false);
+      expect(fs.existsSync(path.join(logsDir, '.mcp-started-by'))).toBe(false);
+      expect(fs.existsSync(path.join(logsDir, '.pipeline.lock'))).toBe(true);
     });
   });
 
   describe('TC-007: Нет lock раннера → PIPELINE_NOT_RUNNING error', () => {
     it('should return PIPELINE_NOT_RUNNING when lock раннера отсутствует', async () => {
-      // Create marker file but no lock раннера
-      createMarker();
+      // Нет lock раннера
 
       // Call stop_pipeline with force=true to bypass marker validation
       // (since we're testing the PIPELINE_NOT_RUNNING path)
@@ -344,8 +287,6 @@ describe('stop_pipeline tool', () => {
       async (kind) => {
         writeBrokenLock(projectPath, kind);
 
-        // Create marker file
-        createMarker();
 
         // Call stop_pipeline with force=true
         const result = await stopPipelineImpl('.', { force: true });
@@ -384,7 +325,6 @@ describe('stop_pipeline tool', () => {
       // Setup
       writeRunnerLock(projectPath, childPid);
 
-      createMarker();
 
       // Call stop_pipeline
       const result = await stopPipelineImpl('.');

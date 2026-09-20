@@ -237,23 +237,11 @@ stages:
 
   describe('TC-003: Pause and resume pipeline during approval', () => {
     it('should allow pause operation before approval', async () => {
-      // Create marker to simulate started pipeline
-      const markerPath = path.join(logsDir, '.mcp-started-by');
-      const marker = {
-        version: 1,
-        mcp_instance_id: 'test-mcp@abc123',
-        started_at: new Date().toISOString(),
-        pid: process.pid,
-        run_id: 'pipeline_2026-04-28_test'
-      };
+      // Lock раннера — единственный файл владения; помощник помечает его
+      // нашей рабочей областью, как это делает настоящий раннер.
+      writeRunnerLock(projectPath, process.pid, { run_id: 'pipeline_2026-04-28_test' });
 
-      fs.writeFileSync(markerPath, JSON.stringify(marker, null, 2));
-
-      // Write lock раннера
-      writeRunnerLock(projectPath, process.pid);
-
-      // Verify marker exists
-      expect(fs.existsSync(markerPath)).toBe(true);
+      expect(fs.existsSync(path.join(logsDir, '.pipeline.lock'))).toBe(true);
 
       // Import pause_pipeline and test
       const { pausePipelineImpl } = await import('../../src/tools/pipeline.mjs');

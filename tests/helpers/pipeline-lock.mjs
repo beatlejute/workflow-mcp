@@ -8,14 +8,17 @@
 
 import fs from 'fs';
 import path from 'path';
+import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 
 /**
  * Кладёт lock раннера в проект.
  *
  * @param {string} projectRoot корень проекта (не `.workflow`)
  * @param {number} pid pid раннера
- * @param {Object} [extra] переопределения полей: `started_by`, `run_id`,
- *   `started_at`, `timestamp`
+ * @param {Object} [extra] переопределения полей: `started_by`, `started_by_id`,
+ *   `run_id`, `started_at`, `timestamp`. По умолчанию lock помечен нашей
+ *   рабочей областью — так его пишет раннер при запуске из MCP. Метка
+ *   считается в момент вызова: тест уже выставил свой `MCP_CWD`.
  * @returns {string} путь к записанному файлу
  */
 export function writeRunnerLock(projectRoot, pid, extra = {}) {
@@ -27,7 +30,14 @@ export function writeRunnerLock(projectRoot, pid, extra = {}) {
   fs.writeFileSync(
     lockPath,
     JSON.stringify(
-      { pid, timestamp: now, started_at: now, started_by: 'mcp', ...extra },
+      {
+        pid,
+        timestamp: now,
+        started_at: now,
+        started_by: 'mcp',
+        started_by_id: mcpInstanceId(),
+        ...extra
+      },
       null,
       2
     )

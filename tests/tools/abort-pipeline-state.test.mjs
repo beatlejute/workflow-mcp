@@ -37,7 +37,7 @@ function pipelineLog() {
   ].join('\n');
 }
 
-/** Проект с живым «раннером»: lock, свой маркер владения и лог. */
+/** Проект с живым «раннером»: lock с нашей меткой владения и лог. */
 async function makeRunningProject() {
   const root = path.join(workspace, 'proj');
   const logsDir = path.join(root, '.workflow', 'logs');
@@ -50,15 +50,12 @@ async function makeRunningProject() {
   const now = new Date().toISOString();
   fs.writeFileSync(
     path.join(logsDir, '.pipeline.lock'),
-    JSON.stringify({ pid: victim.pid, timestamp: now, started_at: now, started_by: 'mcp', run_id: RUN_ID })
-  );
-  fs.writeFileSync(
-    path.join(logsDir, '.mcp-started-by'),
     JSON.stringify({
-      version: 1,
-      mcp_instance_id: mcpInstanceId(workspace),
-      started_at: now,
       pid: victim.pid,
+      timestamp: now,
+      started_at: now,
+      started_by: 'mcp',
+      started_by_id: mcpInstanceId(workspace),
       run_id: RUN_ID
     })
   );

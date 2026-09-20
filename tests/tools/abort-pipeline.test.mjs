@@ -15,8 +15,6 @@ import { spawn } from 'child_process';
 import process from 'process';
 import { abortPipelineImpl } from '../../src/tools/pipeline.mjs';
 import { writeRunnerLock, writeBrokenLock } from '../helpers/pipeline-lock.mjs';
-import { readPipelineLock } from '../../src/process/run-lock.mjs';
-import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -71,32 +69,6 @@ describe('abort_pipeline tool', () => {
     }
   });
 
-  // Идентификатор считает сам код. Здесь лежала копия формулы, и она уже
-  // разошлась с оригиналом: считала от переданной строки, без `path.resolve`
-  // и без гашения регистра.
-  const getMcpInstanceId = (cwd) => mcpInstanceId(cwd);
-
-  /**
-   * pid из lock'а раннера — тот, кого тест выдаёт за идущий пайплайн.
-   * Владение привязано к запуску, поэтому именно этот pid должен лежать
-   * в маркере; раньше туда писался `process.pid` самого теста.
-   */
-  function runnerPidFromFile() {
-    const lock = readPipelineLock(projectPath);
-    return lock ? lock.pid : process.pid;
-  }
-
-  // Helper to create marker file (must be in .workflow/logs/)
-  function createMarker(mcpInstanceId = null, pid = runnerPidFromFile()) {
-    const markerPath = path.join(logsDir, '.mcp-started-by');
-    const instanceId = mcpInstanceId || getMcpInstanceId(projectPath);
-    fs.writeFileSync(markerPath, JSON.stringify({
-      version: 1,
-      mcp_instance_id: instanceId,
-      started_at: new Date().toISOString(),
-      pid: pid
-    }), 'utf-8');
-  }
 
   // Helper: положить lock раннера
   function createRunnerPids(pid) {
@@ -110,7 +82,6 @@ describe('abort_pipeline tool', () => {
       const childPid = proc.pid;
 
       createRunnerPids(childPid);
-      createMarker();
 
       // negative grace_sec should be clamped to 0
       const result = await abortPipelineImpl('.', { grace_sec: -5 });
@@ -132,7 +103,6 @@ describe('abort_pipeline tool', () => {
       const childPid = proc.pid;
 
       createRunnerPids(childPid);
-      createMarker();
 
       // > 60 should be clamped to 60
       const result = await abortPipelineImpl('.', { grace_sec: 120 });
@@ -153,7 +123,6 @@ describe('abort_pipeline tool', () => {
       const childPid = proc.pid;
 
       createRunnerPids(childPid);
-      createMarker();
 
       const start = Date.now();
       const result = await abortPipelineImpl('.');
@@ -169,22 +138,22 @@ describe('abort_pipeline tool', () => {
     });
   });
 
-  describe('TC-002: Marker removal after grace period', () => {
-    it.skipIf(process.platform === 'win32')('should remove marker file after successful abort', async () => {
+  describe('TC-002: сервер не трогает файл владения', () => {
+    it.skipIf(process.platform === 'win32')('оставляет .pipeline.lock раннеру и не заводит своего файла', async () => {
+      // Прежде сервер писал рядом `.mcp-started-by` и снимал его после
+      // остановки. Файл владения теперь один и принадлежит раннеру: снимать
+      // его чужими руками значило бы снова разводить два источника правды.
       const proc = spawn('sleep', ['10'], { detached: true, stdio: 'ignore' });
       proc.unref();
       const childPid = proc.pid;
 
       createRunnerPids(childPid);
-      createMarker();
-
-      const markerPath = path.join(logsDir, '.mcp-started-by');
-      expect(fs.existsSync(markerPath)).toBe(true);
 
       const result = await abortPipelineImpl('.', { grace_sec: 0 });
 
       expect(result.ok).toBe(true);
-      expect(fs.existsSync(markerPath)).toBe(false);
+      expect(fs.existsSync(path.join(logsDir, '.mcp-started-by'))).toBe(false);
+      expect(fs.existsSync(path.join(logsDir, '.pipeline.lock'))).toBe(true);
 
       try { process.kill(childPid, 9); } catch {}
     });
@@ -197,7 +166,6 @@ describe('abort_pipeline tool', () => {
       const childPid = proc.pid;
 
       createRunnerPids(childPid);
-      createMarker();
 
       // Create abort-state.json manually to simulate in-progress abort
       const stateDir = path.join(projectPath, '.workflow', 'state');
@@ -223,7 +191,6 @@ describe('abort_pipeline tool', () => {
       const childPid = proc.pid;
 
       createRunnerPids(childPid);
-      createMarker();
 
       // Create stale abort state (old timestamp)
       const stateDir = path.join(projectPath, '.workflow', 'state');
@@ -252,7 +219,6 @@ describe('abort_pipeline tool', () => {
       const childPid = proc.pid;
 
       createRunnerPids(childPid);
-      createMarker();
 
       const result = await abortPipelineImpl('.', { grace_sec: 0 });
 
@@ -272,38 +238,31 @@ describe('abort_pipeline tool', () => {
 
   describe('TC-005: Foreign pipeline validation', () => {
     it('should reject foreign pipeline abort', async () => {
-      createRunnerPids(99999);
-      // Create marker with different MCP instance ID (foreign)
-      const markerPath = path.join(logsDir, '.mcp-started-by');
-      fs.writeFileSync(markerPath, JSON.stringify({
-        version: 1,
-        mcp_instance_id: 'workflow-mcp@foreign1234567890', // Different
-        started_at: new Date().toISOString(),
-        pid: 99999
-      }), 'utf-8');
+      // Lock помечен другим экземпляром MCP.
+      writeRunnerLock(projectPath, 99999, { started_by_id: 'workflow-mcp@foreign12345' });
 
       const result = await abortPipelineImpl('.');
 
       expect(result.ok).toBe(false);
       expect(result.code).toBe('FOREIGN_PIPELINE');
+      expect(result.reason).toBe('INSTANCE_MISMATCH');
       expect(result.hint).toContain('foreign');
     });
 
-    it('should reject abort when marker is missing', async () => {
-      createRunnerPids(12345);
-      // No marker file created
+    it('should reject abort of a CLI-started pipeline', async () => {
+      writeRunnerLock(projectPath, 12345, { started_by: 'cli', started_by_id: null });
 
       const result = await abortPipelineImpl('.');
 
       expect(result.ok).toBe(false);
       expect(result.code).toBe('FOREIGN_PIPELINE');
+      expect(result.reason).toBe('STARTED_BY_MISMATCH');
       expect(result.hint).toContain('foreign');
     });
   });
 
   describe('TC-006: Нет lock раннера', () => {
     it('should return PIPELINE_NOT_RUNNING when lock раннера отсутствует', async () => {
-      createMarker();
       // Нет lock раннера
 
       const result = await abortPipelineImpl('.');
@@ -317,7 +276,6 @@ describe('abort_pipeline tool', () => {
       async (kind) => {
         // Раннер может оставить обрывок при падении посреди записи. Отвечать
         // надо «пайплайн не запущен», а не падать на разборе.
-        createMarker();
         writeBrokenLock(projectPath, kind);
 
         const result = await abortPipelineImpl('.');
@@ -335,7 +293,6 @@ describe('abort_pipeline tool', () => {
       const childPid = proc.pid;
 
       createRunnerPids(childPid);
-      createMarker();
 
       const result = await abortPipelineImpl('.', { grace_sec: 1 });
 
@@ -351,7 +308,6 @@ describe('abort_pipeline tool', () => {
       const childPid = proc.pid;
 
       createRunnerPids(childPid);
-      createMarker();
 
       const result = await abortPipelineImpl('.', { grace_sec: 0 });
 
@@ -367,7 +323,6 @@ describe('abort_pipeline tool', () => {
       // Create a dummy PID that doesn't exist but passes validation
       const dummyPid = 99999;
       createRunnerPids(dummyPid);
-      createMarker();
 
       // Run abort — should handle any notification errors gracefully
       // The abort will fail with NO_SUCH_PROCESS (expected since PID doesn't exist)
@@ -400,7 +355,6 @@ setTimeout(() => {
       const childPid = proc.pid;
 
       createRunnerPids(childPid);
-      createMarker();
 
       // With graceful handler, escalated should be false (SIGINT is sufficient)
       const result = await abortPipelineImpl('.', { grace_sec: 2 });
@@ -439,7 +393,6 @@ setTimeout(() => {
       const childPid = proc.pid;
 
       createRunnerPids(childPid);
-      createMarker();
 
       // Process ignores SIGINT, so SIGTERM must be used → escalated=true
       const result = await abortPipelineImpl('.', { grace_sec: 1 });
@@ -472,7 +425,6 @@ setTimeout(() => {
       const childPid = proc.pid;
 
       createRunnerPids(childPid);
-      createMarker();
 
       const start = Date.now();
       const result = await abortPipelineImpl('.', { grace_sec: 0 });

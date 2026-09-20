@@ -1,11 +1,15 @@
 /**
  * `src/process/run-lock.mjs` — чтение lock'а раннера и проверка владения.
  *
- * Модуль реализует контракт FIX-002 и служит единственной защитой от двух
- * дорогих ошибок: послать сигнал чужому пайплайну и послать сигнал постороннему
- * процессу, занявшему переиспользованный номер. Собственного теста у него не
- * было — поведение проверялось только косвенно, через интеграционные сценарии,
- * где перепутать причину отказа с её следствием очень легко.
+ * Модуль служит единственной защитой от двух дорогих ошибок: послать сигнал
+ * чужому пайплайну и послать сигнал постороннему процессу, занявшему
+ * переиспользованный номер.
+ *
+ * С 3.0.0 источник владения один — сам lock. Прежде рядом лежал второй файл
+ * (`.mcp-started-by`), и проверка сверяла два файла про один запуск; отсюда
+ * росли `RUN_MISMATCH` на остатках прошлого прогона и расхождение
+ * идентификаторов между писателем и читателем. Теперь сервер представляется
+ * раннеру через `WORKFLOW_STARTED_BY_ID`, а раннер кладёт метку в lock.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -13,9 +17,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { readPipelineLock, safeReadMarker, validateRunOwnership } from '../../src/process/run-lock.mjs';
+import { readPipelineLock, validateRunOwnership } from '../../src/process/run-lock.mjs';
+import { clearProcessStartCache } from '../../src/process/process-start.mjs';
 
 const INSTANCE = 'workflow-mcp@0123456789ab';
+const LEGACY_INSTANCE = 'workflow-mcp@cafecafecafe';
 const OTHER_INSTANCE = 'workflow-mcp@ffffffffffff';
 /** Заведомо свободный номер: время старта у него не спросить. */
 const DEAD_PID = 999999;
@@ -33,20 +39,14 @@ function writeLock(payload) {
   );
 }
 
-function writeMarker(payload) {
-  fs.writeFileSync(
-    path.join(logsDir(), '.mcp-started-by'),
-    typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)
-  );
-}
-
-/** Валидный маркер нашего экземпляра. */
-function ownMarker(pid, extra = {}) {
+/** Lock нашего запуска. */
+function ownLock(pid, extra = {}) {
   return {
-    version: 1,
-    mcp_instance_id: INSTANCE,
-    started_at: new Date().toISOString(),
     pid,
+    started_at: new Date().toISOString(),
+    started_by: 'mcp',
+    started_by_id: INSTANCE,
+    run_id: 'pipeline_2026-09-20_10-00-00',
     ...extra
   };
 }
@@ -54,10 +54,12 @@ function ownMarker(pid, extra = {}) {
 beforeEach(() => {
   projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'run-lock-'));
   fs.mkdirSync(logsDir(), { recursive: true });
+  clearProcessStartCache();
 });
 
 afterEach(() => {
   fs.rmSync(projectRoot, { recursive: true, force: true });
+  delete process.env.WORKFLOW_MCP_FORCE_FOREIGN;
 });
 
 describe('readPipelineLock', () => {
@@ -76,6 +78,7 @@ describe('readPipelineLock', () => {
       timestamp: '2026-09-20T10:00:00.000Z',
       started_at: '2026-09-20T10:00:00.000Z',
       started_by: 'mcp',
+      started_by_id: INSTANCE,
       run_id: 'pipeline_2026-09-20_10-00-00',
       pipeline_log: '.workflow/logs/pipeline_2026-09-20_10-00-00.log'
     });
@@ -85,6 +88,7 @@ describe('readPipelineLock', () => {
       timestamp: '2026-09-20T10:00:00.000Z',
       started_at: '2026-09-20T10:00:00.000Z',
       started_by: 'mcp',
+      started_by_id: INSTANCE,
       run_id: 'pipeline_2026-09-20_10-00-00'
     });
   });
@@ -110,176 +114,138 @@ describe('readPipelineLock', () => {
     expect(lock.run_id).toBeNull();
   });
 
+  it('lock раннера до 1.7.0 отдаёт started_by_id как null', () => {
+    writeLock({ pid: 4242, timestamp: '2026-09-20T10:00:00.000Z', started_by: 'mcp' });
+    expect(readPipelineLock(projectRoot).started_by_id).toBeNull();
+  });
+
   it('пустые строки не выдаются за значения', () => {
-    writeLock({ pid: 4242, timestamp: '', started_by: '', run_id: '' });
+    writeLock({ pid: 4242, timestamp: '', started_by: '', started_by_id: '', run_id: '' });
 
     const lock = readPipelineLock(projectRoot);
 
     expect(lock.timestamp).toBeNull();
     expect(lock.started_by).toBeNull();
+    expect(lock.started_by_id).toBeNull();
     expect(lock.run_id).toBeNull();
   });
 });
 
-describe('safeReadMarker', () => {
-  it('битый маркер не роняет вызывающего', () => {
-    writeMarker('{ сломано');
-    expect(safeReadMarker(projectRoot)).toBeNull();
-  });
-
-  it('отсутствующий маркер — null', () => {
-    expect(safeReadMarker(projectRoot)).toBeNull();
-  });
-
-  it('валидный маркер читается', () => {
-    writeMarker(ownMarker(4242));
-    expect(safeReadMarker(projectRoot).pid).toBe(4242);
-  });
-});
-
 describe('validateRunOwnership', () => {
-  it('без маркера владение не подтверждается', () => {
-    const result = validateRunOwnership(projectRoot, 4242, null, INSTANCE);
-    expect(result.valid).toBe(false);
+  it('без lock владения нет: запуска нет вовсе', () => {
+    expect(validateRunOwnership(null, 4242, INSTANCE)).toEqual({
+      valid: false,
+      reason: 'NO_LOCK'
+    });
   });
 
-  it('свой маркер без lock подтверждает владение', () => {
-    writeMarker(ownMarker(4242));
-    expect(validateRunOwnership(projectRoot, 4242, null, INSTANCE).valid).toBe(true);
+  it('свой lock подтверждает владение', () => {
+    expect(validateRunOwnership(ownLock(4242), 4242, INSTANCE).valid).toBe(true);
   });
 
-  it('чужой идентификатор экземпляра владение не даёт', () => {
-    writeMarker(ownMarker(4242, { mcp_instance_id: OTHER_INSTANCE }));
-    expect(validateRunOwnership(projectRoot, 4242, null, INSTANCE).valid).toBe(false);
+  it('lock с другим pid даёт PID_MISMATCH', () => {
+    expect(validateRunOwnership(ownLock(4242), 9999, INSTANCE)).toEqual({
+      valid: false,
+      reason: 'PID_MISMATCH'
+    });
   });
 
-  it('маркер с другим pid владение не даёт', () => {
-    writeMarker(ownMarker(4242));
-    expect(validateRunOwnership(projectRoot, 9999, null, INSTANCE).valid).toBe(false);
+  it('аварийный ключ WORKFLOW_MCP_FORCE_FOREIGN снимает проверку целиком', () => {
+    process.env.WORKFLOW_MCP_FORCE_FOREIGN = '1';
+    const foreign = ownLock(4242, { started_by: 'cli', started_by_id: null });
+
+    expect(validateRunOwnership(foreign, 4242, INSTANCE)).toEqual({ valid: true, override: true });
   });
 
-  describe('признаки чужого запуска в lock', () => {
-    beforeEach(() => writeMarker(ownMarker(4242)));
-
+  describe('признаки чужого запуска', () => {
     it.each([['cli'], ['extension']])('started_by=%s даёт STARTED_BY_MISMATCH', (startedBy) => {
-      const lock = { pid: 4242, started_at: null, started_by: startedBy, run_id: null };
+      const lock = ownLock(4242, { started_by: startedBy });
 
-      expect(validateRunOwnership(projectRoot, 4242, lock, INSTANCE)).toEqual({
+      expect(validateRunOwnership(lock, 4242, INSTANCE)).toEqual({
         valid: false,
         reason: 'STARTED_BY_MISMATCH'
       });
     });
 
-    it('started_by=mcp владению не мешает', () => {
-      const lock = { pid: 4242, started_at: null, started_by: 'mcp', run_id: null };
-      expect(validateRunOwnership(projectRoot, 4242, lock, INSTANCE).valid).toBe(true);
-    });
+    it('отсутствие started_by — тоже чужой запуск', () => {
+      // Раньше это считалось нашим: маркер лежал отдельно и «доказывал»
+      // владение сам. Теперь единственное доказательство — сам lock, и
+      // запуск без источника доказывает ровно ничего.
+      const lock = ownLock(4242, { started_by: null });
 
-    it('отсутствие started_by владению не мешает', () => {
-      const lock = { pid: 4242, started_at: null, started_by: null, run_id: null };
-      expect(validateRunOwnership(projectRoot, 4242, lock, INSTANCE).valid).toBe(true);
+      expect(validateRunOwnership(lock, 4242, INSTANCE)).toEqual({
+        valid: false,
+        reason: 'STARTED_BY_MISMATCH'
+      });
     });
   });
 
-  describe('сверка запуска по run_id', () => {
-    it('разные run_id дают RUN_MISMATCH', () => {
-      writeMarker(ownMarker(4242, { run_id: 'pipeline_2026-09-20_09-00-00' }));
-      const lock = {
-        pid: 4242,
-        started_at: null,
-        started_by: 'mcp',
-        run_id: 'pipeline_2026-09-20_10-00-00'
-      };
+  describe('метка экземпляра', () => {
+    it('чужая метка даёт INSTANCE_MISMATCH', () => {
+      const lock = ownLock(4242, { started_by_id: OTHER_INSTANCE });
 
-      expect(validateRunOwnership(projectRoot, 4242, lock, INSTANCE)).toEqual({
+      expect(validateRunOwnership(lock, 4242, INSTANCE)).toEqual({
         valid: false,
-        reason: 'RUN_MISMATCH'
+        reason: 'INSTANCE_MISMATCH'
       });
     });
 
-    it('совпадающие run_id владение подтверждают', () => {
-      const runId = 'pipeline_2026-09-20_10-00-00';
-      writeMarker(ownMarker(4242, { run_id: runId }));
-      const lock = { pid: 4242, started_at: null, started_by: 'mcp', run_id: runId };
+    it('метки нет вовсе — INSTANCE_UNKNOWN, не INSTANCE_MISMATCH', () => {
+      // Разные беды: первая чинится обновлением workflow-ai до 1.7.0, вторая
+      // не чинится вовсе. Один код на оба случая увёл бы в неверную починку.
+      const lock = ownLock(4242, { started_by_id: null });
 
-      expect(validateRunOwnership(projectRoot, 4242, lock, INSTANCE).valid).toBe(true);
+      expect(validateRunOwnership(lock, 4242, INSTANCE)).toEqual({
+        valid: false,
+        reason: 'INSTANCE_UNKNOWN'
+      });
     });
 
-    it('run_id только с одной стороны сверку не включает', () => {
-      writeMarker(ownMarker(4242));
-      const lock = { pid: 4242, started_at: null, started_by: 'mcp', run_id: 'pipeline_X' };
+    it('принимается любая метка из списка: обновление посреди прогона', () => {
+      const lock = ownLock(4242, { started_by_id: LEGACY_INSTANCE });
 
-      expect(validateRunOwnership(projectRoot, 4242, lock, INSTANCE).valid).toBe(true);
+      expect(validateRunOwnership(lock, 4242, [INSTANCE, LEGACY_INSTANCE]).valid).toBe(true);
+    });
+
+    it('метка вне списка остаётся чужой', () => {
+      const lock = ownLock(4242, { started_by_id: OTHER_INSTANCE });
+
+      expect(validateRunOwnership(lock, 4242, [INSTANCE, LEGACY_INSTANCE]).valid).toBe(false);
     });
   });
 
   describe('проверка времени старта процесса', () => {
     it('по умолчанию не выполняется — это дорогой внешний вызов', () => {
-      // Свой процесс стартовал заведомо позже древнего lock'а, но без
-      // явного флага владение подтверждается: список пайплайнов не должен
-      // ради каждого проекта спрашивать ОС.
-      writeMarker(ownMarker(process.pid));
-      const lock = {
-        pid: process.pid,
-        started_at: '2020-01-01T00:00:00.000Z',
-        started_by: 'mcp',
-        run_id: null
-      };
+      // Свой процесс стартовал заведомо позже древнего lock'а, но без явного
+      // флага владение подтверждается.
+      const lock = ownLock(process.pid, { started_at: '2020-01-01T00:00:00.000Z' });
 
-      expect(validateRunOwnership(projectRoot, process.pid, lock, INSTANCE).valid).toBe(true);
+      expect(validateRunOwnership(lock, process.pid, INSTANCE).valid).toBe(true);
     });
 
     it('с флагом переиспользованный pid даёт PID_REUSED', () => {
-      writeMarker(ownMarker(process.pid));
-      const lock = {
-        pid: process.pid,
-        started_at: '2020-01-01T00:00:00.000Z',
-        started_by: 'mcp',
-        run_id: null
-      };
+      const lock = ownLock(process.pid, { started_at: '2020-01-01T00:00:00.000Z' });
 
       expect(
-        validateRunOwnership(projectRoot, process.pid, lock, INSTANCE, { verifyProcessStart: true })
+        validateRunOwnership(lock, process.pid, INSTANCE, { verifyProcessStart: true })
       ).toEqual({ valid: false, reason: 'PID_REUSED' });
     });
 
     it('свежий lock проверку проходит', () => {
-      writeMarker(ownMarker(process.pid));
-      const lock = {
-        pid: process.pid,
-        started_at: new Date().toISOString(),
-        started_by: 'mcp',
-        run_id: null
-      };
+      const lock = ownLock(process.pid);
 
       expect(
-        validateRunOwnership(projectRoot, process.pid, lock, INSTANCE, { verifyProcessStart: true }).valid
+        validateRunOwnership(lock, process.pid, INSTANCE, { verifyProcessStart: true }).valid
       ).toBe(true);
-    });
-
-    it('без lock проверка идёт по времени из маркера', () => {
-      // Эта ветка — единственная защита, когда lock уже снят: иначе всё
-      // свелось бы к равенству pid.
-      writeMarker(ownMarker(process.pid, { started_at: '2020-01-01T00:00:00.000Z' }));
-
-      expect(
-        validateRunOwnership(projectRoot, process.pid, null, INSTANCE, { verifyProcessStart: true })
-      ).toEqual({ valid: false, reason: 'PID_REUSED' });
     });
 
     it('если время старта узнать нельзя, отказа не происходит', () => {
       // Осознанный fail-open: запрет управлять своим пайплайном из-за
       // недоступной системной утилиты хуже остаточного риска.
-      writeMarker(ownMarker(DEAD_PID));
-      const lock = {
-        pid: DEAD_PID,
-        started_at: '2020-01-01T00:00:00.000Z',
-        started_by: 'mcp',
-        run_id: null
-      };
+      const lock = ownLock(DEAD_PID, { started_at: '2020-01-01T00:00:00.000Z' });
 
       expect(
-        validateRunOwnership(projectRoot, DEAD_PID, lock, INSTANCE, { verifyProcessStart: true }).valid
+        validateRunOwnership(lock, DEAD_PID, INSTANCE, { verifyProcessStart: true }).valid
       ).toBe(true);
     });
   });
@@ -287,16 +253,24 @@ describe('validateRunOwnership', () => {
   it('порядок проверок: чужой запуск важнее переиспользованного pid', () => {
     // Оба признака сразу. Сообщать надо про чужой запуск: подсказка
     // «удалите lock» для чужого пайплайна была бы вредным советом.
-    writeMarker(ownMarker(process.pid));
-    const lock = {
-      pid: process.pid,
+    const lock = ownLock(process.pid, {
       started_at: '2020-01-01T00:00:00.000Z',
-      started_by: 'cli',
-      run_id: null
-    };
+      started_by: 'cli'
+    });
 
     expect(
-      validateRunOwnership(projectRoot, process.pid, lock, INSTANCE, { verifyProcessStart: true }).reason
+      validateRunOwnership(lock, process.pid, INSTANCE, { verifyProcessStart: true }).reason
     ).toBe('STARTED_BY_MISMATCH');
+  });
+
+  it('порядок проверок: неизвестная метка важнее переиспользованного pid', () => {
+    const lock = ownLock(process.pid, {
+      started_at: '2020-01-01T00:00:00.000Z',
+      started_by_id: null
+    });
+
+    expect(
+      validateRunOwnership(lock, process.pid, INSTANCE, { verifyProcessStart: true }).reason
+    ).toBe('INSTANCE_UNKNOWN');
   });
 });

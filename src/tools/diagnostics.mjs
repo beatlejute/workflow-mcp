@@ -225,8 +225,6 @@ async function listGhostExecutionsImpl({ project, since }) {
     for (const logFile of logFiles) {
       // mtime-based filter: if since provided and log mtime < since, skip older logs
       if (sinceDate && logFile.mtime < sinceDate) {
-        console.error('DEBUG: Skipping log file due to mtime filter:', logFile.name, 
-                    'mtime:', logFile.mtime, 'since:', sinceDate);
         continue;
       }
 
@@ -272,7 +270,6 @@ async function listGhostExecutionsImpl({ project, since }) {
               // Parse the timestamp and ensure it's treated as UTC
               const localDate = new Date(timestampMatch[1].replace(' ', 'T'));
               detectedAt = localDate.toISOString();
-              console.error('DEBUG: Found timestamp in line', lineIdx, ':', timestampMatch[1], '->', detectedAt);
               break; // Use the first timestamp we find
             } catch (e) {
               // Continue to next line
@@ -284,7 +281,6 @@ async function listGhostExecutionsImpl({ project, since }) {
         // Note: file mtime filter already skipped files older than sinceDate
         // This filter is for markers within files that might be newer than the file
         if (sinceDate && new Date(detectedAt) < sinceDate) {
-          console.error('DEBUG: Skipping marker due to detected_at filter:', detectedAt, 'since:', sinceDate);
           continue;
         }
 

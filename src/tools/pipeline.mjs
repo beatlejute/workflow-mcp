@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { removeMarker, writeMarker } from '../process/marker.mjs';
 import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
 import { writeAbortState, clearAbortState, isAbortInProgress } from '../process/abort-state.mjs';
 import { writeKillOutcome, clearKillOutcome } from '../process/kill-outcome.mjs';
@@ -214,9 +213,15 @@ export const start_pipeline = {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
-        // Раннер кладёт это в .pipeline.lock — по нему внешние наблюдатели
-        // (VS Code расширение) отличают MCP-запуск от CLI.
-        env: { ...process.env, WORKFLOW_STARTED_BY: 'mcp' }
+        // Раннер кладёт обе переменные в .pipeline.lock. По `started_by`
+        // внешние наблюдатели (расширение VS Code) отличают MCP-запуск от CLI,
+        // по `started_by_id` мы узнаём собственную рабочую область — это и есть
+        // единственный признак владения, второго файла для него больше нет.
+        env: {
+          ...process.env,
+          WORKFLOW_STARTED_BY: 'mcp',
+          WORKFLOW_STARTED_BY_ID: getMcpInstanceId()
+        }
       });
       child.unref();
     } catch (err) {
@@ -229,11 +234,14 @@ export const start_pipeline = {
 
     const started_at = new Date().toISOString();
 
-    // Владение привязано к запуску, а не к процессу сервера: в маркере лежит pid
-    // раннера, и проверка сверяет его с живым pid из `.pipeline.lock`. Сервер stdio
-    // живёт одну сессию клиента, а detached-раннер — часами, поэтому привязка к
+    // Владение записывает раннер: метка из `WORKFLOW_STARTED_BY_ID` ложится в
+    // `.pipeline.lock` рядом с pid и `run_id`. Своего файла сервер больше не
+    // пишет — пара файлов про один запуск умела разойтись, и на этом классе
+    // дефектов держалась половина отказов владения.
+    //
+    // Метка привязана к рабочей области, а не к процессу сервера: stdio-сервер
+    // живёт одну сессию клиента, detached-раннер — часами, и привязка к
     // `process.pid` делала бы свой же пайплайн чужим после каждого рестарта.
-    writeMarker(projectRoot, { pid: child.pid, run_id: null, started_at });
 
     // Исход прошлой остановки к новому прогону отношения не имеет. Сверка по
     // pid и `run_id` его и так отсекает, но файл иначе лежал бы вечно.
@@ -251,13 +259,24 @@ export const start_pipeline = {
     }
 
     const run_id = logName.replace(/\.log$/, '');
-    writeMarker(projectRoot, { pid: child.pid, run_id, started_at });
+
+    // Раннер до workflow-ai 1.7.0 метку `started_by_id` не пишет, и такой
+    // прогон виден как `INSTANCE_UNKNOWN`: `stop_pipeline` и `abort_pipeline`
+    // откажут без `force`. Молчать об этом нельзя — клиент узнал бы о потере
+    // управления только в момент остановки.
+    const writtenLock = readPipelineLock(projectRoot);
+    const runnerTooOld = Boolean(writtenLock) && writtenLock.pid === child.pid && !writtenLock.started_by_id;
 
     return {
       ok: true,
       run_id,
       pid: child.pid,
       started_at,
+      ...(runnerTooOld && {
+        warning: 'RUNNER_WITHOUT_INSTANCE_ID',
+        hint: 'The runner did not record started_by_id in .pipeline.lock (workflow-ai < 1.7.0). '
+          + 'This pipeline will read as foreign; stop_pipeline and abort_pipeline will need force=true. Update workflow-ai.'
+      }),
       log_path: path.join(logsDir, logName)
     };
   }
@@ -415,7 +434,7 @@ export function clearPauseState(projectRoot) {
 
 /**
  * Pause a running pipeline (implementation).
- * Validates marker, gets the runner PID from .pipeline.lock, calls process/control.pause.
+ * Checks ownership against .pipeline.lock, gets the runner PID from it, calls process/control.pause.
  * Returns {pid, state: "paused", paused_at} on success.
  */
 export async function pausePipelineImpl(project) {
@@ -428,13 +447,13 @@ export async function pausePipelineImpl(project) {
   }
   const pid = runner.pid;
 
-  // Validate marker
-  const validation = validateRunOwnership(projectRoot, pid, runner.lock, acceptedInstanceIds(), { verifyProcessStart: true });
+  // Сверка владения по lock'у
+  const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true });
   if (!validation.valid) {
     return ownershipRefusal(
       validation,
-      'MARKER_VALIDATION_FAILED',
-      `Pipeline marker validation failed: ${validation.reason}`
+      'OWNERSHIP_VALIDATION_FAILED',
+      `Pipeline ownership validation failed: ${validation.reason}`
     );
   }
 
@@ -505,7 +524,7 @@ export const pause_pipeline = {
 
   /**
    * Resume a paused pipeline (implementation).
-   * Validates marker, gets the runner PID from .pipeline.lock, calls process/control.resume.
+   * Checks ownership against .pipeline.lock, gets the runner PID from it, calls process/control.resume.
    * Returns {pid, state: "running"} on success.
    * Idempotent: if not paused, returns NOT_PAUSED.
    */
@@ -518,13 +537,13 @@ export const pause_pipeline = {
     }
     const pid = runner.pid;
 
-    // Validate marker
-    const validation = validateRunOwnership(projectRoot, pid, runner.lock, acceptedInstanceIds(), { verifyProcessStart: true });
+    // Сверка владения по lock'у
+    const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true });
     if (!validation.valid) {
       return ownershipRefusal(
         validation,
-        'MARKER_VALIDATION_FAILED',
-        `Pipeline marker validation failed: ${validation.reason}`
+        'OWNERSHIP_VALIDATION_FAILED',
+        `Pipeline ownership validation failed: ${validation.reason}`
       );
     }
 
@@ -591,8 +610,7 @@ export const resume_pipeline = {
 
   /**
    * Stop (hard kill) a running pipeline (implementation).
-   * Validates marker (unless overridden by force=true), gets the runner PID from .pipeline.lock, calls process/control.kill.
-   * Removes marker after success.
+   * Checks ownership against .pipeline.lock (unless overridden by force=true), gets the runner PID from it, calls process/control.kill.
    * Returns {pid, state: "killed"} on success.
    */
   export async function stopPipelineImpl(project, options = {}) {
@@ -605,9 +623,9 @@ export const resume_pipeline = {
     }
     const pid = runner.pid;
 
-    // Validate marker (unless force=true)
+    // Сверка владения по lock'у (кроме force=true)
     if (!force) {
-      const validation = validateRunOwnership(projectRoot, pid, runner.lock, acceptedInstanceIds(), { verifyProcessStart: true });
+      const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true });
       if (!validation.valid) {
         return ownershipRefusal(
           validation,
@@ -634,14 +652,6 @@ export const resume_pipeline = {
       by: 'stop_pipeline'
     });
 
-    // Remove marker after successful kill
-    try {
-      removeMarker(projectRoot);
-    } catch (err) {
-      // Marker removal failure doesn't block the operation
-      console.error('Failed to remove marker:', err.message);
-    }
-
     // Success: send notification to pipeline-state resource
     try {
       notify_workflow_pipeline_state();
@@ -663,7 +673,7 @@ export const stop_pipeline = {
   inputSchema: z.object({
     project: z.string().describe('Project path or name'),
     options: z.object({
-      force: z.boolean().optional().describe('Override marker validation (requires explicit consent)')
+      force: z.boolean().optional().describe('Override the ownership check (requires explicit consent)')
     }).optional()
   }),
    async execute({ project, options }) {
@@ -688,7 +698,6 @@ export const list_running_pipelines = {
  * Implementation for abort_pipeline tool.
  * Graceful shutdown: SIGINT → wait grace_sec → SIGTERM (POSIX).
  * Windows: taskkill /PID → wait → taskkill /F.
- * After grace period, marker is removed via removeMarker.
  * Returns {pid, state: "aborted", duration_ms, escalated: bool}.
  * Parallel abort on same project → ALREADY_ABORTING.
  */
@@ -704,8 +713,8 @@ export async function abortPipelineImpl(project, options = {}) {
   }
   const pid = runner.pid;
 
-  // Validate marker
-  const validation = validateRunOwnership(projectRoot, pid, runner.lock, acceptedInstanceIds(), { verifyProcessStart: true });
+  // Сверка владения по lock'у
+  const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true });
   if (!validation.valid) {
     return ownershipRefusal(
       validation,
@@ -757,7 +766,7 @@ export async function abortPipelineImpl(project, options = {}) {
           return { escalate: false, reason: 'RUNNER_GONE' };
         }
         const ownership = validateRunOwnership(
-          projectRoot, pid, liveLock, acceptedInstanceIds(), { verifyProcessStart: true }
+          liveLock, pid, acceptedInstanceIds(), { verifyProcessStart: true }
         );
         return ownership.valid
           ? { escalate: true }
@@ -793,13 +802,6 @@ export async function abortPipelineImpl(project, options = {}) {
       runId: runner.lock?.run_id ?? null,
       by: 'abort_pipeline'
     });
-  }
-
-  // Remove marker after grace period completes
-  try {
-    removeMarker(projectRoot);
-  } catch (err) {
-    console.error('Failed to remove marker:', err.message);
   }
 
   // Clear abort-in-progress flag

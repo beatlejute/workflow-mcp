@@ -14,7 +14,6 @@ import process from 'process';
 import { pausePipelineImpl, resumePipelineImpl } from '../../src/tools/pipeline.mjs';
 import * as resources from '../../src/resources/index.mjs';
 import { writeRunnerLock } from '../helpers/pipeline-lock.mjs';
-import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -77,22 +76,6 @@ describe('pause_pipeline and resume_pipeline tools', () => {
     resources.setPipelineStateNotificationHandler(null);
   });
 
-  // Helper to create marker file (must be in .workflow/logs/).
-  // Владение привязано к запуску, поэтому в маркере должен лежать pid того
-  // раннера, который тест выдаёт за идущий, а не pid самого тестового процесса.
-  function createMarker(runnerPid = process.pid) {
-    const markerPath = path.join(logsDir, '.mcp-started-by');
-    // Идентификатор считает сам код: копия формулы здесь разошлась с
-    // оригиналом, как только тот стал гасить регистр пути.
-    const mcp_instance_id = mcpInstanceId(projectPath);
-    fs.writeFileSync(markerPath, JSON.stringify({
-      version: 1,
-      mcp_instance_id,
-      started_at: new Date().toISOString(),
-      pid: runnerPid
-    }), 'utf-8');
-  }
-
   describe('TC-001: pause → resume cycle on live spawned process', () => {
     it.skipIf(process.platform === 'win32')('should pause and resume a running process on POSIX', async () => {
       // Create a long-running mock process (sleep)
@@ -116,8 +99,6 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       // Положить lock раннера с этим pid
       writeRunnerLock(projectPath, childPid);
 
-      // Create marker file (so validation passes)
-      createMarker(childPid);
 
       // Call pause_pipeline
       const pauseResult = await pausePipelineImpl('.');
@@ -145,44 +126,32 @@ describe('pause_pipeline and resume_pipeline tools', () => {
     });
   });
 
-  describe('TC-002: pause without marker → MARKER_VALIDATION_FAILED error', () => {
-    it('should reject pause when marker validation fails', async () => {
+  describe('TC-002: pause without an ownership mark → OWNERSHIP_VALIDATION_FAILED', () => {
+    it('should reject pause when the lock carries no started_by_id', async () => {
       const dummyPid = 12345;
 
-      // Положить lock раннера, чтобы pid существовал
-      writeRunnerLock(projectPath, dummyPid);
+      // Lock без метки экземпляра — так пишет раннер до workflow-ai 1.7.0.
+      writeRunnerLock(projectPath, dummyPid, { started_by_id: null });
 
-      // DO NOT create marker file — this should fail validation
-
-      // Call pause_pipeline
       const result = await pausePipelineImpl('.');
 
       expect(result.ok).toBe(false);
-      expect(result.code).toBe('MARKER_VALIDATION_FAILED');
+      expect(result.code).toBe('OWNERSHIP_VALIDATION_FAILED');
+      expect(result.reason).toBe('INSTANCE_UNKNOWN');
     });
   });
 
-  describe('TC-003: pause with foreign pipeline → MARKER_VALIDATION_FAILED error', () => {
-    it('should reject pause when marker is from different MCP instance', async () => {
+  describe('TC-003: pause with foreign pipeline → OWNERSHIP_VALIDATION_FAILED', () => {
+    it('should reject pause when the lock is marked by another MCP instance', async () => {
       const dummyPid = 12345;
 
-      // Положить lock раннера
-      writeRunnerLock(projectPath, dummyPid);
+      writeRunnerLock(projectPath, dummyPid, { started_by_id: 'workflow-mcp@foreign123456' });
 
-      // Create marker file with DIFFERENT mcp_instance_id (foreign)
-      const markerPath = path.join(logsDir, '.mcp-started-by');
-      fs.writeFileSync(markerPath, JSON.stringify({
-        version: 1,
-        mcp_instance_id: 'workflow-mcp@foreign1234567890abcd', // Different from current
-        started_at: new Date().toISOString(),
-        pid: 99999  // Different PID
-      }), 'utf-8');
-
-      // Call pause_pipeline
       const result = await pausePipelineImpl('.');
 
       expect(result.ok).toBe(false);
-      expect(result.code).toBe('MARKER_VALIDATION_FAILED');
+      expect(result.code).toBe('OWNERSHIP_VALIDATION_FAILED');
+      expect(result.reason).toBe('INSTANCE_MISMATCH');
     });
   });
 
@@ -190,10 +159,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
     it('should return NOT_PAUSED when trying to resume a process that was never paused', async () => {
       const dummyPid = 12345;
 
-      // Create marker file
-      createMarker(dummyPid);
-
-      // Положить lock раннера
+      // Lock нашего запуска: владение подтверждается им одним
       writeRunnerLock(projectPath, dummyPid);
 
       // Try to resume WITHOUT pausing first (no pause state file)
@@ -209,10 +175,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       const pausedPid = 11111;
       const currentPid = 22222;
 
-      // Create marker file
-      createMarker(currentPid);
-
-      // Положить lock раннера с текущим pid
+      // Lock нашего запуска с текущим pid
       writeRunnerLock(projectPath, currentPid);
 
       // Create pause state with different PID
@@ -243,8 +206,6 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       // Положить lock раннера
       writeRunnerLock(projectPath, childPid);
 
-      // Create marker file
-      createMarker(childPid);
 
       // Call pause_pipeline
       const result = await pausePipelineImpl('.');
@@ -275,8 +236,6 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       // Положить lock раннера
       writeRunnerLock(projectPath, childPid);
 
-      // Create marker file
-      createMarker(childPid);
 
       // First pause
       const pauseResult = await pausePipelineImpl('.');
@@ -317,8 +276,6 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       // Положить lock раннера
       writeRunnerLock(projectPath, childPid);
 
-      // Create marker file
-      createMarker(childPid);
 
       // First pause
       const firstPause = await pausePipelineImpl('.');
@@ -346,8 +303,6 @@ describe('pause_pipeline and resume_pipeline tools', () => {
 
   describe('TC-009: pause без lock раннера → PIPELINE_NOT_RUNNING error', () => {
     it('should return PIPELINE_NOT_RUNNING when lock раннера отсутствует', async () => {
-      // Create marker file first
-      createMarker();
 
       // НЕ класть lock раннера
       // Должно отказать на отсутствии lock, а не на проверке маркера
@@ -362,8 +317,6 @@ describe('pause_pipeline and resume_pipeline tools', () => {
 
   describe('TC-010: resume без lock раннера → PIPELINE_NOT_RUNNING error', () => {
     it('should return PIPELINE_NOT_RUNNING when lock раннера отсутствует', async () => {
-      // Create marker file first
-      createMarker();
 
       // НЕ класть lock раннера
       // Должно отказать на отсутствии lock, а не на проверке маркера
@@ -389,8 +342,6 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       // Положить lock раннера
       writeRunnerLock(projectPath, childPid);
 
-      // Create marker file
-      createMarker(childPid);
 
       // Pause
       const pauseResult = await pausePipelineImpl('.');
@@ -431,8 +382,6 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       // Положить lock раннера
       writeRunnerLock(projectPath, childPid);
 
-      // Create marker file
-      createMarker(childPid);
 
       // Pause
       const pauseResult = await pausePipelineImpl('.');

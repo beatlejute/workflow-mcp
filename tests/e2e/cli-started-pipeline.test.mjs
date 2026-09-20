@@ -31,7 +31,7 @@ function createProject(workspaceDir, name = 'cli-project') {
   return projectPath;
 }
 
-/** Так пишет lock раннер workflow-ai: src/lib/marker.mjs writeMarker(). */
+/** Так пишет lock раннер workflow-ai при запуске из CLI: src/lib/marker.mjs writeMarker(). */
 function writeRunnerLock(projectPath, pid, timestamp = new Date().toISOString()) {
   fs.writeFileSync(
     path.join(projectPath, '.workflow', 'logs', '.pipeline.lock'),
@@ -90,9 +90,13 @@ describe('FIX-002: видимость и управление чужими па�
     }
   });
 
-  it('видит пайплайн, запущенный извне: только .pipeline.lock, без маркера MCP', () => {
-    // Живой процесс = текущий: pid точно существует.
-    writeRunnerLock(projectPath, process.pid, '2026-09-18T10:00:00.000Z');
+  it('видит пайплайн, запущенный извне: в lock только pid и время', () => {
+    // Живой процесс = текущий: pid точно существует. Время записи — «сейчас»:
+    // снимок сверяет его с моментом старта процесса, а настоящий раннер пишет
+    // lock уже после своего старта. Lock из позапрошлого дня на живом pid
+    // справедливо читался бы как переиспользованный номер.
+    const startedAt = new Date().toISOString();
+    writeRunnerLock(projectPath, process.pid, startedAt);
     writeLog(projectPath);
 
     const snapshot = get_workflow_pipeline_state(workspaceDir);
@@ -101,8 +105,11 @@ describe('FIX-002: видимость и управление чужими па�
     expect(entry).toBeDefined();
     expect(entry.pid).toBe(process.pid);
     expect(entry.state).toBe('running');
-    expect(entry.started_at).toBe('2026-09-18T10:00:00.000Z');
+    expect(entry.started_at).toBe(startedAt);
     expect(entry.run_id).toBe('pipeline_2026-09-18_10-00-00');
+    // Запуск не наш: в lock'е нет ни `started_by: 'mcp'`, ни метки экземпляра.
+    expect(entry.foreign).toBe(true);
+    expect(entry.ownership_reason).toBe('STARTED_BY_MISMATCH');
   });
 
   it('stale lock (мёртвый pid) не показывается как running', () => {

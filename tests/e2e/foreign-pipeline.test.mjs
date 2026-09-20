@@ -1,6 +1,6 @@
 /**
  * E2E tests for foreign-pipeline protection
- * Simulates: pipeline started via CLI (no MCP marker) → MCP cannot stop it without force override
+ * Simulates: pipeline started via CLI → MCP cannot stop it without force override
  * Tests foreign-pipeline detection and WORKFLOW_MCP_FORCE_FOREIGN=1 override behavior
  */
 
@@ -85,7 +85,7 @@ describe('E2E: foreign-pipeline protection', () => {
 
   describe('TC-001: Foreign pipeline detection — MCP rejects stop without force', () => {
     it('should return FOREIGN_PIPELINE error when stopping pipeline started via CLI', async () => {
-      // Simulate pipeline started via CLI (no MCP marker created)
+      // Simulate a pipeline started via CLI
       // Create a long-running test process
       const proc = spawn('sleep', ['30'], {
         detached: true,
@@ -100,9 +100,8 @@ describe('E2E: foreign-pipeline protection', () => {
       // помощник ставит `'mcp'`, и фикстура описывала бы не тот сценарий.
       writeRunnerLock(projectPath, foreignPid, { started_by: 'cli' });
 
-      // Intentionally NO marker file (.mcp-started-by) — simulating CLI-started pipeline
-      const markerPath = path.join(logsDir, '.mcp-started-by');
-      expect(fs.existsSync(markerPath)).toBe(false);
+      // Файла владения от MCP нет вовсе: с 3.0.0 его не существует.
+      expect(fs.existsSync(path.join(logsDir, '.mcp-started-by'))).toBe(false);
 
       // Dynamically import stopPipelineImpl from tools/pipeline.mjs
       const { stopPipelineImpl } = await import('../../src/tools/pipeline.mjs');
@@ -149,12 +148,8 @@ describe('E2E: foreign-pipeline protection', () => {
 
         const foreignPid = proc.pid;
 
-        // Setup foreign pipeline state
-        writeRunnerLock(projectPath, foreignPid);
-
-        // No marker file
-        const markerPath = path.join(logsDir, '.mcp-started-by');
-        expect(fs.existsSync(markerPath)).toBe(false);
+        // Чужой запуск: lock из CLI
+        writeRunnerLock(projectPath, foreignPid, { started_by: 'cli', started_by_id: null });
 
         // Set env var to override protection
         process.env.WORKFLOW_MCP_FORCE_FOREIGN = '1';
@@ -188,7 +183,7 @@ describe('E2E: foreign-pipeline protection', () => {
 
   describe('TC-003: Owned pipeline can be stopped without force', () => {
     it.skipIf(process.platform === 'win32')(
-      'should allow stopping owned pipeline (with marker) without force',
+      'should allow stopping an owned pipeline (lock carries our mark) without force',
       async () => {
         // Create test process
         const proc = spawn('sleep', ['30'], {
@@ -199,24 +194,8 @@ describe('E2E: foreign-pipeline protection', () => {
 
         const ownedPid = proc.pid;
 
-        // Create proper MCP marker.
-        // Маркер свой: `pid` — pid идущего раннера, `mcp_instance_id` — настоящий.
-        // Раньше здесь был самодельный hex-идентификатор, который не совпадал ни
-        // с чем, и тест проходил бы по ложной причине.
-        const markerPath = path.join(logsDir, '.mcp-started-by');
-        const { mcpInstanceId } = await import('../../src/lib/project-root.mjs');
-        fs.writeFileSync(
-          markerPath,
-          JSON.stringify({
-            version: 1,
-            mcp_instance_id: mcpInstanceId(),
-            started_at: new Date().toISOString(),
-            pid: ownedPid
-          }),
-          'utf-8'
-        );
-
-        // Setup lock раннера
+        // Lock нашего запуска: помощник ставит `started_by: 'mcp'` и метку
+        // нашей рабочей области — ровно то, что пишет настоящий раннер.
         writeRunnerLock(projectPath, ownedPid);
 
         const { stopPipelineImpl } = await import('../../src/tools/pipeline.mjs');
@@ -241,8 +220,8 @@ describe('E2E: foreign-pipeline protection', () => {
     );
   });
 
-  describe('TC-004: Foreign vs owned distinction in marker', () => {
-    it('should correctly identify foreign pipelines via marker validation', async () => {
+  describe('TC-004: Foreign vs owned distinction in the lock', () => {
+    it('should correctly identify foreign pipelines by the instance mark', async () => {
       // Create test process
       const proc = spawn('sleep', ['30'], {
         detached: true,
@@ -252,29 +231,16 @@ describe('E2E: foreign-pipeline protection', () => {
 
       const pid = proc.pid;
 
-      // Create marker with DIFFERENT instance ID (simulating foreign pipeline)
-      const markerPath = path.join(logsDir, '.mcp-started-by');
-      fs.writeFileSync(
-        markerPath,
-        JSON.stringify({
-          version: 1,
-          mcp_instance_id: 'workflow-mcp@differentinstance9999', // Foreign
-          started_at: new Date().toISOString(),
-          pid: 99999  // Different PID in marker
-        }),
-        'utf-8'
-      );
-
-      // Setup lock раннера with actual PID
-      writeRunnerLock(projectPath, pid);
+      // Lock того же вида, но с меткой другого экземпляра MCP.
+      writeRunnerLock(projectPath, pid, { started_by_id: 'workflow-mcp@differenti' });
 
       const { stopPipelineImpl } = await import('../../src/tools/pipeline.mjs');
 
-      // Should reject as foreign (marker has different instance ID)
       const result = await stopPipelineImpl('.');
 
       expect(result.ok).toBe(false);
       expect(result.code).toBe('FOREIGN_PIPELINE');
+      expect(result.reason).toBe('INSTANCE_MISMATCH');
 
       // Clean up
       try {
@@ -297,11 +263,7 @@ describe('E2E: foreign-pipeline protection', () => {
         proc.unref();
 
         const foreignPid = proc.pid;
-        writeRunnerLock(projectPath, foreignPid);
-
-        // No marker
-        const markerPath = path.join(logsDir, '.mcp-started-by');
-        expect(fs.existsSync(markerPath)).toBe(false);
+        writeRunnerLock(projectPath, foreignPid, { started_by: 'cli', started_by_id: null });
 
         // Set override
         process.env.WORKFLOW_MCP_FORCE_FOREIGN = '1';
@@ -346,23 +308,10 @@ describe('E2E: foreign-pipeline protection', () => {
         proc2.unref();
         const pid2 = proc2.pid;
 
-        // pid1 is owned (has marker), pid2 is foreign (no marker)
-        const markerPath = path.join(logsDir, '.mcp-started-by');
-        const mcp_instance_id = `workflow-mcp@${Buffer.from(projectPath).toString('hex').slice(0, 12)}`;
-
-        fs.writeFileSync(
-          markerPath,
-          JSON.stringify({
-            version: 1,
-            mcp_instance_id,
-            started_at: new Date().toISOString(),
-            pid: pid1
-          }),
-          'utf-8'
-        );
-
-        // lock раннера contains pid2 (the one we're trying to stop)
-        writeRunnerLock(projectPath, pid2);
+        // В проекте идёт чужой запуск (pid2), а pid1 — посторонний живой
+        // процесс. Владение описывает только lock, и он говорит «не наш».
+        void pid1;
+        writeRunnerLock(projectPath, pid2, { started_by: 'cli', started_by_id: null });
 
         const { stopPipelineImpl } = await import('../../src/tools/pipeline.mjs');
 

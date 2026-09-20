@@ -17,6 +17,46 @@
 import { execFileSync } from 'child_process';
 
 /**
+ * Память об уже опрошенных pid'ах.
+ *
+ * Опрос стоит сотни миллисекунд (`powershell -Command Get-Process`), а ответ
+ * для живого процесса неизменен: момент старта не меняется, пока процесс жив.
+ * Без памяти `list_running_pipelines` и чтение `workflow://pipeline-state`
+ * платили бы за один и тот же pid на каждый вызов, а зовут их часто.
+ *
+ * Срок жизни записи ограничен: освободившийся номер система переиспользует, и
+ * запись о прежнем владельце тогда врёт. Минута — компромисс между этим риском
+ * и ценой опроса; чтение состояния от него только выигрывает, а операции с
+ * сигналом и так защищены сверкой pid и `started_by_id` в lock'е.
+ *
+ * @type {Map<number, {at: number, value: Date|null}>}
+ */
+const startCache = new Map();
+const START_CACHE_TTL_MS = 60_000;
+
+/** Забыть опрошенное. Нужно тестам: иначе pid из прошлого теста считается известным. */
+export function clearProcessStartCache() {
+  startCache.clear();
+}
+
+/**
+ * Момент старта с памятью на минуту. Ошибку опроса (`null`) помним тоже:
+ * повторять безуспешный вызов на каждом чтении — та же цена без пользы.
+ *
+ * @param {number} pid
+ * @returns {Date|null}
+ */
+export function processStartedAtCached(pid) {
+  const hit = startCache.get(pid);
+  if (hit && Date.now() - hit.at < START_CACHE_TTL_MS) {
+    return hit.value;
+  }
+  const value = processStartedAt(pid);
+  startCache.set(pid, { at: Date.now(), value });
+  return value;
+}
+
+/**
  * @param {number} pid
  * @returns {Date|null} момент старта или null, если узнать не удалось
  */
@@ -82,7 +122,7 @@ export function pidCouldBeFromRun(pid, lockWrittenAt, toleranceMs = 5000) {
   if (Number.isNaN(lockTime)) {
     return true;
   }
-  const startedAt = processStartedAt(pid);
+  const startedAt = processStartedAtCached(pid);
   if (!startedAt) {
     return true;
   }

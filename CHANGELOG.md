@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] — 2026-09-20
+
+Долг по владению запуском, накопленный за восемь кругов ревью, закрыт одним
+решением: файл владения теперь один. Заодно закрыты два хвоста, которые до сих
+пор числились «задокументировано, не устранено».
+
+**Требует workflow-ai ≥ 1.7.0.**
+
+### Changed
+
+- **Владение читается из `.workflow/logs/.pipeline.lock`, второго файла нет.** `start_pipeline` передаёт раннеру `WORKFLOW_STARTED_BY_ID` со своим `mcp_instance_id`, раннер кладёт его в lock полем `started_by_id`. Собственный файл сервера `.workflow/logs/.mcp-started-by` удалён вместе с модулем `src/process/marker.mjs`; `stop_pipeline` и `abort_pipeline` больше ничего за раннером не убирают.
+
+  Пара файлов описывала один запуск и умела разойтись. Отсюда росли: `PID_MISMATCH` на собственном пайплайне, инвертированный признак `foreign`, расхождение идентификатора между писателем и читателем, `RUN_MISMATCH` на остатках прошлого прогона. Каждый из них чинился отдельно; причина была общая.
+
+  Проверка владения теперь сверяет четыре вещи, и все они лежат в одном файле: `pid`, `started_by`, `started_by_id`, время старта процесса.
+
+- **`list_running_pipelines` и `workflow://pipeline-state` спрашивают у ОС время старта процесса.** Раньше эта проверка считалась слишком дорогой для чтения состояния и делалась только перед отправкой сигнала. Цена платится один раз на pid: момент старта процесса не меняется, пока процесс жив, поэтому ответ помнится минуту (`processStartedAtCached`). Протухший lock с переиспользованным номером больше не выглядит идущим своим пайплайном — он виден как `stale` с `pid_reused: true`.
+
+- **Детектор `ghost_execution` перестал быть холостым.** Маркер `[GHOST-EXECUTION]` в лог не писал никто — ни раннер, ни сервер, — поэтому ни он, ни `list_ghost_executions` не могли дать истинного срабатывания с самого рождения. С workflow-ai 1.7.0 строку печатает `verify-artifacts`. Контракт закреплён тестом с обеих сторон: там — формат печати, здесь — что эта строка в виде, который даёт логгер раннера, действительно ловится.
+
+### Breaking
+
+- Поля ответа: `marker_valid` → `owned`, `marker_reason` → `ownership_reason`. Добавлено `pid_reused`.
+- Коды причин: `MISSING` → `NO_LOCK`; `RUN_MISMATCH` убран — расходиться нечему; добавлен `INSTANCE_UNKNOWN` (lock от раннера до 1.7.0: запуск через MCP, но чей — неизвестно). `PID_MISMATCH`, `STARTED_BY_MISMATCH`, `INSTANCE_MISMATCH`, `PID_REUSED` сохранены.
+- Код отказа `MARKER_VALIDATION_FAILED` → `OWNERSHIP_VALIDATION_FAILED` (`pause_pipeline`, `resume_pipeline`).
+- Запуск без `started_by: 'mcp'` в lock'е не считается своим ни при каких условиях. Прежде лежащий рядом маркер «доказывал» владение пайплайном, у которого источник в lock'е не проставлен вовсе.
+- Сигнатура `validateRunOwnership(lock, pid, instanceId, options)` — прежняя принимала `projectRoot` первым аргументом и читала маркер с диска сама.
+
+### Added
+
+- `start_pipeline` возвращает `warning: 'RUNNER_WITHOUT_INSTANCE_ID'`, если раннер не записал метку. Такой пайплайн читается как чужой, и остановить его удастся только с `force: true`; без предупреждения клиент узнал бы об этом в момент остановки.
+
+### Removed
+
+- `src/process/marker.mjs` и его тест (30 проверок): контракт целиком переехал в lock.
+- Три отладочные строки `console.error('DEBUG: …')` в `list_ghost_executions`, уходившие в stderr сервера на каждом скане логов.
+
+### Tests
+
+- `tests/process/run-lock.test.mjs` переписан под новый контракт: 26 проверок — разбор lock'а (включая `started_by_id` и lock раннера до 1.7.0), пять причин отказа, порядок проверок, аварийный ключ `WORKFLOW_MCP_FORCE_FOREIGN`, список принимаемых меток.
+- `tests/health/ghost-marker-contract.test.mjs` (новый, 8 проверок): строка `verify-artifacts` в сыром виде и после логгера раннера, оба детектора на ней, молчание на прозе.
+- `tests/tools/pipeline-marker-ownership.test.mjs` → `pipeline-ownership.test.mjs`: e2e на настоящем раннере, добавлены случаи «чужой экземпляр» и «раннер без метки».
+- `tests/tools/list-running-pipelines.test.mjs`: добавлена проверка переиспользованного номера — живой посторонний процесс на месте pid из древнего lock'а даёт `stale` + `pid_reused`, а не `running`.
+- Фикстуры lock'ов во всех наборах помечаются нашей рабочей областью через общий помощник `tests/helpers/pipeline-lock.mjs`.
+
+Саботаж на наборе из 150 проверок (десять файлов про владение, список пайплайнов и призраков): не проверять источник запуска — 10 падений, считать своим lock без метки — 5, принимать чужую метку — 9, не сверять pid — 1, не спрашивать время старта в списке — 1, не сверять время старта при проверке владения — 1, не передавать метку раннеру — 4, молчать о старом раннере — 1, искать маркер призрака подстрокой — 2.
+
+Полный прогон: 99 файлов, 1549 passed, 0 failed, 30 skipped, 4 todo.
+
+### Verification
+
+Verification 23 из PLAN-001 закрыта в CLI-режиме MCP Inspector (`npx @modelcontextprotocol/inspector --cli node src/server.mjs`): `tools/list` — 38, `resources/list` — 21, `resources/read workflow://alerts`, `tools/call list_running_pipelines`. Проверка переносимости схем: 0 ошибок, 2 предупреждения — `run_skill.args` и `run_skill.context` объявлены как свободные объекты, и zod 4 сериализует это в `additionalProperties: {}`; по JSON Schema это то же самое, что `true`, контракт менять незачем.
+
 ## [2.0.0] — 2026-09-20
 
 Проверка живого сервера по всей поверхности (25 из 38 tools, 41 ресурс, полный

@@ -13,6 +13,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import { start_pipeline } from '../../src/tools/pipeline.mjs';
+import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -36,10 +37,19 @@ function writeLock(projectPath, pid, startedAt = new Date().toISOString()) {
 }
 
 /**
- * Подставной «раннер»: пишет лог в формате pipeline_<ts>.log и завершается.
- * Позволяет проверить контракт start_pipeline, не гоняя настоящий пайплайн.
+ * Подставной «раннер»: пишет `.pipeline.lock` и лог `pipeline_<ts>.log`, как
+ * настоящий, и держится несколько секунд. Позволяет проверить контракт
+ * start_pipeline, не гоняя настоящий пайплайн.
+ *
+ * Lock несёт то, чем представился запускающий (`WORKFLOW_STARTED_BY` и
+ * `WORKFLOW_STARTED_BY_ID`): с 3.0.0 это единственный файл владения.
+ *
+ * @param {string} dir каталог для bin
+ * @param {Object} [options]
+ * @param {boolean} [options.recordInstanceId] писать ли метку экземпляра
+ *   (false — раннер до workflow-ai 1.7.0)
  */
-function writeFakeRunner(dir) {
+function writeFakeRunner(dir, { recordInstanceId = true } = {}) {
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
   const bin = path.join(binDir, 'workflow.mjs');
@@ -51,7 +61,22 @@ function writeFakeRunner(dir) {
     "const ts = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').substring(0, 19);",
     "const logsDir = path.join(projectRoot, '.workflow', 'logs');",
     "fs.mkdirSync(logsDir, { recursive: true });",
+    "const now = new Date().toISOString();",
+    "const lock = {",
+    "  pid: process.pid,",
+    "  timestamp: now,",
+    "  started_at: now,",
+    "  started_by: process.env.WORKFLOW_STARTED_BY || 'cli',",
+    "  run_id: `pipeline_${ts}`",
+    "};",
+    recordInstanceId
+      ? "if (process.env.WORKFLOW_STARTED_BY_ID) { lock.started_by_id = process.env.WORKFLOW_STARTED_BY_ID; }"
+      : "// раннер до 1.7.0 метку экземпляра не пишет",
+    "fs.writeFileSync(path.join(logsDir, '.pipeline.lock'), JSON.stringify(lock, null, 2));",
     "fs.writeFileSync(path.join(logsDir, `pipeline_${ts}.log`), '[start] pipeline\\n');",
+    // Настоящий раннер живёт часами; подставной держится, пока вызывающий
+    // читает lock, иначе pid успевает освободиться.
+    "setTimeout(() => {}, 5000);",
   ].join('\n'));
   return bin;
 }
@@ -126,21 +151,35 @@ describe('start_pipeline', () => {
     }));
   });
 
-  it('помечает запуск своим маркером владения', async () => {
+  it('помечает запуск своим: раннер кладёт метку экземпляра в lock', async () => {
     process.env.WORKFLOW_AI_BIN = writeFakeRunner(workspaceDir);
 
     const result = await start_pipeline.execute({ project: 'start-project' });
 
-    const marker = JSON.parse(fs.readFileSync(
-      path.join(projectPath, '.workflow', 'logs', '.mcp-started-by'),
+    const lock = JSON.parse(fs.readFileSync(
+      path.join(projectPath, '.workflow', 'logs', '.pipeline.lock'),
       'utf8'
     ));
 
-    // Владение привязано к запуску: в маркере pid раннера, и именно с живым
-    // pid из `.pipeline.lock` сверяются pause/resume/abort/stop.
-    expect(marker.pid).toBe(result.pid);
-    expect(marker.run_id).toBe(result.run_id);
-    expect(marker.version).toBe(1);
+    // Единственный файл владения — сам lock. Своего файла сервер не пишет:
+    // пара файлов про один запуск умела разойтись.
+    expect(lock.started_by).toBe('mcp');
+    expect(lock.started_by_id).toBe(mcpInstanceId(workspaceDir));
+    expect(result.warning).toBeUndefined();
+    expect(fs.existsSync(path.join(projectPath, '.workflow', 'logs', '.mcp-started-by'))).toBe(false);
+  });
+
+  it('раннер без метки экземпляра — предупреждение в ответе', async () => {
+    // workflow-ai до 1.7.0. Такой запуск читается как чужой, и остановить его
+    // получится только с force. Молчать нельзя: клиент узнал бы о потере
+    // управления лишь в момент остановки.
+    process.env.WORKFLOW_AI_BIN = writeFakeRunner(workspaceDir, { recordInstanceId: false });
+
+    const result = await start_pipeline.execute({ project: 'start-project' });
+
+    expect(result.ok).toBe(true);
+    expect(result.warning).toBe('RUNNER_WITHOUT_INSTANCE_ID');
+    expect(result.hint).toMatch(/workflow-ai/);
   });
 
   it('отказывает, но не сносит lock с живым чужим pid', { timeout: 30000 }, async () => {
