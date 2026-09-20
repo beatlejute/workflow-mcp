@@ -24,7 +24,8 @@ const RUSSIAN_DENIED = {
   stderr: 'ОШИБКА: не удалось завершить процесс "node.exe" с идентификатором 4242.\nПричина: Отказано в доступе.'
 };
 
-const DEAD_PID = 999999;
+/** Свободный номер с запасом: на Linux `pid_max` бывает 4 194 304. */
+const DEAD_PID = 999999999;
 
 let victim = null;
 
@@ -49,15 +50,30 @@ afterEach(() => {
 describe('код возврата — первый довод', () => {
   it('128 значит «нет такого процесса», даже если процесс жив', async () => {
     // Живой номер и код 128 одновременно — противоречие, которого в жизни не
-    // бывает; проверяется именно то, что код читается раньше всего.
+    // бывает. Оно тут нарочно: с `probeLiveness` обратный порядок доводов дал
+    // бы `PERMISSION_DENIED`, и этот тест его ловит.
     victim = await spawnVictim();
 
-    expect(classifyTaskkillFailure({ exitCode: 128 }, victim.pid)).toBe('NO_SUCH_PROCESS');
+    expect(classifyTaskkillFailure({ exitCode: 128 }, victim.pid, { probeLiveness: true }))
+      .toBe('NO_SUCH_PROCESS');
   });
 
-  it('код 128 не требует похода в tasklist', () => {
+  it('код 128 не требует похода в ОС', () => {
     expect(classifyTaskkillFailure({ exitCode: 128 }, DEAD_PID, { probeLiveness: true }))
       .toBe('NO_SUCH_PROCESS');
+  });
+
+  it('утилита не запустилась — про процесс это не говорит ничего', async () => {
+    // `spawn taskkill ENOENT`: пустой `PATH` у хоста MCP, урезанное окружение.
+    // Прежде такой отказ доходил до опроса живости, и живой процесс объявлялся
+    // «нет прав» — диагноз не про то.
+    victim = await spawnVictim();
+
+    expect(classifyTaskkillFailure(
+      { code: 'SPAWN_FAILED', hint: 'spawn taskkill ENOENT' },
+      victim.pid,
+      { probeLiveness: true }
+    )).toBeNull();
   });
 });
 
@@ -75,7 +91,17 @@ describe('текст — второй довод', () => {
   });
 });
 
-describe('живость — третий довод, и только на принудительном пути', () => {
+describe('живость важнее текста и спрашивается только на принудительном пути', () => {
+  it('английский «отказано в доступе» не перебивает факт', () => {
+    // Исход не должен зависеть от языка системы: на русской этот же отказ
+    // разбирался по живости, на английской — по тексту, и ответы расходились.
+    expect(classifyTaskkillFailure(
+      { exitCode: 1, stderr: 'ERROR: Access is denied.' },
+      DEAD_PID,
+      { probeLiveness: true }
+    )).toBe('NO_SUCH_PROCESS');
+  });
+
   it('мягкая попытка живой процесс за отказ не считает', async () => {
     victim = await spawnVictim();
 
@@ -105,7 +131,6 @@ describe('checkProcess', () => {
 
     victim.kill();
     await new Promise((resolve) => victim.once('exit', resolve));
-    await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Память ещё держит «жив» — а `checkProcess` зовут сразу после сигнала,
     // поэтому он обязан переспросить.
@@ -119,14 +144,18 @@ describe('checkProcess', () => {
     expect(checkProcess(victim.pid)).toEqual({ exists: true });
   });
 
-  it('чужой процесс (EPERM) существует, а не «неизвестная ошибка»', () => {
-    // Здесь была четвёртая собственная реализация живости: она читала `EPERM`
-    // как `UNKNOWN_ERROR` и отвечала «процесса нет». По этому ответу
-    // вызывающие снимают lock и шлют сигналы.
+  it.each([
+    ['EPERM', 'EPERM'],
+    ['прочая ошибка ядра', 'EINVAL']
+  ])('ошибка «%s» не выдаётся за отсутствие процесса', (_label, code) => {
+    // Прежняя собственная реализация `EPERM` читала верно, а всё остальное —
+    // как `{exists: false, code: 'UNKNOWN_ERROR'}`. По отрицанию вызывающие
+    // снимают lock и шлют сигналы, поэтому «не знаю» обязано звучать как
+    // «процесс есть».
     const savedPath = process.env.PATH;
     vi.spyOn(process, 'kill').mockImplementation(() => {
-      const err = new Error('EPERM');
-      err.code = 'EPERM';
+      const err = new Error(code);
+      err.code = code;
       throw err;
     });
     try {

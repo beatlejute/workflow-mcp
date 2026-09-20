@@ -17,6 +17,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { spawn } from 'child_process';
 
 import { abort } from '../../src/process/control.mjs';
+import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
 
 let victim = null;
 
@@ -37,6 +38,30 @@ afterEach(() => {
     try { victim.kill('SIGKILL'); } catch { /* уже мёртв */ }
     victim = null;
   }
+});
+
+describe('отказ жёсткого сигнала разбирается по существу', () => {
+  it.runIf(process.platform === 'win32')(
+    'процесс исчез за grace-окно — NO_SUCH_PROCESS, а не сырой отказ утилиты',
+    { timeout: 30000 },
+    async () => {
+      // Мягкий `taskkill` консольному процессу штатно не проходит, дальше идёт
+      // grace-окно. Раннер за это время выходит сам, и жёсткий сигнал получает
+      // код 128. Прежде наружу уходил `EXTERNAL_COMMAND_FAILED` с
+      // локализованным текстом, по которому клиенту нечего решать.
+      victim = await spawnVictim();
+      clearProcessAliveCache();
+      const doomed = victim;
+      setTimeout(() => {
+        try { doomed.kill('SIGKILL'); } catch { /* уже мёртв */ }
+      }, 300);
+
+      const result = await abort(victim.pid, { grace_sec: 1, can_escalate: () => true });
+
+      expect(result.ok).toBe(false);
+      expect(result.code).toBe('NO_SUCH_PROCESS');
+    }
+  );
 });
 
 describe('вердикт can_escalate превращается в ответ', () => {

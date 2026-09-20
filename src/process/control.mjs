@@ -92,8 +92,13 @@ function callExternal(command, args) {
  * - живость: если после отказа процесс мёртв, дело было в нём, а если жив —
  *   нам не хватило прав его тронуть.
  *
- * Подстроки оставлены третьим доводом: на английской системе они дают ответ
- * без похода в `tasklist`.
+ * Подстроки остались последним доводом — для пути, где живость не
+ * спрашивается. Раньше они стояли перед ней, и на английской системе исход
+ * отличался от русской: текст побеждал факт.
+ *
+ * Сбой запуска самой утилиты (`SPAWN_FAILED`: нет `taskkill` в `PATH`) сюда не
+ * относится вовсе — это про окружение, а не про процесс. Прежде такой отказ
+ * доходил до опроса живости и живой процесс объявлялся «нет прав».
  *
  * Живость спрашивается только после принудительной остановки. Мягкий
  * `taskkill` без `/F` штатно не проходит для процесса без окна — консольный
@@ -112,8 +117,25 @@ function callExternal(command, args) {
  * @returns {'NO_SUCH_PROCESS'|'PERMISSION_DENIED'|null} null — причина неясна
  */
 export function classifyTaskkillFailure(failure, pid, { probeLiveness = false } = {}) {
+  // Утилита не запустилась — про сам процесс это не говорит ничего.
+  if (typeof failure.exitCode !== 'number') {
+    return null;
+  }
+
   if (failure.exitCode === 128) {
     return 'NO_SUCH_PROCESS';
+  }
+
+  if (probeLiveness) {
+    const state = probeProcess(pid, { fresh: true });
+    if (state === 'dead') {
+      return 'NO_SUCH_PROCESS';
+    }
+    if (state === 'alive') {
+      // Принудительная остановка не прошла, а процесс на месте — это про права.
+      return 'PERMISSION_DENIED';
+    }
+    // Спросить не удалось — остаётся текст.
   }
 
   const text = `${failure.stderr ?? ''} ${failure.hint ?? ''}`.toLowerCase();
@@ -124,19 +146,6 @@ export function classifyTaskkillFailure(failure, pid, { probeLiveness = false } 
     return 'PERMISSION_DENIED';
   }
 
-  if (!probeLiveness) {
-    return null;
-  }
-
-  const state = probeProcess(pid, { fresh: true });
-  if (state === 'dead') {
-    return 'NO_SUCH_PROCESS';
-  }
-  if (state === 'alive') {
-    // Принудительная остановка не прошла, а процесс на месте — это про права.
-    return 'PERMISSION_DENIED';
-  }
-  // Спросить не удалось — гадать не будем.
   return null;
 }
 
@@ -284,7 +293,13 @@ export async function abort(pid, options = {}) {
       };
     }
 
-    return forceResult;
+    // Жёсткий сигнал не прошёл. Причина разбирается так же, как в `kill`:
+    // иначе наружу уходил сырой `EXTERNAL_COMMAND_FAILED` с локализованным
+    // текстом, по которому клиенту нечего решать.
+    const forceReason = classifyTaskkillFailure(forceResult, pid, { probeLiveness: true });
+    return forceReason
+      ? { ok: false, code: forceReason, pid, hint: forceResult.hint }
+      : forceResult;
   }
 
   // POSIX: SIGINT first
@@ -360,7 +375,11 @@ export async function kill(pid) {
  * Существует ли процесс.
  *
  * Обёртка над общей проверкой: здесь была четвёртая по счёту собственная
- * реализация живости — со своим прочтением `EPERM` и без Windows-ветки.
+ * реализация живости. `EPERM` она читала верно, а вот прочие ошибки ядра —
+ * как «процесса нет», и Windows-ветки через `tasklist` у неё не было: на
+ * Windows ответ строился на `kill(pid, 0)`, который про чужие процессы даёт
+ * `EPERM`, а про процессы других сессий — не всегда правду.
+ *
  * Ответ берётся свежим: зовут это сразу после сигнала, а память держит прежний
  * ответ секунду.
  *
