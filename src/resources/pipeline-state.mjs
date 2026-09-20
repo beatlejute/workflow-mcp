@@ -183,8 +183,6 @@ export function get_workflow_pipeline_state(absoluteCwd) {
     // убирать руками.
     const staleLock = Boolean(lock) && !pidAlive;
 
-
-
     // If there is a pending approval and pipeline is running, treat as paused
     if (awaiting && state === 'running') {
       state = 'paused';

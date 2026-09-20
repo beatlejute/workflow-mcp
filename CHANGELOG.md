@@ -23,11 +23,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Testing
 - **`tests/process/abort-state.test.mjs`** — 11 проверок самого флага: запись со всеми полями, создание каталога состояния, идемпотентное снятие, четыре варианта испорченного файла, границы TTL, старый формат без `runner_pid`.
 - **`tests/tools/abort-pipeline-state.test.mjs`** — четыре проверки стыка: внутри grace-окна снимок показывает `aborting`, после — снова `running`; флаг снимается и при неудачной остановке; параллельный abort отклоняется. Сам сигнал подменён: его поведение зависит от платформы, а проверяется здесь то, что видно снаружи.
-- Проверено саботажем; числа мерены на одном наборе — `vitest run tests/process/abort-state.test.mjs tests/tools/abort-pipeline-state.test.mjs tests/tools/list-running-pipelines.test.mjs` (38 проверок). Снятие ветки `aborting` валит 3, отмена сверки флага с pid прогона — 1, со `run_id` — 1, отмена проверки TTL — 2, возврат `stale` поверх кода выхода — 1, отказ писать флаг в `abort_pipeline` — 2, неснятие флага после неудачной остановки — 1.
+- Проверено саботажем. Числа мерены одной командой на итоговом коде:
+  `vitest run tests/process/kill-outcome.test.mjs tests/process/abort-state.test.mjs tests/tools/abort-pipeline-state.test.mjs tests/tools/list-running-pipelines.test.mjs` — 58 проверок, все зелёные.
+
+  | что ломается | падений |
+  |---|---|
+  | снята ветка `aborting` | 3 |
+  | флаг abort'а не сверяется с pid прогона | 2 |
+  | флаг abort'а не сверяется с `run_id` | 1 |
+  | флаг без `runner_pid` снова подходит любому прогону | 1 |
+  | не проверяется протухание флага | 2 |
+  | `abort_pipeline` не пишет флаг | 2 |
+  | флаг не снимается после неудачной остановки | 1 |
+  | снята ветка `killed` | 3 |
+  | запись об исходе не сверяется с pid | 2 |
+  | запись об исходе не сверяется с `run_id` | 2 |
+  | `stop_pipeline` не пишет исход | 1 |
+  | исход пишется и без эскалации | 1 |
 - **`tests/process/kill-outcome.test.mjs`** — 13 проверок записи об исходе: формат, создание каталога, идемпотентное снятие, четыре варианта испорченного файла, сверка с прогоном по pid и `run_id`, поведение при lock'е без `run_id`.
 - `tests/tools/abort-pipeline-state.test.mjs` дополнен тремя проверками `killed`: `stop_pipeline` записывает исход и снимок показывает `killed`; эскалация `abort_pipeline` — то же; без эскалации записи нет.
 - `tests/tools/list-running-pipelines.test.mjs`: два теста фантомных маркеров заменены одиннадцатью настоящими — четыре про флаг abort'а (свой, от другого pid, от другого `run_id`, протухший), один про флаг старого формата без `runner_pid`, abort перекрывает паузу, и четыре про `killed` (свой исход, чужой pid, прошлый `run_id`, живой прогон с записью).
-- Второй заход проверен саботажем на наборе из четырёх файлов (`kill-outcome`, `abort-state`, `abort-pipeline-state`, `list-running-pipelines`): снятие ветки `killed` валит 3 проверки, отмена сверки исхода с pid — 2, со `run_id` — 2, отказ `stop_pipeline` писать исход — 1, запись исхода без эскалации — 1, возврат прежней трактовки флага без `runner_pid` — 1.
 
 ## [1.4.0] — 2026-09-20
 
