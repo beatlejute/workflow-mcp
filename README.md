@@ -33,7 +33,7 @@ MCP-сервер, агрегирующий операции по несколь�
 ### Breaking changes
 
 - **Ответ `list_running_pipelines` и `workflow://pipeline-state`: `marker_valid` → `owned`, `marker_reason` → `ownership_reason`.** Маркера как сущности больше нет, поля названы по смыслу. Добавлено `pid_reused`.
-- **Коды причин отказа.** `MISSING` (нет файла маркера) стал `NO_LOCK`; `RUN_MISMATCH` исчез — расходиться нечему; появился `INSTANCE_UNKNOWN` (lock от раннера до 1.7.0). `PID_MISMATCH`, `STARTED_BY_MISMATCH`, `INSTANCE_MISMATCH` и `PID_REUSED` сохранены.
+- **Коды причин отказа.** `MISSING` (нет файла маркера) стал `NO_LOCK`; `RUN_MISMATCH` исчез — расходиться нечему; появился `INSTANCE_UNKNOWN` (lock от раннера 1.6.x). `PID_MISMATCH`, `STARTED_BY_MISMATCH`, `INSTANCE_MISMATCH` и `PID_REUSED` сохранены.
 - **Код отказа `MARKER_VALIDATION_FAILED` заменён на `OWNERSHIP_VALIDATION_FAILED`** (`pause_pipeline`, `resume_pipeline`).
 - **Запуск без `started_by: 'mcp'` в lock'е больше не считается своим ни при каких условиях.** Прежде маркер рядом мог «доказать» владение пайплайном, у которого в lock'е источник не проставлен вовсе.
 
@@ -246,7 +246,7 @@ const log = await client.callTool('get_pipeline_log', {
 > - `started_by_id` — метка рабочей области, её передаёт `start_pipeline` через
 >   `WORKFLOW_STARTED_BY_ID`. Чужая метка — `INSTANCE_MISMATCH`, отсутствие метки
 >   (раннер workflow-ai 1.6.x) — `INSTANCE_UNKNOWN`: запуск может быть и наш, но
->   доказательства нет;
+>   доказательства нет, поэтому в снимке он всё равно помечен `foreign`;
 > - время старта процесса — настоящий раннер стартовал не позже записи lock'а
 >   (`PID_REUSED`). Время берётся у ОС (`Get-Process` на Windows, `ps -o lstart=` на
 >   POSIX); если узнать не удалось — проверка пропускается, чтобы недоступная

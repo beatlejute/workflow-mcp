@@ -8,7 +8,7 @@
  * Поэтому сигнальные пути зовут с `fresh: true`.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { spawn } from 'child_process';
 
 import {
@@ -85,6 +85,25 @@ describe('processStartedAtCached', () => {
     processStartedAtCached(victim.pid, { fresh: true });
 
     expect(processStartedAtCached(victim.pid)).toBeNull();
+  });
+
+  it('запись протухает через минуту и ответ переспрашивается', async () => {
+    // Срок жизни проверяется через сам `processStartedAtCached`, а не только
+    // через правило: подменяются часы, а опрос ОС остаётся настоящим.
+    victim = await spawnVictim();
+
+    expect(processStartedAtCached(victim.pid)).toBeInstanceOf(Date);
+
+    victim.kill();
+    await waitForExit(victim);
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(Date.now() + 61_000));
+      expect(processStartedAtCached(victim.pid)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('память об одном pid не отвечает за другой', async () => {

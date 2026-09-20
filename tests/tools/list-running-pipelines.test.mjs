@@ -430,6 +430,30 @@ describe('чужие пайплайны', () => {
     expect(entry.ownership_reason).toBe('INSTANCE_UNKNOWN');
   });
 
+  it('чужой lock с переиспользованным номером тоже не «чужой»', async () => {
+    // Признак берётся из самой проверки времени старта, а не из причины
+    // отказа владения: у чужого lock'а причина всегда про чужого — она
+    // проверяется раньше. Иначе запись выглядела бы как «чужой пайплайн,
+    // позовите с force», то есть звала бы убить посторонний процесс.
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    const ancient = '2020-01-01T00:00:00.000Z';
+    writeLock(root, victim.pid, {
+      started_by: 'cli',
+      started_by_id: null,
+      started_at: ancient,
+      timestamp: ancient
+    });
+    writeLog(root);
+
+    const entry = await snapshotOne();
+
+    expect(entry.state).toBe('stale');
+    expect(entry.pid_reused).toBe(true);
+    expect(entry.foreign).toBeUndefined();
+    expect(entry.ownership_reason).toBe('STARTED_BY_MISMATCH');
+  });
+
   it('битый lock — проект не попадает в снимок вовсе', async () => {
     // Раньше рядом лежал маркер, и битый маркер ронял снимок целиком. Теперь
     // источник один: не разобрали lock — считаем, что пайплайна нет.

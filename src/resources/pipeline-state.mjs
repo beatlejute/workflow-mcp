@@ -192,13 +192,17 @@ export function get_workflow_pipeline_state(absoluteCwd) {
     // процесса запись о прошлом убийстве ничего не доказывает — номер мог
     // переиспользоваться.
     //
-    // `PID_REUSED` — тоже не «чужой»: lock наш, просто раннера по этому номеру
-    // давно нет, а номер занял посторонний процесс. Про это говорят `stale`,
-    // `stale_lock` и `pid_reused`, а `foreign` увело бы к «пайплайн чужой,
-    // позовите с force» — ровно к тому, что убьёт постороннее дерево. Отказы
-    // инструментов трактуют этот случай так же: `STALE_PIPELINE_LOCK`, а не
-    // `FOREIGN_PIPELINE`.
-    const isForeign = !ownership.valid && !killed && ownership.reason !== 'PID_REUSED';
+    // Переиспользованный номер — не «чужой» ни при каком владельце lock'а:
+    // раннера по этому номеру давно нет, а номер занял посторонний процесс.
+    // Про это говорят `stale`, `stale_lock` и `pid_reused`, а `foreign` увело
+    // бы к «пайплайн чужой, позовите с force» — ровно к тому, что убьёт
+    // постороннее дерево. Отказы инструментов трактуют этот случай так же:
+    // `STALE_PIPELINE_LOCK`, а не `FOREIGN_PIPELINE`.
+    //
+    // Признак берётся из уже посчитанного `pidReused`, а не из причины отказа:
+    // у чужого lock'а причина всегда про чужого (`STARTED_BY_MISMATCH` и
+    // прочие) — она проверяется раньше времени старта.
+    const isForeign = !ownership.valid && !killed && !pidReused;
     const awaiting = getAwaitingApproval(projectRoot);
     const { runId, currentStage, stepNumber } = getRunInfo(projectRoot);
 

@@ -30,14 +30,20 @@ vi.mock('../../src/process/process-start.mjs', () => ({
   clearProcessStartCache: () => {}
 }));
 
+/** Решение об эскалации внутри grace-окна принимает сам `abort`. */
+let escalationDecision = null;
+
 vi.mock('../../src/process/control.mjs', () => ({
   kill: async () => ({ ok: true }),
   pause: async () => ({ ok: true, method: 'test' }),
   resume: async () => ({ ok: true }),
-  abort: async () => ({ ok: true, duration_ms: 1, escalated: false })
+  abort: async (pid, options = {}) => {
+    escalationDecision = typeof options.can_escalate === 'function' ? options.can_escalate() : null;
+    return { ok: true, duration_ms: 1, escalated: false };
+  }
 }));
 
-const { stopPipelineImpl, pausePipelineImpl, abortPipelineImpl, list_running_pipelines } =
+const { stopPipelineImpl, pausePipelineImpl, resumePipelineImpl, abortPipelineImpl, list_running_pipelines } =
   await import('../../src/tools/pipeline.mjs');
 const { mcpInstanceId } = await import('../../src/lib/project-root.mjs');
 
@@ -62,6 +68,7 @@ function writeLock(pid) {
 
 beforeEach(() => {
   calls.length = 0;
+  escalationDecision = null;
   workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fresh-check-')));
   projectRoot = path.join(workspace, 'proj');
   fs.mkdirSync(path.join(projectRoot, '.workflow', 'logs'), { recursive: true });
@@ -103,6 +110,33 @@ describe('пути с сигналом', () => {
     writeLock(999999);
 
     await abortPipelineImpl('proj', { grace_sec: 0 });
+
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((c) => c.fresh)).toBe(true);
+  });
+
+  it('решение об эскалации внутри grace-окна — тоже по свежему опросу', async () => {
+    // Между мягким сигналом и жёстким проходит до минуты: ответ, взятый из
+    // памяти до grace-окна, к моменту эскалации устаревает ровно настолько,
+    // чтобы пропустить переиспользованный номер.
+    writeLock(999999);
+    calls.length = 0;
+
+    await abortPipelineImpl('proj', { grace_sec: 0 });
+
+    expect(escalationDecision).toEqual({ escalate: true });
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls.every((c) => c.fresh)).toBe(true);
+  });
+
+  it('resume_pipeline спрашивает ОС заново', async () => {
+    writeLock(999999);
+    fs.writeFileSync(
+      path.join(projectRoot, '.workflow', 'state', 'pipeline-pause.json'),
+      JSON.stringify({ pid: 999999, paused_at: new Date().toISOString() })
+    );
+
+    await resumePipelineImpl('proj');
 
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.every((c) => c.fresh)).toBe(true);

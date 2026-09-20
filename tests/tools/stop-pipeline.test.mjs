@@ -274,6 +274,56 @@ describe('stop_pipeline tool', () => {
     });
   });
 
+  describe('TC-005b: force не убивает по переиспользованному номеру и у чужого lock', () => {
+    it.each([
+      ['запущен из CLI', { started_by: 'cli', started_by_id: null }],
+      ['помечен другим экземпляром', { started_by_id: 'workflow-mcp@foreign12345' }],
+      ['раннер без метки', { started_by_id: null }]
+    ])('отказывает с force=true: lock %s', { timeout: 30000 }, async (_label, lockFields) => {
+      // Ровно тот случай, ради которого `force` и зовут: владение не
+      // подтверждено. Признаки чужого запуска проверяются раньше времени
+      // старта, поэтому причина отказа владения тут — про чужого, а не
+      // `PID_REUSED`; если смотреть только на неё, `force` убьёт посторонний
+      // процесс, занявший номер.
+      const victim = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore' });
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        const ancient = '2020-01-01T00:00:00.000Z';
+        writeRunnerLock(projectPath, victim.pid, { started_at: ancient, timestamp: ancient, ...lockFields });
+
+        const result = await stopPipelineImpl('.', { force: true });
+
+        expect(result.ok).toBe(false);
+        expect(result.code).toBe('STALE_PIPELINE_LOCK');
+        expect(result.reason).toBe('PID_REUSED');
+        expect(() => process.kill(victim.pid, 0)).not.toThrow();
+      } finally {
+        try { victim.kill(); } catch { /* мог завершиться */ }
+      }
+    });
+
+    it('живой чужой раннер по-прежнему убивается с force=true', { timeout: 30000 }, async () => {
+      // Обратная сторона: защита не должна ломать законный сценарий force.
+      const victim = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore' });
+      let killed = false;
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        // Lock записан после старта процесса — значит это он и есть.
+        writeRunnerLock(projectPath, victim.pid, { started_by: 'cli', started_by_id: null });
+
+        const result = await stopPipelineImpl('.', { force: true });
+
+        expect(result.ok).toBe(true);
+        expect(result.state).toBe('killed');
+        killed = true;
+      } finally {
+        if (!killed) { try { victim.kill(); } catch { /* мог завершиться */ } }
+      }
+    });
+  });
+
   describe('TC-006: файл владения остаётся за раннером', () => {
     it.skipIf(process.platform === 'win32')('не заводит своего файла и не снимает lock', async () => {
       // Прежде сервер писал `.mcp-started-by` и удалял его после убийства.

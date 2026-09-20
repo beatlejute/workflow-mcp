@@ -86,6 +86,24 @@ describe('строка verify-artifacts ловится матчером', () => 
     expect(matcher.test('verify-artifacts напечатал [GHOST-EXECUTION] ticket=QA-903 — разберись')).toBe(false);
     expect(matcher.test('[2026-09-20 19:51:00] [INFO] [claude] в логе вижу [GHOST-EXECUTION] ticket=X')).toBe(false);
   });
+
+  it('дословная цитата строки лога внутри вывода агента — не событие', () => {
+    // Агенты цитируют `log_excerpt` из `list_ghost_executions` целиком, вместе
+    // с префиксом раннера. Префикс поэтому описан точно, а не «сколько угодно
+    // скобочных групп»: у раннера он ровно один.
+    const matcher = buildGhostMarkerMatcher();
+    const quoted = `[2026-09-20 20:00:00] [INFO] [claude]   [2026-09-20 19:30:01] [INFO] [verify-artifacts]   ${GHOST_STDOUT_LINE}`;
+
+    expect(matcher.test(quoted)).toBe(false);
+    expect(matcher.test('[2026-09-20 20:00:00] [INFO] [claude]   [note] [GHOST-EXECUTION] ticket=QA-1')).toBe(false);
+  });
+
+  it('но настоящую запись с любым уровнем логгера ловит', () => {
+    const matcher = buildGhostMarkerMatcher();
+
+    expect(matcher.test(`[2026-09-20 19:30:01] [WARN] [verify-artifacts] ${GHOST_STDOUT_LINE}`)).toBe(true);
+    expect(matcher.test(`[2026-09-20 19:30:01] [ERROR] [review-result]   ${GHOST_STDOUT_LINE}`)).toBe(true);
+  });
 });
 
 describe('детектор здоровья', () => {
@@ -111,6 +129,12 @@ describe('детектор здоровья', () => {
 
   it('молчит, когда агент пересказывает строку в своём выводе', () => {
     writeLog(runnerLog(`агент сообщает: ${GHOST_STDOUT_LINE}`));
+
+    expect(detectGhostExecution(projectRoot)).toBeNull();
+  });
+
+  it('молчит на дословной цитате лог-строки в выводе агента', () => {
+    writeLog(runnerLog(`[2026-09-20 19:30:01] [INFO] [verify-artifacts]   ${GHOST_STDOUT_LINE}`));
 
     expect(detectGhostExecution(projectRoot)).toBeNull();
   });

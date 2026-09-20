@@ -260,10 +260,11 @@ export const start_pipeline = {
 
     const run_id = logName.replace(/\.log$/, '');
 
-    // Раннер до workflow-ai 1.7.0 метку `started_by_id` не пишет, и такой
-    // прогон виден как `INSTANCE_UNKNOWN`: `stop_pipeline` и `abort_pipeline`
-    // откажут без `force`. Молчать об этом нельзя — клиент узнал бы о потере
-    // управления только в момент остановки.
+    // Раннер workflow-ai 1.6.x метку `started_by_id` не пишет, и такой прогон
+    // виден как `INSTANCE_UNKNOWN`: `stop_pipeline` потребует `force`, а
+    // `abort_pipeline`, у которого `force` нет вовсе, откажет наглухо. Молчать
+    // об этом нельзя — клиент узнал бы о потере управления только в момент
+    // остановки.
     const writtenLock = readPipelineLock(projectRoot);
     const runnerTooOld = Boolean(writtenLock) && writtenLock.pid === child.pid && !writtenLock.started_by_id;
 
@@ -274,8 +275,9 @@ export const start_pipeline = {
       started_at,
       ...(runnerTooOld && {
         warning: 'RUNNER_WITHOUT_INSTANCE_ID',
-        hint: 'The runner did not record started_by_id in .pipeline.lock (workflow-ai < 1.7.0). '
-          + 'This pipeline will read as foreign; stop_pipeline and abort_pipeline will need force=true. Update workflow-ai.'
+        hint: 'The runner did not record started_by_id in .pipeline.lock (workflow-ai 1.6.x). '
+          + 'This pipeline reads as foreign: stop_pipeline will need force=true, and abort_pipeline — which has no force '
+          + 'option — will refuse it outright. Update workflow-ai.'
       }),
       log_path: path.join(logsDir, logName)
     };
@@ -623,15 +625,25 @@ export const resume_pipeline = {
     }
     const pid = runner.pid;
 
-    // Сверка владения по lock'у. `force` снимает вопрос о том, чей это
-    // пайплайн, но не вопрос о том, есть ли он вообще: при `PID_REUSED` номер
-    // из lock'а принадлежит постороннему процессу, и убийство «с force» —
-    // это `taskkill /F /T` по чужому дереву. Подсказка в `ownershipRefusal`
-    // прямо говорит не повторять с force; странно было бы её же и обходить.
-    const validation = validateRunOwnership(
-      runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true, fresh: true }
-    );
-    if (!validation.valid && (!force || validation.reason === 'PID_REUSED')) {
+    // Переиспользованный номер проверяется отдельно и раньше владения.
+    //
+    // `force` снимает вопрос о том, чей это пайплайн, но не вопрос о том, есть
+    // ли он вообще: при `PID_REUSED` номер из lock'а принадлежит постороннему
+    // процессу, и убийство «с force» — это `taskkill /F /T` по чужому дереву.
+    //
+    // Сверять это внутри `validateRunOwnership` было недостаточно: признаки
+    // чужого запуска там проверяются раньше времени старта (и правильно — для
+    // живого чужого раннера совет «удалите lock» был бы вредным), поэтому у
+    // чужого lock'а причина отказа всегда `STARTED_BY_MISMATCH`, а не
+    // `PID_REUSED`. Именно в этом случае и зовут `force` — и защита не
+    // срабатывала ровно там, где нужна.
+    if (!pidCouldBeFromRun(pid, runner.lock?.started_at ?? null, { fresh: true })) {
+      return ownershipRefusal({ reason: 'PID_REUSED' }, 'FOREIGN_PIPELINE', '');
+    }
+
+    // Владение. Время старта уже проверено выше — второй опрос ОС не нужен.
+    const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds());
+    if (!validation.valid && !force) {
       return ownershipRefusal(
         validation,
         'FOREIGN_PIPELINE',

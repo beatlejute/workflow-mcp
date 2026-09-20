@@ -15,8 +15,9 @@
  * представляется раннеру через `WORKFLOW_STARTED_BY_ID`, раннер кладёт метку в
  * lock полем `started_by_id`, и файл владения остался один.
  *
- * Требует workflow-ai ≥ 1.7.0: раннер постарше поля не пишет, и его запуск
- * виден как `INSTANCE_UNKNOWN` — «запущен MCP, но каким, неизвестно».
+ * Требует workflow-ai ≥ 1.7.0: раннер 1.6.x поля не пишет, и его запуск виден
+ * как `INSTANCE_UNKNOWN` — «запущен MCP, но каким, неизвестно»; раннер ≤ 1.5.2
+ * не писал и `started_by`, поэтому неотличим от запуска из CLI.
  */
 
 import fs from 'fs';
@@ -99,7 +100,7 @@ export function validateRunOwnership(lock, pid, instanceId, options = {}) {
     return { valid: false, reason: 'STARTED_BY_MISMATCH' };
   }
 
-  // Раннер до 1.7.0 метку не пишет. Отличать этот случай от чужой метки важно:
+  // Раннер 1.6.x метку не пишет. Отличать этот случай от чужой метки важно:
   // первое чинится обновлением workflow-ai, второе — не чинится вовсе.
   if (!lock.started_by_id) {
     return { valid: false, reason: 'INSTANCE_UNKNOWN' };
