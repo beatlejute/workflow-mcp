@@ -3,15 +3,6 @@ import path from 'path';
 import { fingerprintOf } from './fingerprint.mjs';
 
 /**
- * Compute fingerprint = first 12 chars of SHA-256(...).
- *
- * Своё поле `fingerprint` детектора важнее вычисленного: у `crashed` нет ни
- * стадии, ни номера шага, поэтому общая формула схлопывала бы все падения
- * проекта в один отпечаток и глушила второй крах на целый TTL.
- */
-const fingerprint = fingerprintOf;
-
-/**
  * Ensure directory exists (recursive).
  */
 function ensureDir(dir) {
@@ -61,7 +52,7 @@ export function createPublisher({ onAlert, stateDir, config = {} }) {
    * 3. Otherwise update in-memory map, call onAlert(alert), and if not read-only + writable stateDir → append to jsonl.
    */
   function publishAlert(alert) {
-    const fp = fingerprint(alert);
+    const fp = fingerprintOf(alert);
     const now = Date.now();
 
     const last = lastPublished.get(fp);
@@ -103,7 +94,7 @@ export function createPublisher({ onAlert, stateDir, config = {} }) {
 
   /** Expose internals for testing/debugging (non-enumerable). */
   const internal = {
-    _fingerprint: fingerprint,
+    _fingerprint: fingerprintOf,
     _lastPublished: lastPublished,
     _historyPath: historyPath,
     _isReadonly: isReadonly,
@@ -138,7 +129,7 @@ function replayHistory(historyPath, ttlSeconds, lastPublishedMap) {
     for (const line of lines) {
       try {
         const record = JSON.parse(line);
-        const fp = record._fingerprint || fingerprint(record);
+        const fp = record._fingerprint || fingerprintOf(record);
         const publishedAt = record._published_at ? new Date(record._published_at).getTime() : NaN;
 
         // If record has no timestamp, assume it's old (skip) or use heuristic: try to keep if present.

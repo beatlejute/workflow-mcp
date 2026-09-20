@@ -92,6 +92,35 @@ describe('createHealthService', () => {
     expect(historyLines()).toHaveLength(1);
   });
 
+  it('onChanged доходит от тика через службу', () => {
+    // Связка «тик → служба → сервер» иначе покрыта только e2e-тестом: сама
+    // служба колбэк лишь пробрасывает, и потерять его здесь проще всего.
+    writeConfig();
+    const projects = [makeCrashedProject('proj')];
+    const changes = [];
+
+    service = createHealthService({
+      cwd: workspace,
+      projects,
+      stateDir: { dir: stateDir, mode: 'writable' },
+      onAlert: () => { },
+      onChanged: () => changes.push(Date.now())
+    });
+    service.start();
+
+    vi.advanceTimersByTime(1000);
+    expect(changes).toHaveLength(1);
+
+    // Условие держится — состав набора тот же, события нет.
+    vi.advanceTimersByTime(2000);
+    expect(changes).toHaveLength(1);
+
+    // Условие исчезло: дедуп публикации об этом молчит, служба — нет.
+    fs.rmSync(path.join(workspace, 'proj', '.workflow', 'logs', '.pipeline.lock'));
+    vi.advanceTimersByTime(1000);
+    expect(changes).toHaveLength(2);
+  });
+
   it('повторные тики не размножают один и тот же алерт', () => {
     writeConfig();
     const projects = [makeCrashedProject('proj')];
