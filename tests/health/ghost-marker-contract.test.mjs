@@ -74,7 +74,10 @@ describe('строка verify-artifacts ловится матчером', () => 
   });
 
   it('вариант с assertion_failed распознаётся', () => {
-    const line = '[GHOST-EXECUTION] ticket=IMPL-993 reason=assertion_failed assertions_failed=1';
+    // Поле именно `ghost_assertions`: в RESULT-блоке рядом печатается
+    // `assertions_failed` с другим числом — всеми провалами, а не только
+    // доказывающими призрак.
+    const line = '[GHOST-EXECUTION] ticket=IMPL-993 reason=assertion_failed ghost_assertions=1';
     expect(buildGhostMarkerMatcher().test(line)).toBe(true);
   });
 

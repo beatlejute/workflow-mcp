@@ -324,6 +324,39 @@ describe('stop_pipeline tool', () => {
     });
   });
 
+  describe('TC-005c: аварийный ключ не отменяет отказ по переиспользованному номеру', () => {
+    it('WORKFLOW_MCP_FORCE_FOREIGN=1 не даёт убить посторонний процесс', { timeout: 30000 }, async () => {
+      // Ключ снимает вопрос «чей это пайплайн», но не вопрос «есть ли он
+      // вообще». Иначе аварийный режим оборачивается `taskkill /F /T` по
+      // чужому дереву — то самое, от чего защищались.
+      const victim = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore' });
+      const savedKey = process.env.WORKFLOW_MCP_FORCE_FOREIGN;
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        process.env.WORKFLOW_MCP_FORCE_FOREIGN = '1';
+
+        const ancient = '2020-01-01T00:00:00.000Z';
+        writeRunnerLock(projectPath, victim.pid, {
+          started_at: ancient,
+          timestamp: ancient,
+          started_by: 'cli',
+          started_by_id: null
+        });
+
+        const result = await stopPipelineImpl('.');
+
+        expect(result.ok).toBe(false);
+        expect(result.code).toBe('STALE_PIPELINE_LOCK');
+        expect(result.reason).toBe('PID_REUSED');
+        expect(() => process.kill(victim.pid, 0)).not.toThrow();
+      } finally {
+        if (savedKey === undefined) delete process.env.WORKFLOW_MCP_FORCE_FOREIGN;
+        else process.env.WORKFLOW_MCP_FORCE_FOREIGN = savedKey;
+        try { victim.kill(); } catch { /* мог завершиться */ }
+      }
+    });
+  });
+
   describe('TC-006: файл владения остаётся за раннером', () => {
     it.skipIf(process.platform === 'win32')('не заводит своего файла и не снимает lock', async () => {
       // Прежде сервер писал `.mcp-started-by` и удалял его после убийства.

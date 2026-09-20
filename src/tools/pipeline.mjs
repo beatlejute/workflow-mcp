@@ -95,9 +95,50 @@ function ownershipRefusal(validation, code, hint) {
   return { ok: false, code, reason: validation.reason, hint };
 }
 
+/**
+ * Отказ, если номер из lock'а занят уже не раннером.
+ *
+ * Проверка идёт до сверки владения и отдельно от неё, на всех путях, откуда
+ * следом уходит сигнал. Причин две.
+ *
+ * Первая: внутри `validateRunOwnership` признаки чужого запуска проверяются
+ * раньше времени старта — и правильно, для живого чужого раннера совет
+ * «удалите lock» был бы вредным. Значит у чужого lock'а причина отказа всегда
+ * про чужого, и решение, принятое по одной причине, о переиспользовании
+ * номера ничего не знает.
+ *
+ * Вторая: аварийный ключ `WORKFLOW_MCP_FORCE_FOREIGN=1` обрывает проверку
+ * владения в самом начале. Он снимает вопрос «чей это пайплайн» — но не
+ * вопрос «есть ли он вообще». Ни он, ни `force: true` не должны приводить к
+ * `taskkill /F /T` по постороннему дереву.
+ *
+ * @param {number} pid
+ * @param {{started_at: string|null}|null} lock
+ * @returns {{ok: false, code: string, reason: string, hint: string}|null} отказ либо null
+ */
+function refuseIfPidReused(pid, lock) {
+  if (pidCouldBeFromRun(pid, lock?.started_at ?? null, { fresh: true })) {
+    return null;
+  }
+  return ownershipRefusal({ reason: 'PID_REUSED' }, 'FOREIGN_PIPELINE', '');
+}
+
+/**
+ * Жив ли процесс с этим номером.
+ *
+ * `EPERM` — это «процесс есть, но он не наш»: чужой пользователь, служба,
+ * процесс с более высокими правами. Считать такой номер свободным нельзя —
+ * `start_pipeline` снял бы lock живого раннера. Рядом `process/control.mjs`
+ * трактует `EPERM` так же.
+ */
 function isPipelineProcessAlive(pid) {
   if (!pid || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
 }
 
 /**
@@ -449,8 +490,14 @@ export async function pausePipelineImpl(project) {
   }
   const pid = runner.pid;
 
-  // Сверка владения по lock'у
-  const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true, fresh: true });
+  // Сначала — не занят ли номер посторонним процессом: приостановить чужой
+  // процесс так же скверно, как убить. Заодно отказ говорит правду («удалите
+  // протухший lock»), а не «пайплайн чужой».
+  const pauseReused = refuseIfPidReused(pid, runner.lock);
+  if (pauseReused) return pauseReused;
+
+  // Сверка владения по lock'у. Время старта уже проверено выше.
+  const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds());
   if (!validation.valid) {
     return ownershipRefusal(
       validation,
@@ -539,8 +586,13 @@ export const pause_pipeline = {
     }
     const pid = runner.pid;
 
-    // Сверка владения по lock'у
-    const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true, fresh: true });
+    // Снять паузу с постороннего процесса так же нехорошо, как приостановить:
+    // проверка переиспользования идёт первой и здесь.
+    const resumeReused = refuseIfPidReused(pid, runner.lock);
+    if (resumeReused) return resumeReused;
+
+    // Сверка владения по lock'у. Время старта уже проверено выше.
+    const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds());
     if (!validation.valid) {
       return ownershipRefusal(
         validation,
@@ -637,9 +689,8 @@ export const resume_pipeline = {
     // чужого lock'а причина отказа всегда `STARTED_BY_MISMATCH`, а не
     // `PID_REUSED`. Именно в этом случае и зовут `force` — и защита не
     // срабатывала ровно там, где нужна.
-    if (!pidCouldBeFromRun(pid, runner.lock?.started_at ?? null, { fresh: true })) {
-      return ownershipRefusal({ reason: 'PID_REUSED' }, 'FOREIGN_PIPELINE', '');
-    }
+    const reused = refuseIfPidReused(pid, runner.lock);
+    if (reused) return reused;
 
     // Владение. Время старта уже проверено выше — второй опрос ОС не нужен.
     const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds());
@@ -729,8 +780,11 @@ export async function abortPipelineImpl(project, options = {}) {
   }
   const pid = runner.pid;
 
-  // Сверка владения по lock'у
-  const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true, fresh: true });
+  const abortReused = refuseIfPidReused(pid, runner.lock);
+  if (abortReused) return abortReused;
+
+  // Сверка владения по lock'у. Время старта уже проверено выше.
+  const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds());
   if (!validation.valid) {
     return ownershipRefusal(
       validation,
@@ -781,9 +835,13 @@ export async function abortPipelineImpl(project, options = {}) {
           // а pid к этому моменту может уже принадлежать чужому процессу.
           return { escalate: false, reason: 'RUNNER_GONE' };
         }
-        const ownership = validateRunOwnership(
-          liveLock, pid, acceptedInstanceIds(), { verifyProcessStart: true, fresh: true }
-        );
+        // Проверка переиспользования отдельно и здесь: за grace-окно раннер
+        // мог умереть, а номер — достаться другому процессу. Аварийный ключ
+        // этот вопрос не снимает.
+        if (!pidCouldBeFromRun(pid, liveLock.started_at, { fresh: true })) {
+          return { escalate: false, reason: 'PID_REUSED' };
+        }
+        const ownership = validateRunOwnership(liveLock, pid, acceptedInstanceIds());
         return ownership.valid
           ? { escalate: true }
           : { escalate: false, reason: ownership.reason || 'OWNERSHIP_LOST' };

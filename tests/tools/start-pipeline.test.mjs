@@ -6,7 +6,7 @@
  * запуске, снятие протухшего lock и формат ответа.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -123,6 +123,34 @@ describe('start_pipeline', () => {
     expect(result.ok).toBe(false);
     expect(result.code).toBe('ALREADY_RUNNING');
     expect(result.pid).toBe(process.pid);
+  });
+
+  it('процесс чужого пользователя считается живым, lock остаётся', async () => {
+    // `process.kill(pid, 0)` на чужом процессе бросает EPERM: «он есть, но не
+    // твой». Прежде это читалось как «номер свободен», и `start_pipeline`
+    // снимал lock живого раннера, запущенного из-под другого пользователя или
+    // с иными правами. `process/control.mjs` трактует EPERM как «жив» давно.
+    const foreignPid = 424242;
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === foreignPid) {
+        const err = new Error('EPERM');
+        err.code = 'EPERM';
+        throw err;
+      }
+      return true;
+    });
+
+    try {
+      writeLock(projectPath, foreignPid);
+
+      const result = await start_pipeline.execute({ project: 'start-project' });
+
+      expect(result.ok).toBe(false);
+      expect(result.code).toBe('ALREADY_RUNNING');
+      expect(fs.existsSync(path.join(projectPath, ...LOCK_REL))).toBe(true);
+    } finally {
+      killSpy.mockRestore();
+    }
   });
 
   it('снимает протухший lock и запускается', async () => {
