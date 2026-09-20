@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { discoverProjects } from '../discovery.mjs';
-import { mcpInstanceId as getMcpInstanceId } from '../lib/project-root.mjs';
+import { acceptedInstanceIds } from '../lib/project-root.mjs';
 import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
 import { readAbortState } from '../process/abort-state.mjs';
 import { killOutcomeForRun } from '../process/kill-outcome.mjs';
@@ -162,7 +162,7 @@ export function get_workflow_pipeline_state(absoluteCwd) {
 
     // Владение привязано к запуску, а не к номеру процесса. Битый маркер
     // внутри читается безопасно: раньше один такой файл ронял снимок целиком.
-    const markerValid = validateRunOwnership(projectRoot, pid, lock, getMcpInstanceId(absoluteCwd));
+    const markerValid = validateRunOwnership(projectRoot, pid, lock, acceptedInstanceIds(absoluteCwd));
 
     // Запись об исходе делает только MCP — `stop_pipeline` и эскалация
     // `abort_pipeline`, — и она привязана к pid и `run_id` прогона. Значит это

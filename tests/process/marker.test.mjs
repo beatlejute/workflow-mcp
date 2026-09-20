@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { writeMarker, readMarker, validateMarker, removeMarker } from '../../src/process/marker.mjs';
-import { mcpInstanceId } from '../../src/lib/project-root.mjs';
+import { mcpInstanceId, legacyMcpInstanceId, acceptedInstanceIds } from '../../src/lib/project-root.mjs';
 
 // Идентификатор берётся у самого кода, а не пересчитывается здесь: копия
 // формулы в тесте разошлась с оригиналом, как только тот стал гасить регистр
@@ -29,17 +29,26 @@ describe('src/process/marker.mjs', () => {
   let projectPath;
   let originalCwd;
 
+  let originalMcpCwd;
+
   beforeEach(() => {
     projectPath = createTempProjectDir();
     originalCwd = process.cwd();
     // Change to temp directory to control mcp_instance_id
     process.chdir(projectPath);
+    // `writeMarker` считает идентификатор от `mcpCwd()`, а `MCP_CWD` старше
+    // рабочего каталога процесса: без этой строки набор зависел от того, что
+    // стоит в окружении запускающего.
+    originalMcpCwd = process.env.MCP_CWD;
+    process.env.MCP_CWD = projectPath;
     // Clean up env var
     delete process.env.WORKFLOW_MCP_FORCE_FOREIGN;
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
+    if (originalMcpCwd === undefined) delete process.env.MCP_CWD;
+    else process.env.MCP_CWD = originalMcpCwd;
     cleanupTempDir(projectPath);
   });
 
@@ -72,6 +81,47 @@ describe('src/process/marker.mjs', () => {
 
       const markerPath = path.join(projectPath, '.workflow', 'logs', '.mcp-started-by');
       expect(fs.existsSync(markerPath)).toBe(true);
+    });
+  });
+
+  describe('переходная сверка идентификатора', () => {
+    it('список принимаемых пропускает маркер прежнего формата', () => {
+      // Маркер прогона, запущенного сервером до 2.0.0: идентификатор считался
+      // с регистром пути.
+      const markerPath = path.join(projectPath, '.workflow', 'logs', '.mcp-started-by');
+      fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+      fs.writeFileSync(markerPath, JSON.stringify({
+        version: 1,
+        mcp_instance_id: legacyMcpInstanceId(projectPath),
+        started_at: new Date().toISOString(),
+        pid: 4242
+      }), 'utf8');
+
+      const validation = validateMarker(projectPath, 4242, acceptedInstanceIds(projectPath));
+      expect(validation.valid).toBe(true);
+    });
+
+    it('чужой идентификатор не принимается, даже когда сверяют списком', () => {
+      // Прежняя переходная ветка сверяла маркер с идентификатором текущего
+      // `mcpCwd()` мимо переданного ожидания: на POSIX, где оба правила дают
+      // один хеш, проверка принимала любой местный маркер.
+      writeMarker(projectPath, { pid: 4242 });
+
+      const validation = validateMarker(projectPath, 4242, ['workflow-mcp@aaaaaaaaaaaa', 'workflow-mcp@bbbbbbbbbbbb']);
+      expect(validation.valid).toBe(false);
+      expect(validation.reason).toBe('INSTANCE_MISMATCH');
+    });
+
+    it('список идентификаторов считается от переданного корня', () => {
+      const ids = acceptedInstanceIds(projectPath);
+      expect(ids[0]).toBe(mcpInstanceId(projectPath));
+      if (process.platform === 'win32') {
+        // Регистр пути гасится только на Windows, поэтому второй ключ есть
+        // лишь там — и только когда путь не в нижнем регистре.
+        expect(ids).toContain(legacyMcpInstanceId(projectPath));
+      } else {
+        expect(ids).toHaveLength(1);
+      }
     });
   });
 

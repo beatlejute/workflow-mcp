@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { mcpInstanceId as getMcpInstanceId, legacyMcpInstanceId } from '../lib/project-root.mjs';
+import { mcpInstanceId as getMcpInstanceId } from '../lib/project-root.mjs';
 
 /**
  * Atomic write via temp file + rename.
@@ -141,7 +141,7 @@ export function readMarker(projectPath) {
  * Validate marker file against expected PID and instance ID.
  * @param {string} projectPath - Absolute path to project root
  * @param {number} expectedPid - Expected process ID
- * @param {string} expectedInstanceId - Expected MCP instance ID
+ * @param {string|string[]} expectedInstanceId - ожидаемый идентификатор или список принимаемых - Expected MCP instance ID
  * @returns {{valid: boolean, reason?: string, override?: boolean}}
  */
 export function validateMarker(projectPath, expectedPid, expectedInstanceId) {
@@ -180,12 +180,13 @@ export function validateMarker(projectPath, expectedPid, expectedInstanceId) {
 
   // Instance ID check
   //
-  // Маркер прогона, запущенного сервером до 2.0.0, несёт идентификатор по
-  // прежнему правилу — с регистром пути. Он принимается на один переход:
-  // иначе обновление посреди прогона делало его чужим, и остановить его без
-  // `force` было нельзя.
-  if (marker.mcp_instance_id !== expectedInstanceId
-      && marker.mcp_instance_id !== legacyMcpInstanceId()) {
+  // Ожидание может прийти списком: маркер прогона, запущенного сервером до
+  // 2.0.0, несёт идентификатор по прежнему правилу — с регистром пути. Список
+  // собирает вызывающий (`acceptedInstanceIds`) от того же корня, который
+  // проверяет. Сверять здесь со «своим текущим» нельзя: на POSIX оба правила
+  // дают один хеш, и проверка перестала бы зависеть от переданного ожидания.
+  const accepted = Array.isArray(expectedInstanceId) ? expectedInstanceId : [expectedInstanceId];
+  if (!accepted.includes(marker.mcp_instance_id)) {
     return { valid: false, reason: 'INSTANCE_MISMATCH' };
   }
 

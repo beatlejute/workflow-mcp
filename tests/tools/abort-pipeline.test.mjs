@@ -17,6 +17,7 @@ import { createHash } from 'crypto';
 import { abortPipelineImpl } from '../../src/tools/pipeline.mjs';
 import { writeRunnerLock, writeBrokenLock } from '../helpers/pipeline-lock.mjs';
 import { readPipelineLock } from '../../src/process/run-lock.mjs';
+import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,11 +63,10 @@ describe('abort_pipeline tool', () => {
     }
   });
 
-  // Helper to compute MCP instance ID (matches pipeline.mjs implementation)
-  function getMcpInstanceId(cwd) {
-    const hash = createHash('sha256').update(cwd).digest('hex');
-    return `workflow-mcp@${hash.slice(0, 12)}`;
-  }
+  // Идентификатор считает сам код. Здесь лежала копия формулы, и она уже
+  // разошлась с оригиналом: считала от переданной строки, без `path.resolve`
+  // и без гашения регистра.
+  const getMcpInstanceId = (cwd) => mcpInstanceId(cwd);
 
   /**
    * pid из lock'а раннера — тот, кого тест выдаёт за идущий пайплайн.

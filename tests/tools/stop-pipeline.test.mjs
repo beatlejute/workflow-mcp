@@ -14,6 +14,7 @@ import process from 'process';
 import { stopPipelineImpl } from '../../src/tools/pipeline.mjs';
 import { writeRunnerLock, writeBrokenLock } from '../helpers/pipeline-lock.mjs';
 import { readPipelineLock } from '../../src/process/run-lock.mjs';
+import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -72,10 +73,9 @@ describe('stop_pipeline tool', () => {
 
   function createMarker(pid = runnerPidFromFile()) {
     const markerPath = path.join(logsDir, '.mcp-started-by');
-    // Тот же алгоритм, что в `lib/project-root.mjs`. Раньше здесь был
-    // самодельный hex, который не совпадал ни с чем, и тесты проходили по
-    // причине INSTANCE_MISMATCH вместо той, которую проверяют.
-    const mcp_instance_id = `workflow-mcp@${createHash('sha256').update(path.resolve(projectPath)).digest('hex').slice(0, 12)}`;
+    // Идентификатор берётся у самого кода: копия формулы здесь уже разошлась
+    // с оригиналом — считала от пути как есть, без гашения регистра.
+    const mcp_instance_id = mcpInstanceId(projectPath);
     fs.writeFileSync(markerPath, JSON.stringify({
       version: 1,
       mcp_instance_id,

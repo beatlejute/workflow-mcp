@@ -69,7 +69,8 @@ export function safeReadMarker(projectRoot) {
  * @param {string} projectRoot
  * @param {number} pid pid, которому собираемся слать сигнал
  * @param {{pid: number, started_at: string|null, started_by: string|null, run_id: string|null}|null} lock
- * @param {string} instanceId ожидаемый `mcp_instance_id`
+ * @param {string|string[]} instanceId ожидаемый `mcp_instance_id` либо список принимаемых
+ *   (`acceptedInstanceIds`: текущий плюс прежнего формата)
  * @param {Object} [options]
  * @param {boolean} [options.verifyProcessStart] спрашивать у ОС время старта процесса.
  *   Это внешний вызов ценой в сотни миллисекунд, поэтому он включается только

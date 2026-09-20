@@ -56,11 +56,10 @@ export function mcpInstanceId(cwd = mcpCwd()) {
 /**
  * Идентификатор экземпляра по прежнему правилу — с учётом регистра пути.
  *
- * Нужен на один переход: пайплайн, запущенный сервером до 2.0.0, помечен
- * старым идентификатором. Без этой сверки обновление посреди прогона делало
- * его чужим: `list_running_pipelines` показывал `foreign: true`, а
- * `stop_pipeline` и `abort_pipeline` отказывали с `FOREIGN_PIPELINE`, пока не
- * позовёшь с `force`.
+ * Пайплайн, запущенный сервером до 2.0.0, помечен таким идентификатором. Без
+ * сверки с ним обновление посреди прогона делало прогон чужим:
+ * `list_running_pipelines` показывал `foreign: true`, а `stop_pipeline` и
+ * `abort_pipeline` отказывали с `FOREIGN_PIPELINE`, пока не позовёшь с `force`.
  *
  * На POSIX совпадает с `mcpInstanceId`: там регистр и раньше не гасился.
  *
@@ -70,6 +69,24 @@ export function mcpInstanceId(cwd = mcpCwd()) {
 export function legacyMcpInstanceId(cwd = mcpCwd()) {
   const hash = createHash('sha256').update(path.resolve(cwd)).digest('hex');
   return `workflow-mcp@${hash.slice(0, 12)}`;
+}
+
+/**
+ * Идентификаторы, которые считаются нашими для этой рабочей области.
+ *
+ * Первый — текущий, второй — прежнего формата, если он отличается. Список
+ * считается от одного и того же корня: сверять маркер с идентификатором
+ * текущего `mcpCwd()`, когда проверяют чужой корень, значит не проверять
+ * ничего — на POSIX оба правила дают один хеш, и `validateMarker` принимал бы
+ * любой местный маркер независимо от переданного ожидания.
+ *
+ * @param {string} [cwd] - Корень; по умолчанию `mcpCwd()`
+ * @returns {string[]}
+ */
+export function acceptedInstanceIds(cwd = mcpCwd()) {
+  const current = mcpInstanceId(cwd);
+  const legacy = legacyMcpInstanceId(cwd);
+  return current === legacy ? [current] : [current, legacy];
 }
 
 /**

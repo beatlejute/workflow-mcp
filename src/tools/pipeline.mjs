@@ -10,7 +10,7 @@ import { kill, pause, resume, abort } from '../process/control.mjs';
 import { notify_workflow_pipeline_state } from '../resources/index.mjs';
 import { get_workflow_pipeline_state } from '../resources/pipeline-state.mjs';
 import { z } from 'zod';
-import { mcpCwd, mcpInstanceId as getMcpInstanceId, resolveProjectRoot } from '../lib/project-root.mjs';
+import { mcpCwd, mcpInstanceId as getMcpInstanceId, acceptedInstanceIds, resolveProjectRoot } from '../lib/project-root.mjs';
 import { workflowAiPath } from '../lib/workflow-ai.mjs';
 
 /**
@@ -429,7 +429,7 @@ export async function pausePipelineImpl(project) {
   const pid = runner.pid;
 
   // Validate marker
-  const validation = validateRunOwnership(projectRoot, pid, runner.lock, getMcpInstanceId(), { verifyProcessStart: true });
+  const validation = validateRunOwnership(projectRoot, pid, runner.lock, acceptedInstanceIds(), { verifyProcessStart: true });
   if (!validation.valid) {
     return ownershipRefusal(
       validation,
@@ -519,7 +519,7 @@ export const pause_pipeline = {
     const pid = runner.pid;
 
     // Validate marker
-    const validation = validateRunOwnership(projectRoot, pid, runner.lock, getMcpInstanceId(), { verifyProcessStart: true });
+    const validation = validateRunOwnership(projectRoot, pid, runner.lock, acceptedInstanceIds(), { verifyProcessStart: true });
     if (!validation.valid) {
       return ownershipRefusal(
         validation,
@@ -607,7 +607,7 @@ export const resume_pipeline = {
 
     // Validate marker (unless force=true)
     if (!force) {
-      const validation = validateRunOwnership(projectRoot, pid, runner.lock, getMcpInstanceId(), { verifyProcessStart: true });
+      const validation = validateRunOwnership(projectRoot, pid, runner.lock, acceptedInstanceIds(), { verifyProcessStart: true });
       if (!validation.valid) {
         return ownershipRefusal(
           validation,
@@ -705,7 +705,7 @@ export async function abortPipelineImpl(project, options = {}) {
   const pid = runner.pid;
 
   // Validate marker
-  const validation = validateRunOwnership(projectRoot, pid, runner.lock, getMcpInstanceId(), { verifyProcessStart: true });
+  const validation = validateRunOwnership(projectRoot, pid, runner.lock, acceptedInstanceIds(), { verifyProcessStart: true });
   if (!validation.valid) {
     return ownershipRefusal(
       validation,
@@ -757,7 +757,7 @@ export async function abortPipelineImpl(project, options = {}) {
           return { escalate: false, reason: 'RUNNER_GONE' };
         }
         const ownership = validateRunOwnership(
-          projectRoot, pid, liveLock, getMcpInstanceId(), { verifyProcessStart: true }
+          projectRoot, pid, liveLock, acceptedInstanceIds(), { verifyProcessStart: true }
         );
         return ownership.valid
           ? { escalate: true }

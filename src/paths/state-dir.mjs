@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { readConfig } from '../discovery.mjs';
-import { workspaceKey } from '../lib/project-root.mjs';
+import { mcpCwd, workspaceKey } from '../lib/project-root.mjs';
 
 /**
  * Compute SHA-256 hash of the absolute path, first 12 characters.
@@ -125,7 +125,7 @@ export function serverStateDir(cwd) {
  *
  * @returns {{ dir: string|null, mode: 'writable'|'read-only' }}
  */
-export function machineStateDir(cwd = process.env.MCP_CWD || process.cwd()) {
+export function machineStateDir(cwd = mcpCwd()) {
   if (process.env.WORKFLOW_STATE_DIR) {
     return {
       dir: process.env.WORKFLOW_STATE_DIR,
