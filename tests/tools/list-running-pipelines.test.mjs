@@ -20,6 +20,7 @@ import { spawn } from 'child_process';
 
 import { list_running_pipelines } from '../../src/tools/pipeline.mjs';
 import { mcpInstanceId } from '../../src/lib/project-root.mjs';
+import { writeAbortState, abortStatePath, ABORT_STATE_TTL_MS } from '../../src/process/abort-state.mjs';
 
 let workspace;
 let prevMcpCwd;
@@ -173,28 +174,82 @@ describe('определение состояния', () => {
     expect((await snapshotOne()).state).toBe('running');
   });
 
-  // `.aborting` и `.killed` читает `getAbortKillMarkers` в
-  // `resources/pipeline-state.mjs`, но
-  // не пишутся никем — ни сервером, ни раннером, ни расширением. Тесты ниже
-  // проверяют читателя, а не существующий контракт: состояния `aborting` и
-  // `killed`, обещанные в README, в жизни не возникают. Это тот же класс
-  // фантома, что `.runner-pids`; решение вынесено в PLAN-001.
-  it('маркер .aborting даёт aborting и перекрывает живой процесс', async () => {
+  // Состояние `aborting` раньше читалось из `.workflow/logs/.aborting` —
+  // файла, которого не пишет никто, — и потому не возникало никогда. Признак
+  // идущей остановки всё это время лежал рядом: `abort_pipeline` пишет
+  // `.workflow/state/abort-state.json` на всё grace-окно.
+  it('флаг идущего abort даёт aborting и перекрывает живой процесс', async () => {
     const victim = await spawnVictim();
     const root = makeProject('proj');
-    writeLock(root, victim.pid);
+    writeLock(root, victim.pid, { run_id: 'pipeline_2026-09-20_10-00-00' });
     writeLog(root);
-    fs.writeFileSync(path.join(root, '.workflow', 'logs', '.aborting'), '');
+    writeAbortState(root, { runnerPid: victim.pid, runId: 'pipeline_2026-09-20_10-00-00' });
 
     expect((await snapshotOne()).state).toBe('aborting');
   });
 
-  it('маркер .killed даёт killed', async () => {
+  it('флаг от другого pid чужому прогону состояния не меняет', async () => {
+    // Сервер может умереть посреди grace-окна: файл переживёт и остановку, и
+    // сам прогон. Следующий запуск не должен всю жизнь числиться aborting.
     const victim = await spawnVictim();
     const root = makeProject('proj');
     writeLock(root, victim.pid);
     writeLog(root);
-    fs.writeFileSync(path.join(root, '.workflow', 'logs', '.killed'), '');
+    writeAbortState(root, { runnerPid: victim.pid + 1 });
+
+    expect((await snapshotOne()).state).toBe('running');
+  });
+
+  it('флаг от другого прогона того же pid игнорируется', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid, { run_id: 'pipeline_2026-09-20_12-00-00' });
+    writeLog(root);
+    writeAbortState(root, { runnerPid: victim.pid, runId: 'pipeline_2026-09-20_10-00-00' });
+
+    expect((await snapshotOne()).state).toBe('running');
+  });
+
+  it('протухший флаг игнорируется', async () => {
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
+    // Старше TTL: abort с grace_sec максимум в минуту столько не идёт.
+    fs.writeFileSync(
+      abortStatePath(root),
+      JSON.stringify({
+        started_at: new Date(Date.now() - ABORT_STATE_TTL_MS - 60000).toISOString(),
+        runner_pid: victim.pid
+      })
+    );
+
+    expect((await snapshotOne()).state).toBe('running');
+  });
+
+  it('abort перекрывает паузу', async () => {
+    // Приостановленный пайплайн, которому уже послали сигнал, для клиента
+    // прежде всего останавливается.
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
+    fs.writeFileSync(
+      path.join(root, '.workflow', 'state', 'pipeline-pause.json'),
+      JSON.stringify({ pid: victim.pid, paused_at: new Date().toISOString() })
+    );
+    writeAbortState(root, { runnerPid: victim.pid });
+
+    expect((await snapshotOne()).state).toBe('aborting');
+  });
+
+  it('ненулевой код выхода в логе даёт killed', async () => {
+    // Состояние `killed` читалось ещё и из `.workflow/logs/.killed`, которого
+    // тоже никто не писал. Оно и без маркера выводится из лога — маркер был
+    // лишним чтением, а не источником.
+    const root = makeProject('proj');
+    writeLock(root, DEAD_PID);
+    writeLog(root, '[2026-09-20 10:05:00] [exit] code=137\n');
 
     expect((await snapshotOne()).state).toBe('killed');
   });

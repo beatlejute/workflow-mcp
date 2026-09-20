@@ -3,6 +3,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { removeMarker, writeMarker } from '../process/marker.mjs';
 import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
+import { writeAbortState, clearAbortState, isAbortInProgress } from '../process/abort-state.mjs';
 import { pidCouldBeFromRun } from '../process/process-start.mjs';
 import { kill, pause, resume, abort } from '../process/control.mjs';
 import { notify_workflow_pipeline_state } from '../resources/index.mjs';
@@ -667,76 +668,6 @@ export const list_running_pipelines = {
   }
 };
 
-/**
- * Resolve abort state file for a given project.
- * @param {string} projectRoot
- * @returns {string} Path to abort state file in state-dir
- */
-function getAbortStateFile(projectRoot) {
-  return path.join(projectRoot, '.workflow', 'state', 'abort-state.json');
-}
-
-/**
- * Check if an abort is already in progress for the given project.
- * Uses a state file in state-dir as a flag.
- * @param {string} projectRoot
- * @returns {boolean} True if abort is already in progress
- */
-function isAbortInProgress(projectRoot) {
-  const abortStateFile = getAbortStateFile(projectRoot);
-  if (!fs.existsSync(abortStateFile)) {
-    return false;
-  }
-  try {
-    const data = JSON.parse(fs.readFileSync(abortStateFile, 'utf-8'));
-    // Consider abort in-progress if started_at is recent (within last 10 minutes)
-    if (data.started_at) {
-      const startedAt = new Date(data.started_at).getTime();
-      const now = Date.now();
-      // If it's been more than 10 minutes, treat as stale
-      if (now - startedAt > 10 * 60 * 1000) {
-        return false;
-      }
-      return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Write abort in-progress flag to state-dir.
- * @param {string} projectRoot
- */
-function writeAbortState(projectRoot) {
-  const abortStateFile = getAbortStateFile(projectRoot);
-  const data = {
-    started_at: new Date().toISOString(),
-    pid: process.pid,
-    mcp_instance_id: getMcpInstanceId()
-  };
-  try {
-    fs.mkdirSync(path.dirname(abortStateFile), { recursive: true });
-    fs.writeFileSync(abortStateFile, JSON.stringify(data, null, 2), 'utf-8');
-  } catch (err) {
-    // Best-effort; failure to write flag is non-blocking
-    console.error('Failed to write abort state:', err.message);
-  }
-}
-
-/**
- * Clear abort in-progress flag from state-dir.
- * @param {string} projectRoot
- */
-function clearAbortState(projectRoot) {
-  const abortStateFile = getAbortStateFile(projectRoot);
-  try {
-    fs.unlinkSync(abortStateFile);
-  } catch (err) {
-    // Idempotent: ignore if file doesn't exist
-  }
-}
 
 /**
  * Implementation for abort_pipeline tool.
@@ -778,7 +709,11 @@ export async function abortPipelineImpl(project, options = {}) {
   }
 
   // Set abort-in-progress flag (for parallel abort detection)
-  writeAbortState(projectRoot);
+  writeAbortState(projectRoot, {
+    runnerPid: pid,
+    runId: runner.lock?.run_id ?? null,
+    mcpInstanceId: getMcpInstanceId()
+  });
 
   // Send notification: abort starting
   try {

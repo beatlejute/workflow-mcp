@@ -3,6 +3,7 @@ import path from 'path';
 import { discoverProjects } from '../discovery.mjs';
 import { mcpInstanceId as getMcpInstanceId } from '../lib/project-root.mjs';
 import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
+import { readAbortState } from '../process/abort-state.mjs';
 import { parsePipelineLog } from '../parsers/pipeline-log.mjs';
 
 /**
@@ -29,20 +30,23 @@ function getPausedState(projectRoot, pid) {
 }
 
 /**
- * ВНИМАНИЕ: `.aborting` и `.killed` не пишет никто — ни этот сервер, ни раннер
- * workflow-ai, ни расширение VS Code (проверено grep'ом по трём репозиториям).
- * Состояния `aborting` и `killed`, которые обещает README, на практике не
- * возникают. Тот же класс фантома, что убранный `.runner-pids`; выбор —
- * начать их писать в `abort_pipeline`/`stop_pipeline` или убрать вместе с
- * состояниями — зафиксирован в PLAN-001.
+ * Идёт ли прямо сейчас остановка этого прогона.
+ *
+ * Читался файл `.workflow/logs/.aborting`, которого не пишет никто — ни
+ * сервер, ни раннер, ни расширение, — поэтому состояние `aborting` не
+ * возникало никогда. Настоящий признак лежал рядом: `abort_pipeline` пишет
+ * `.workflow/state/abort-state.json` на всё grace-окно.
+ *
+ * Флаг сверяется с живым прогоном: сервер может умереть посреди abort'а, и
+ * тогда файл переживёт и остановку, и сам прогон. Флаг от другого pid'а или
+ * другого `run_id` — чужой, и состояние по нему не ставится.
  */
-function getAbortKillMarkers(projectRoot) {
-  let hasAbort = false, hasKill = false;
-  try {
-    hasAbort = fs.existsSync(path.join(projectRoot, '.workflow', 'logs', '.aborting'));
-    hasKill = fs.existsSync(path.join(projectRoot, '.workflow', 'logs', '.killed'));
-  } catch { }
-  return { hasAbortMarker: hasAbort, hasKillMarker: hasKill };
+function isAbortingRun(projectRoot, lock) {
+  const state = readAbortState(projectRoot);
+  if (!state || !lock) return false;
+  if (state.runner_pid !== null && state.runner_pid !== lock.pid) return false;
+  if (state.run_id && lock.run_id && state.run_id !== lock.run_id) return false;
+  return true;
 }
 
 /**
@@ -69,10 +73,11 @@ function getAwaitingApproval(projectRoot) {
 /**
  * Determine pipeline state.
  */
-function determinePipelineState({ pidAlive, paused, hasAbortMarker, hasKillMarker, logAgeMs, logHasExitCode, logExitCode }) {
+function determinePipelineState({ pidAlive, paused, aborting, logAgeMs, logHasExitCode, logExitCode }) {
+  // Остановка важнее паузы: приостановленный пайплайн, которому уже послали
+  // сигнал, для клиента прежде всего останавливается.
+  if (aborting) return 'aborting';
   if (paused) return 'paused';
-  if (hasAbortMarker) return 'aborting';
-  if (hasKillMarker) return 'killed';
   if (pidAlive) return 'running';
   if (logHasExitCode) return logExitCode === 0 ? 'completed' : 'killed';
   return logAgeMs < 30000 ? 'running' : 'completed';
@@ -187,7 +192,7 @@ export function get_workflow_pipeline_state(absoluteCwd) {
 
     const pidAlive = isProcessAlive(pid);
     const paused = getPausedState(projectRoot, pid);
-    const { hasAbortMarker, hasKillMarker } = getAbortKillMarkers(projectRoot);
+    const aborting = isAbortingRun(projectRoot, lock);
     const { ageMs: logAgeMs, hasExitCode: logHasExitCode, exitCode: logExitCode } = getLogExitInfo(projectRoot);
     const awaiting = getAwaitingApproval(projectRoot);
     const { runId, currentStage, stepNumber } = getRunInfo(projectRoot);
@@ -195,17 +200,22 @@ export function get_workflow_pipeline_state(absoluteCwd) {
     let state = determinePipelineState({
       pidAlive,
       paused,
-      hasAbortMarker,
-      hasKillMarker,
+      aborting,
       logAgeMs,
       logHasExitCode,
       logExitCode
     });
 
-    // Stale lock: файл остался, а процесс мёртв (kill -9, ребут, падение).
-    // Такой запуск не должен показываться как running.
+    // Lock пережил процесс (kill -9, ребут, падение) — как минимум запуск не
+    // идёт. Признак остаётся информационным: по нему видно, что файл надо
+    // убирать руками.
     const staleLock = Boolean(lock) && !pidAlive;
-    if (staleLock) {
+
+    // А вот состояние по нему ставится, только если о конце прогона больше
+    // сказать нечего. Раньше `stale` затирало всё подряд, включая разбор лога,
+    // и состояние `killed` не возникало никогда: мёртвый pid давал `stale`
+    // раньше, чем кто-либо смотрел на код выхода.
+    if (staleLock && !logHasExitCode) {
       state = 'stale';
     }
 
