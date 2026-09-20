@@ -148,6 +148,48 @@ describe('killed виден снаружи после насильственно
   });
 });
 
+describe('эскалация внутри grace-окна', () => {
+  it('не добивает номер, который за это время занял посторонний процесс', async () => {
+    // Между мягким сигналом и жёстким проходит до минуты. Раннер за это время
+    // может умереть, а номер — достаться другому процессу; жёсткий сигнал
+    // ушёл бы уже ему.
+    let decision = null;
+    vi.spyOn(control, 'abort').mockImplementation(async (pid, options) => {
+      // «Раннер вышел, номер занял посторонний»: lock тот же, но записан он
+      // заведомо раньше, чем стартовал живой процесс с этим номером.
+      const lockPath = path.join(projectRoot, '.workflow', 'logs', '.pipeline.lock');
+      const lock = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+      lock.started_at = '2020-01-01T00:00:00.000Z';
+      lock.timestamp = lock.started_at;
+      fs.writeFileSync(lockPath, JSON.stringify(lock));
+
+      decision = options.can_escalate();
+      return { ok: true, duration_ms: 10, escalated: false };
+    });
+
+    const result = await abortPipelineImpl('proj', { grace_sec: 1 });
+
+    expect(decision).toEqual({ escalate: false, reason: 'PID_REUSED' });
+    expect(result.ok).toBe(true);
+    expect(result.escalated).toBe(false);
+    // Посторонний процесс жив, и записи об убийстве нет.
+    expect(() => process.kill(victim.pid, 0)).not.toThrow();
+    expect(readKillOutcome(projectRoot)).toBeNull();
+  });
+
+  it('свой живой раннер добивается', async () => {
+    let decision = null;
+    vi.spyOn(control, 'abort').mockImplementation(async (pid, options) => {
+      decision = options.can_escalate();
+      return { ok: true, duration_ms: 10, escalated: false };
+    });
+
+    await abortPipelineImpl('proj', { grace_sec: 1 });
+
+    expect(decision).toEqual({ escalate: true });
+  });
+});
+
 describe('aborting виден снаружи, пока идёт abort_pipeline', () => {
   it('до вызова пайплайн обычный running', async () => {
     expect(await currentState()).toBe('running');

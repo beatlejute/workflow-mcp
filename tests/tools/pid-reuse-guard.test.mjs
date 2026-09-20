@@ -115,8 +115,44 @@ describe('аварийный ключ', () => {
     const result = await call();
 
     expect(result.ok).toBe(false);
+    // Код важен не меньше причины: без него тест проходил бы и в случае,
+    // когда мягкий сигнал уже ушёл постороннему процессу, а отказ пришёл
+    // позже — от проверки внутри grace-окна.
+    expect(result.code).toBe('STALE_PIPELINE_LOCK');
     expect(result.reason).toBe('PID_REUSED');
     expect(() => process.kill(victim.pid, 0)).not.toThrow();
+  });
+});
+
+describe('сверка владения после проверки номера', () => {
+  it('resume_pipeline отказывает на чужом lock с живым раннером', { timeout: 30000 }, async () => {
+    // Проверка переиспользования идёт первой, но сверку владения она не
+    // заменяет: у живого чужого раннера номер настоящий, а пайплайн не наш.
+    writeRunnerLock(projectRoot, victim.pid, { started_by: 'cli', started_by_id: null });
+    fs.writeFileSync(
+      path.join(projectRoot, '.workflow', 'state', 'pipeline-pause.json'),
+      JSON.stringify({ pid: victim.pid, paused_at: new Date().toISOString() })
+    );
+
+    const result = await resumePipelineImpl('proj');
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('OWNERSHIP_VALIDATION_FAILED');
+    expect(result.reason).toBe('STARTED_BY_MISMATCH');
+  });
+
+  it('resume_pipeline отказывает на метке чужого экземпляра', { timeout: 30000 }, async () => {
+    writeRunnerLock(projectRoot, victim.pid, { started_by_id: 'workflow-mcp@foreign12345' });
+    fs.writeFileSync(
+      path.join(projectRoot, '.workflow', 'state', 'pipeline-pause.json'),
+      JSON.stringify({ pid: victim.pid, paused_at: new Date().toISOString() })
+    );
+
+    const result = await resumePipelineImpl('proj');
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('OWNERSHIP_VALIDATION_FAILED');
+    expect(result.reason).toBe('INSTANCE_MISMATCH');
   });
 });
 

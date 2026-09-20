@@ -12,7 +12,7 @@
  * Здесь каждый тест вызывает инструмент и проверяет результат.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -22,6 +22,7 @@ import { list_running_pipelines } from '../../src/tools/pipeline.mjs';
 import { mcpInstanceId, legacyMcpInstanceId } from '../../src/lib/project-root.mjs';
 import { writeAbortState, abortStatePath, ABORT_STATE_TTL_MS } from '../../src/process/abort-state.mjs';
 import { writeKillOutcome } from '../../src/process/kill-outcome.mjs';
+import * as pidCheck from '../../src/health/pid-check.mjs';
 
 let workspace;
 let prevMcpCwd;
@@ -452,6 +453,29 @@ describe('чужие пайплайны', () => {
     expect(entry.pid_reused).toBe(true);
     expect(entry.foreign).toBeUndefined();
     expect(entry.ownership_reason).toBe('STARTED_BY_MISMATCH');
+  });
+
+  it('живость берётся из общего модуля, а не из своей копии', async () => {
+    // Живость процесса считалась в трёх местах по-разному: здесь через
+    // `kill(pid, 0)` с `EPERM` как «мёртв», в инструментах пайплайна — так же,
+    // а в службе здоровья — через `tasklist` на Windows и `EPERM` как «жив» на
+    // POSIX. Один и тот же номер получал три разных ответа: `start_pipeline`
+    // говорил `ALREADY_RUNNING`, а снимок рядом — `stale`.
+    const root = makeProject('proj');
+    writeLock(root, DEAD_PID);
+    writeLog(root);
+
+    // Мёртвый номер, но общий модуль отвечает «жив» — снимок обязан поверить
+    // ему, а не собственной проверке.
+    vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation((pid) => pid === DEAD_PID);
+    try {
+      const entry = await snapshotOne();
+
+      expect(entry.state).toBe('running');
+      expect(entry.stale_lock).toBeUndefined();
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('битый lock — проект не попадает в снимок вовсе', async () => {

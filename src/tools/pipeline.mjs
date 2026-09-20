@@ -4,7 +4,8 @@ import { spawn } from 'child_process';
 import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
 import { writeAbortState, clearAbortState, isAbortInProgress } from '../process/abort-state.mjs';
 import { writeKillOutcome, clearKillOutcome } from '../process/kill-outcome.mjs';
-import { pidCouldBeFromRun } from '../process/process-start.mjs';
+import { pidCouldBeFromRun, processStartedAtCached } from '../process/process-start.mjs';
+import { isProcessAlive } from '../health/pid-check.mjs';
 import { kill, pause, resume, abort } from '../process/control.mjs';
 import { notify_workflow_pipeline_state } from '../resources/index.mjs';
 import { get_workflow_pipeline_state } from '../resources/pipeline-state.mjs';
@@ -126,19 +127,16 @@ function refuseIfPidReused(pid, lock) {
 /**
  * Жив ли процесс с этим номером.
  *
- * `EPERM` — это «процесс есть, но он не наш»: чужой пользователь, служба,
- * процесс с более высокими правами. Считать такой номер свободным нельзя —
- * `start_pipeline` снял бы lock живого раннера. Рядом `process/control.mjs`
- * трактует `EPERM` так же.
+ * Берётся общая реализация `health/pid-check.mjs`: на POSIX `kill(pid, 0)` с
+ * `EPERM` как «жив» (процесс есть, просто не наш — чужой пользователь, служба,
+ * процесс с большими правами), на Windows — `tasklist`, который про чужие
+ * процессы отвечает честно. Своя копия здесь читала `EPERM` как «номер
+ * свободен», и `start_pipeline` снимал lock живого раннера; а третья копия в
+ * снимке состояния давала на тот же номер третий ответ. Теперь ответ один на
+ * весь сервер.
  */
 function isPipelineProcessAlive(pid) {
-  if (!pid || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === 'EPERM';
-  }
+  return isProcessAlive(pid);
 }
 
 /**
@@ -220,12 +218,23 @@ export const start_pipeline = {
               + '— it is not the runner. Remove .workflow/logs/.pipeline.lock and start again.'
           };
         }
+        // Время старта могло остаться неизвестным: ОС не отдаёт его для
+        // чужого или привилегированного процесса, а PowerShell под нагрузкой
+        // отваливается по таймауту. Проверка в таком случае намеренно
+        // пропускается (fail-open), и утверждать «пайплайн идёт» было бы
+        // сильнее, чем мы знаем.
+        const startKnown = processStartedAtCached(lock.pid) !== null;
         return {
           ok: false,
           code: 'ALREADY_RUNNING',
           pid: lock.pid,
           started_at: lock.timestamp,
-          hint: `Pipeline is already running for ${project} (pid ${lock.pid})`
+          ...(startKnown ? {} : { start_time_unknown: true }),
+          hint: startKnown
+            ? `Pipeline is already running for ${project} (pid ${lock.pid})`
+            : `Pid ${lock.pid} from the lock belongs to a live process, but the OS did not report its start time `
+              + '(another user, a service, or a busy system), so it could not be confirmed as the runner. '
+              + 'Check the process yourself; remove .workflow/logs/.pipeline.lock if it is stale.'
         };
       }
       try {

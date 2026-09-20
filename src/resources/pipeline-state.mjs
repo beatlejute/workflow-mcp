@@ -4,17 +4,10 @@ import { discoverProjects } from '../discovery.mjs';
 import { acceptedInstanceIds } from '../lib/project-root.mjs';
 import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
 import { pidCouldBeFromRun } from '../process/process-start.mjs';
+import { isProcessAlive } from '../health/pid-check.mjs';
 import { readAbortState } from '../process/abort-state.mjs';
 import { killOutcomeForRun } from '../process/kill-outcome.mjs';
 import { parsePipelineLog } from '../parsers/pipeline-log.mjs';
-
-/**
- * Check if a process is alive.
- */
-function isProcessAlive(pid) {
-  if (!pid || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
 
 
 /**

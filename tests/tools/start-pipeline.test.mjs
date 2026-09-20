@@ -14,6 +14,7 @@ import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import { start_pipeline } from '../../src/tools/pipeline.mjs';
 import { mcpInstanceId } from '../../src/lib/project-root.mjs';
+import * as pidCheck from '../../src/health/pid-check.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -125,31 +126,29 @@ describe('start_pipeline', () => {
     expect(result.pid).toBe(process.pid);
   });
 
-  it('процесс чужого пользователя считается живым, lock остаётся', async () => {
-    // `process.kill(pid, 0)` на чужом процессе бросает EPERM: «он есть, но не
-    // твой». Прежде это читалось как «номер свободен», и `start_pipeline`
-    // снимал lock живого раннера, запущенного из-под другого пользователя или
-    // с иными правами. `process/control.mjs` трактует EPERM как «жив» давно.
-    const foreignPid = 424242;
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
-      if (pid === foreignPid) {
-        const err = new Error('EPERM');
-        err.code = 'EPERM';
-        throw err;
-      }
-      return true;
-    });
+  it('живой процесс с нечитаемым временем старта сохраняет lock', async () => {
+    // Живость определяет общий модуль (`health/pid-check.mjs`): на POSIX там
+    // `EPERM` считается «жив» — процесс есть, просто не наш. Своя копия здесь
+    // читала это как «номер свободен», и lock живого раннера снимался.
+    //
+    // Время старта у такого процесса ОС не отдаёт, поэтому проверка
+    // переиспользования пропускается (fail-open). Ответ об этом говорит прямо,
+    // а не утверждает «пайплайн идёт».
+    const unreadablePid = 424242;
+    vi.spyOn(pidCheck, 'isProcessAlive').mockImplementation((pid) => pid === unreadablePid);
 
     try {
-      writeLock(projectPath, foreignPid);
+      writeLock(projectPath, unreadablePid);
 
       const result = await start_pipeline.execute({ project: 'start-project' });
 
       expect(result.ok).toBe(false);
       expect(result.code).toBe('ALREADY_RUNNING');
+      expect(result.start_time_unknown).toBe(true);
+      expect(result.hint).toMatch(/did not report its start time/);
       expect(fs.existsSync(path.join(projectPath, ...LOCK_REL))).toBe(true);
     } finally {
-      killSpy.mockRestore();
+      vi.restoreAllMocks();
     }
   });
 
