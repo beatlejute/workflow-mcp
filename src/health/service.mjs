@@ -60,8 +60,9 @@ export function createHealthService({ cwd, projects, stateDir, onAlert }) {
       try {
         publisher.publishAlert(alert);
       } catch (err) {
-        // Сюда доходит только отказ записи в историю: сам колбэк выше уже
-        // проглатывает свои ошибки.
+        // Обе ожидаемые беды publisher уже разбирает сам: колбэк выше глотает
+        // свои ошибки, отказ записи в историю только логируется. Сюда доходит
+        // неожиданное — и тоже не должно ломать обход остальных проектов.
         console.error('[health] failed to record alert:', err.message);
       }
     }

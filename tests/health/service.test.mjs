@@ -15,6 +15,7 @@ import path from 'path';
 
 import { createHealthService } from '../../src/health/service.mjs';
 import * as pidCheck from '../../src/health/pid-check.mjs';
+import * as thresholds from '../../src/health/thresholds.mjs';
 import { writeRunnerLock } from '../helpers/pipeline-lock.mjs';
 
 describe('createHealthService', () => {
@@ -183,31 +184,59 @@ describe('createHealthService', () => {
   });
 
   it('исключение внутри тика не убивает службу', () => {
-    // Исключение в колбэке `setInterval` не ловит никто: раньше под защитой
-    // были только детекторы, а чтение конфига и список проектов — нет.
+    // Проверяется защита тела тика, а не `start()`. Первый вызов функции
+    // списка проектов происходит в `start()` (подсчёт для предупреждения о
+    // числе проектов) и ловится там же, поэтому ронять надо то, что зовётся
+    // только внутри тика, — чтение конфига.
     writeConfig();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    let firstTick = true;
     const seen = [];
 
     service = createHealthService({
       cwd: workspace,
-      projects: () => {
-        if (firstTick) {
-          firstTick = false;
-          throw new Error('discovery сломалась');
-        }
-        return [makeCrashedProject('after')];
-      },
+      projects: () => [makeCrashedProject('after')],
       stateDir: { dir: stateDir, mode: 'writable' },
       onAlert: (alert) => seen.push(alert.project)
     });
     service.start();
 
+    vi.spyOn(thresholds, 'getMcpConfig').mockImplementationOnce(() => {
+      throw new Error('конфиг не читается');
+    });
+
     expect(() => vi.advanceTimersByTime(1000)).not.toThrow();
     expect(errorSpy).toHaveBeenCalled();
+    expect(seen).toEqual([]);
 
-    // Служба пережила отказ и работает дальше.
+    // Служба пережила отказ: следующий тик проходит обычным порядком.
+    vi.advanceTimersByTime(1000);
+    expect(seen).toEqual(['after']);
+
+    errorSpy.mockRestore();
+  });
+
+  it('отказ функции списка проектов не убивает службу', () => {
+    // Список пересобирает discovery: его поломка не причина ронять сервер.
+    writeConfig();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let broken = true;
+    const seen = [];
+
+    service = createHealthService({
+      cwd: workspace,
+      projects: () => {
+        if (broken) throw new Error('discovery сломалась');
+        return [makeCrashedProject('after')];
+      },
+      stateDir: { dir: stateDir, mode: 'writable' },
+      onAlert: (alert) => seen.push(alert.project)
+    });
+
+    expect(() => service.start()).not.toThrow();
+    expect(() => vi.advanceTimersByTime(1000)).not.toThrow();
+    expect(seen).toEqual([]);
+
+    broken = false;
     vi.advanceTimersByTime(1000);
     expect(seen).toEqual(['after']);
 

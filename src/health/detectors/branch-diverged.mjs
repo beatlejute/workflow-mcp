@@ -24,9 +24,12 @@ export function detectBranchDiverged(projectPath, config) {
   if (autoFetch) {
     // Add fetch before status if auto_fetch is true
     try {
+      // Таймаут обязателен и здесь: fetch в недоступный remote держит
+      // синхронный тик, пока не сдастся сам git, — минуты вместо секунд.
       execSync('git fetch --no-write-fetch-head', { 
         cwd: projectPath, 
-        stdio: 'ignore' 
+        stdio: 'ignore',
+        timeout: 5000
       });
     } catch (err) {
       // If fetch fails, continue with status anyway (non-fatal)

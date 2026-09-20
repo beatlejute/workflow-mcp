@@ -411,14 +411,16 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const result1 = detectApprovalPending(project1Path, config);
       expect(result1).not.toBeNull();
       expect(result1.type).toBe('approval_pending');
-      expect(result1.project).toContain('project1');
+      // `toContain` пропускал поломку: полный путь содержит имя проекта
+      // подстрокой, поэтому `D:\Dev\project1` проверку проходил.
+      expect(result1.project).toBe('project1');
       expect(result1.step_id).toBe('step-1');
 
       // Check project2
       const result2 = detectApprovalPending(project2Path, config);
       expect(result2).not.toBeNull();
       expect(result2.type).toBe('approval_pending');
-      expect(result2.project).toContain('project2');
+      expect(result2.project).toBe('project2');
       expect(result2.step_id).toBe('step-2');
 
       // Fingerprints should be different for different projects
@@ -554,7 +556,7 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
       const result = detectApprovalPending(customProjectPath, config);
 
       expect(result).not.toBeNull();
-      expect(result.project).toContain('my-test-project');
+      expect(result.project).toBe('my-test-project');
 
       // Cleanup
       fs.rmSync(customProjectPath, { recursive: true, force: true });
@@ -872,8 +874,8 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
 
       expect(result1).not.toBeNull();
       expect(result2).not.toBeNull();
-      expect(result1.project).toContain('project1');
-      expect(result2.project).toContain('project2');
+      expect(result1.project).toBe('project1');
+      expect(result2.project).toBe('project2');
       expect(result1.fingerprint).not.toBe(result2.fingerprint);
     });
   });

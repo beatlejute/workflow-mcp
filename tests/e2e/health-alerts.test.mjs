@@ -201,26 +201,47 @@ describe('E2E: алерты здоровья доходят до клиента'
       stdio: ['pipe', 'pipe', 'pipe']
     });
 
-    let out = '';
-    broken.stdout.on('data', (chunk) => { out += chunk.toString('utf8'); });
+    // Ответы ждём, а не спим фиксированное время: под нагрузкой пауза
+    // превращается в флейк, а на быстрой машине — в лишние секунды.
+    const brokenResponses = new Map();
+    let buffer = '';
+    broken.stdout.on('data', (chunk) => {
+      buffer += chunk.toString('utf8');
+      let index;
+      while ((index = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, index).trim();
+        buffer = buffer.slice(index + 1);
+        if (!line) continue;
+        try {
+          const message = JSON.parse(line);
+          if (message.id !== undefined) brokenResponses.set(message.id, message);
+        } catch {
+          // не JSON-RPC — игнорируем
+        }
+      }
+    });
 
-    const ask = (id, method, params) =>
+    const ask = (id, method, params) => {
       broken.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+      const started = Date.now();
+      return new Promise((resolve, reject) => {
+        const tick = () => {
+          if (brokenResponses.has(id)) return resolve(brokenResponses.get(id));
+          if (broken.exitCode !== null) return reject(new Error(`сервер завершился с кодом ${broken.exitCode}`));
+          if (Date.now() - started > 15000) return reject(new Error(`timeout waiting for ${method}`));
+          setTimeout(tick, 50);
+        };
+        tick();
+      });
+    };
 
     try {
-      ask(1, 'initialize', {
+      await ask(1, 'initialize', {
         protocolVersion: '2024-11-05',
         capabilities: {},
         clientInfo: { name: 'health-e2e-bad', version: '1.0.0' }
       });
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      ask(2, 'tools/list', {});
-      await new Promise((resolve) => setTimeout(resolve, 2500));
-
-      const toolsResponse = out.split('\n')
-        .filter(Boolean)
-        .map((line) => { try { return JSON.parse(line); } catch { return null; } })
-        .find((message) => message && message.id === 2);
+      const toolsResponse = await ask(2, 'tools/list', {});
 
       expect(broken.exitCode, 'сервер завершился из-за каталога состояния').toBeNull();
       expect(toolsResponse?.result?.tools?.length ?? 0).toBeGreaterThan(0);

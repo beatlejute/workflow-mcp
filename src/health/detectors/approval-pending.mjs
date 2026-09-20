@@ -25,7 +25,7 @@ export function getApprovalPendingThreshold(config) {
  * вида `D:\Dev\proj` вместо имени. Остальные детекторы считают так же.
  */
 function projectName(projectPath) {
-  return projectPath.split(/[\/]/).filter(Boolean).pop() || 'unknown';
+  return projectPath.split(/[\\/]/).filter(Boolean).pop() || 'unknown';
 }
 
 export function detectApprovalPending(projectPath, config) {

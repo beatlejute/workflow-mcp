@@ -81,9 +81,11 @@ describe('detectBranchDiverged на настоящем git', () => {
     expect(new Date(alert.detected_at).toISOString()).toBe(alert.detected_at);
   });
 
-  it('каталог без .git не трогает git вовсе', () => {
-    // Раньше на каждом не-репозитории раз в тик порождался процесс git
-    // только для того, чтобы ответить `fatal: not a git repository`.
+  it('каталог без .git алерта не даёт', () => {
+    // Здесь проверяется только исход. Что git при этом не порождается вовсе,
+    // доказывает `branch-diverged.test.mjs` — там `execSync` подменён и видно
+    // сам факт вызова; до guard'а исход был тот же null, только через запуск
+    // процесса и `catch`.
     expect(detectBranchDiverged(plain, CONFIG)).toBeNull();
   });
 });

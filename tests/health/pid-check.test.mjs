@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { isProcessAlive } from '../../src/health/pid-check.mjs';
+import { isProcessAlive, clearProcessAliveCache } from '../../src/health/pid-check.mjs';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
 
@@ -35,6 +35,9 @@ describe('pid-check.mjs', () => {
       await new Promise((resolve) => child.on('exit', resolve));
       // Дать системе снять запись о процессе.
       await new Promise((resolve) => setTimeout(resolve, 500));
+      // Ответы про pid помнятся секунду; без сброса результат зависел бы от
+      // того, спрашивал ли кто-нибудь про этот номер только что.
+      clearProcessAliveCache();
 
       expect(isProcessAlive(pid)).toBe(false);
     });
