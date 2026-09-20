@@ -67,9 +67,9 @@ cases:
     createSkill('proj', 'coach', CANON);
 
     const result = await list_skill_tests.execute({ project: 'proj', skill_name: 'coach' });
-    const cases = JSON.parse(result.stdout);
+    const cases = result.tests;
 
-    expect(result.exit_code).toBe(0);
+    expect(result.error).toBeUndefined();
     expect(cases).toHaveLength(2);
     expect(cases.map((c) => c.test_id)).toEqual(['TC-COACH-001', 'TC-COACH-002']);
   });
@@ -77,9 +77,7 @@ cases:
   it('раскладывает поля канона по выходному контракту', async () => {
     createSkill('proj', 'coach', CANON);
 
-    const [first] = JSON.parse(
-      (await list_skill_tests.execute({ project: 'proj', skill_name: 'coach' })).stdout
-    );
+    const [first] = (await list_skill_tests.execute({ project: 'proj', skill_name: 'coach' })).tests;
 
     expect(first).toEqual({
       skill_name: 'coach',
@@ -101,7 +99,7 @@ cases:
     file: cases/TC-RR-001.yaml
 `);
 
-    const cases = JSON.parse((await list_skill_tests.execute({ project: 'proj' })).stdout);
+    const cases = (await list_skill_tests.execute({ project: 'proj' })).tests;
 
     expect(cases.map((c) => c.test_id).sort()).toEqual(['TC-COACH-001', 'TC-COACH-002', 'TC-RR-001']);
     expect(new Set(cases.map((c) => c.skill_name))).toEqual(new Set(['coach', 'review-result']));
@@ -119,9 +117,7 @@ describe('list_skill_tests: прежний формат (tests:)', () => {
   it('продолжает читаться без изменений', async () => {
     createSkill('proj', 'coach', LEGACY);
 
-    const [only] = JSON.parse(
-      (await list_skill_tests.execute({ project: 'proj', skill_name: 'coach' })).stdout
-    );
+    const [only] = (await list_skill_tests.execute({ project: 'proj', skill_name: 'coach' })).tests;
 
     expect(only).toEqual({
       skill_name: 'coach',
@@ -141,9 +137,9 @@ describe('list_skill_tests: устойчивость', () => {
 
     const result = await list_skill_tests.execute({ project: 'proj', skill_name: 'coach' });
 
-    expect(result.exit_code).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual([]);
-    expect(result.stderr).toMatch(/No index\.yaml/);
+    expect(result.error).toBeUndefined();
+    expect(result.tests).toEqual([]);
+    expect(result.warnings.join(' ')).toMatch(/No index\.yaml/);
   });
 
   it('индекс неизвестной формы не роняет остальные скилы', async () => {
@@ -152,7 +148,7 @@ describe('list_skill_tests: устойчивость', () => {
   - id: TC-RR-001
 `);
 
-    const cases = JSON.parse((await list_skill_tests.execute({ project: 'proj' })).stdout);
+    const cases = (await list_skill_tests.execute({ project: 'proj' })).tests;
 
     expect(cases.map((c) => c.test_id)).toEqual(['TC-RR-001']);
   });

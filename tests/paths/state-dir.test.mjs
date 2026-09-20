@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { resolveStateDir, ensureStateDir } from '../../src/paths/state-dir.mjs';
+import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 
 describe('state-dir: resolveStateDir', () => {
   let stderrSpy;
@@ -229,6 +230,28 @@ describe('state-dir: resolveStateDir', () => {
 
       // Hash should be 12-char hex
       expect(hash).toMatch(/^[0-9a-f]{12}$/);
+    });
+
+    // Проверка выше от регистра не зависела вовсе: она брала один путь и
+    // сверяла форму хеша. Живьём клиент передавал cwd то как `d:\Dev`, то как
+    // `D:\Dev`, и рядом лежали два каталога — история алертов в одном, пустой
+    // второй.
+    it.runIf(process.platform === 'win32')('регистр пути на Windows не меняет каталог', () => {
+      const lower = resolveStateDir('d:\\Dev\\project');
+      const upper = resolveStateDir('D:\\Dev\\Project');
+
+      expect(path.basename(lower.dir)).toBe(path.basename(upper.dir));
+    });
+
+    it.runIf(process.platform === 'win32')('регистр пути на Windows не меняет идентификатор экземпляра', () => {
+      expect(mcpInstanceId('d:\\Dev\\project')).toBe(mcpInstanceId('D:\\Dev\\Project'));
+    });
+
+    it.runIf(process.platform !== 'win32')('на POSIX регистр значим: пути разные', () => {
+      const lower = resolveStateDir('/tmp/project');
+      const upper = resolveStateDir('/tmp/Project');
+
+      expect(path.basename(lower.dir)).not.toBe(path.basename(upper.dir));
     });
   });
 

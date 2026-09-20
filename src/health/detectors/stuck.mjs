@@ -17,11 +17,21 @@ import { readPipelineLock } from '../../process/run-lock.mjs';
 export function detectStuck(projectPath, thresholds) {
   const logsDir = resolve(projectPath, '.workflow', 'logs');
 
+  // Зависнуть может только идущий прогон, а идёт он ровно пока лежит
+  // `.pipeline.lock`: раннер снимает его при любом упорядоченном выходе.
+  // Без этой проверки детектор смотрел на самый свежий лог в каталоге и
+  // объявлял зависшей последнюю незакрытую стадию давно законченного прогона.
+  // Живьём так висел прогон от 24 марта: «running 15554267s, timeout is 300s»
+  // — critical-алерт, который не снять ничем, кроме удаления лога.
+  const lock = readPipelineLock(projectPath);
+  if (!lock) {
+    return null;
+  }
+
   // Мёртвый раннер — забота detectCrashed, здесь такой прогон пропускается.
   // pid берётся из `.pipeline.lock`; раньше читался `.runner-pids`, которого
   // не пишет никто, и ветка не исполнялась ни разу.
-  const lock = readPipelineLock(projectPath);
-  if (lock && !isProcessAlive(lock.pid)) {
+  if (!isProcessAlive(lock.pid)) {
     return null;
   }
 

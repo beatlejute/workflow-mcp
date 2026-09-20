@@ -5,6 +5,7 @@ import { computeStats, computeCycleTime, computeVelocity } from '../analytics/ag
 import { discoverProjects } from '../discovery.mjs';
 import { z } from 'zod';
 import { mcpCwd, tryResolveProjectRoot } from '../lib/project-root.mjs';
+import { isWorkflowDoc } from '../lib/workflow-docs.mjs';
 
 /**
  * Get velocity metrics for a project grouped by time period
@@ -35,7 +36,7 @@ export async function get_velocity(project, { window_days = 14, group_by = 'day'
   }
 
   // Get all done tickets
-  const ticketFiles = fs.readdirSync(doneDir).filter(f => f.endsWith('.md'));
+  const ticketFiles = fs.readdirSync(doneDir).filter(f => isWorkflowDoc(f));
   
   if (ticketFiles.length === 0) {
     return { window_days, group_by, points: [] };
@@ -349,7 +350,10 @@ export const aggregate_metrics = {
           },
           cycle_time_summary: {
             count: cycleTime.count,
-            mean_sec: cycleTime.mean_sec !== null ? Math.round(cycleTime.mean_sec) : null,
+            // `computeCycleTime` отдаёт среднее в поле `avg` и в днях. Читался
+            // же `mean_sec`, которого там нет вовсе: среднее всегда было
+            // `null` — даже когда рядом стояли `count: 2` и оба процентиля.
+            mean_sec: cycleTime.avg !== null ? Math.round(cycleTime.avg * 86400) : null,
             p50_sec: cycleTime.p50 !== null ? Math.round(cycleTime.p50 * 86400) : null,
             p90_sec: cycleTime.p90 !== null ? Math.round(cycleTime.p90 * 86400) : null
           },

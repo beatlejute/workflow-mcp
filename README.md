@@ -28,7 +28,10 @@ MCP-сервер, агрегирующий операции по несколь�
 
 Оговорки:
 
+- `workflow://pipeline-state` строится заново на каждое чтение. Кеш снимка остаётся только для рассылки уведомлений: наблюдатели встают лишь при подписке, а лог прогона их намеренно не будит. Прежде этот кеш отдавался и в ответ на чтение — клиент без подписки видел первый снимок до конца жизни сервера, вплоть до `killed` от прошлого прогона, пока `list_running_pipelines` рядом отвечал `running`.
+
 - Детекторы `crashed` и `stuck` определяли pid раннера по `.runner-pids` — файлу, которого не пишет никто, — и не срабатывали ни разу; теперь pid берётся из `.workflow/logs/.pipeline.lock`.
+- Детектор `stuck` смотрит только на проекты с живым `.workflow/logs/.pipeline.lock`. Без него прогона нет вовсе, а прежде детектор брал самый свежий лог в каталоге и объявлял зависшей последнюю незакрытую стадию давно законченного прогона — в рабочей области так висел critical-алерт о прогоне полугодовой давности.
 - Детектор `ghost_execution` по-прежнему молчит: маркер `[GHOST-EXECUTION]` в лог не пишет ни раннер, ни сервер, так что истинных срабатываний у него не будет до правки workflow-ai.
 - Детектор `branch_diverged` не срабатывал никогда по другой причине: к `git status` дописывался флаг `--no-fetch`, которого у этой команды нет. Флаг убран; при `branch_diverged_auto_fetch: true` перед проверкой по-прежнему делается `git fetch`.
 - Детектор `branch_diverged` смотрит только на проекты со своим `.git`. Проект внутри чужого репозитория (монорепо, `.git` у родителя) он пропускает: иначе на каждом не-репозитории раз в тик порождался бы процесс `git`.
@@ -75,7 +78,7 @@ const diff = await client.callTool('git_diff', { project: 'my-project', staged: 
 Запуск и управление скилами проекта и их тестовыми наборами через MCP.
 
 - `run_skill(project, {skill_name, args?, context?, timeout_sec?})` — выполнить скил с опциональными аргументами и контекстом
-- `list_skill_tests(project, {skill_name?})` — список тест-кейсов скила из `index.yaml`
+- `list_skill_tests(project, {skill_name?})` — тест-кейсы скила из `index.yaml`: `{tests, warnings}`, при отказе — `{error, message, tests: [], warnings: []}`. Ничего не запускает, поэтому конверта CLI (`exit_code`/`stdout`) у ответа нет
 - `run_skill_tests(project, {skill_name, test_ids?, parallel?, timeout_sec?})` — прогон тестов скила со структурированным результатом
 - `create_coach_ticket(project, {target_skill, gap_description, evidence_path?, priority?})` — создание coach-gap тикета на улучшение скила
 
@@ -165,13 +168,13 @@ const velocity = await client.callTool('get_velocity', {
 
 - `start_pipeline(project, {plan?, config?})` — запускает `workflow run` detached-процессом. Возвращает `{ok, run_id, pid, started_at, log_path}`. Синглтон держит сам раннер через `.workflow/logs/.pipeline.lock`; если lock жив — `{ok: false, code: 'ALREADY_RUNNING', pid, started_at}`; lock мёртвого процесса снимается автоматически. Если pid жив, но сам процесс стартовал позже записи lock'а — это не раннер, а занявший номер посторонний процесс: ответ `{ok: false, code: 'STALE_PIPELINE_LOCK', pid}`, а lock остаётся на месте — удалять его решает человек, чтобы ошибка проверки не подняла второй пайплайн поверх живого. Ждёт появления лога до 10 секунд, иначе `RUNNER_NO_LOG`.
 - `get_pipeline_log(project, options: {tail_lines?, offset_bytes?, run_id?})` — содержимое лога с курсором. `tail_lines` по умолчанию 200, максимум 5000 (иначе `TOO_MANY_LINES`); без `run_id` берётся последний прогон. Возвращает `{run_id, lines, log_path, log_size_bytes, truncated}`.
-- `list_running_pipelines()` — все идущие пайплайны по обнаруженным проектам: `state` (`running|paused|aborting|killed|stale`), текущая стадия, номер шага, `awaiting_approval`, `marker_valid`, а также `foreign`, `stale_lock` и `marker_reason`, когда они применимы. Параметров нет.
+- `list_running_pipelines()` — все идущие пайплайны по обнаруженным проектам: `state` (`running|paused|aborting|killed|stale`), текущая стадия, номер шага, `awaiting_approval`, `marker_valid`, а также `foreign`, `stale_lock`, `marker_reason` и `killed_by`, когда они применимы. Параметров нет.
   В списке появляется проект, у которого жив `.workflow/logs/.pipeline.lock`. Раннер снимает lock при любом упорядоченном выходе — своём, по `SIGINT` и по `SIGTERM`, — поэтому **завершившийся прогон из списка просто исчезает**; состояния `completed` у инструмента нет. Откуда берутся остальные:
 
   - `aborting` — идёт `abort_pipeline` и раннер ещё жив. Признак — `.workflow/state/abort-state.json`, он сверяется с pid и `run_id` текущего прогона. На POSIX раннер обычно выходит по первому же сигналу и состояние наблюдаемо доли секунды; на Windows мягкий `taskkill` консольному процессу ничего не делает, и состояние держится всё grace-окно.
   - `paused` — файл паузы с тем же pid либо ожидающее одобрение.
   - `running` — pid раннера жив.
-  - `killed` — pid мёртв, lock остался, и остановку сделали мы: `stop_pipeline` или эскалация `abort_pipeline` записывают исход в `.workflow/state/last-kill.json`. Раннер после `taskkill /F` ни лог дописать, ни lock снять не успевает, поэтому иначе отличить это от аварии нельзя.
+  - `killed` — pid мёртв, lock остался, и остановку сделали мы: `stop_pipeline` или эскалация `abort_pipeline` записывают исход в `.workflow/state/last-kill.json`. Раннер после `taskkill /F` ни лог дописать, ни lock снять не успевает, поэтому иначе отличить это от аварии нельзя. Кто именно добивал, видно в `killed_by`. Запись об исходе — второе доказательство владения: маркер запуска после убийства снимаем мы сами, поэтому по одному его отсутствию такой прогон считался чужим (`foreign: true`) — теперь нет.
   - `stale` — pid мёртв, lock остался, и чем кончилось, неизвестно: падение, ребут, убийство со стороны. Признак `stale_lock` при этом стоит и у `killed`: файл в обоих случаях надо убирать.
 - `pause_pipeline(project)` — `SIGSTOP` на POSIX, `pssuspend.exe` на Windows. Возвращает `{ok, pid, state: 'paused', paused_at}`; повторный вызов идемпотентен и отдаёт `code: 'ALREADY_PAUSED'`. Если средство приостановки недоступно — `PAUSE_UNSUPPORTED`.
 - `resume_pipeline(project)` — снимает паузу (`SIGCONT` / `pssuspend -r`).
@@ -339,6 +342,15 @@ discovery:
 state:
   dir: ""   # пусто → XDG-путь; в защищённом cwd запись отключается
 ```
+
+Путь считается от `MCP_CWD` и на Windows не зависит от регистра: `d:\Dev` и
+`D:\Dev` — одна рабочая область. Раньше регистр входил в хеш, и одна и та же
+область получала два каталога и два разных `mcp_instance_id`.
+
+Каталог создаётся первой записью, а не запуском сервера: пустых каталогов от
+разовых запусков больше не остаётся. Кеш пути к `gh` лежит уровнем выше —
+он один на машину, а не на рабочую область. `WORKFLOW_STATE_DIR` перекрывает
+оба каталога.
 
 ### Валидация human-тикетов (Sprint 3)
 

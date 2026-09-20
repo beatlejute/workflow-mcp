@@ -3,6 +3,7 @@ import { parseFrontmatter } from 'workflow-ai/lib/utils.mjs';
 import path from 'path';
 import fs from 'fs';
 import { resolveProjectRoot } from '../lib/project-root.mjs';
+import { isWorkflowDoc } from '../lib/workflow-docs.mjs';
 
 /**
  * list_reports — сканирует <project>/.workflow/reports/*.md, сортирует по created_at DESC
@@ -21,7 +22,7 @@ async function listReportsImpl({ project, since, limit = 50 }) {
   }
 
   const files = fs.readdirSync(reportsDir)
-    .filter(f => f.endsWith('.md'))
+    .filter(f => isWorkflowDoc(f))
     .map(f => path.join(reportsDir, f));
 
   const reports = [];

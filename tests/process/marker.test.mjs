@@ -3,13 +3,12 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { writeMarker, readMarker, validateMarker, removeMarker } from '../../src/process/marker.mjs';
-import crypto from 'crypto';
+import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 
-// Helper to compute mcp_instance_id for a given path
-function getMcpInstanceIdForPath(cwd) {
-  const hash = crypto.createHash('sha256').update(cwd).digest('hex');
-  return `workflow-mcp@${hash.slice(0, 12)}`;
-}
+// Идентификатор берётся у самого кода, а не пересчитывается здесь: копия
+// формулы в тесте разошлась с оригиналом, как только тот стал гасить регистр
+// пути, и тест ловил расхождение теста с самим собой, а не поломку контракта.
+const getMcpInstanceIdForPath = (cwd) => mcpInstanceId(cwd);
 
 // Create a temporary directory for test
 function createTempProjectDir() {

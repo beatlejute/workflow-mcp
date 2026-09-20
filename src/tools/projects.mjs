@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
 import { tryResolveProjectRoot } from '../lib/project-root.mjs';
+import { isWorkflowDoc } from '../lib/workflow-docs.mjs';
 
 /**
  * List tickets from a project directory
@@ -30,7 +31,7 @@ async function listTickets(projectPath, options = {}) {
       continue;
     }
 
-    const files = fs.readdirSync(statusDir).filter(f => f.endsWith('.md'));
+    const files = fs.readdirSync(statusDir).filter(f => isWorkflowDoc(f));
     for (const file of files) {
       const filePath = path.join(statusDir, file);
       try {

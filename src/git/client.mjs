@@ -1,8 +1,7 @@
 import simpleGit from 'simple-git';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { serverStateDir, ensureStateDir } from '../paths/state-dir.mjs';
-import { mcpCwd } from '../lib/project-root.mjs';
+import { machineStateDir } from '../paths/state-dir.mjs';
 import { promises as fs } from 'fs';
 import path from 'path';
 
@@ -46,13 +45,9 @@ const GIT_TIMEOUT = parseInt(process.env.GIT_TIMEOUT || '30000', 10);
 async function detectGhCli(stateDir) {
   const GH_CACHE_FILE = stateDir ? path.join(stateDir, 'gh-path.cache') : null;
 
-  if (stateDir) {
-    try {
-      await fs.access(stateDir);
-    } catch {
-      await fs.mkdir(stateDir, { recursive: true });
-    }
-  }
+  // Каталог создаётся только под запись кеша — ниже. Прежний безусловный
+  // `mkdir` оставлял пустой каталог даже там, где `gh` не нашёлся и писать
+  // было нечего.
 
   // Try cache first
   try {
@@ -79,7 +74,12 @@ async function detectGhCli(stateDir) {
     const detectedPath = stdout.trim().split('\n')[0].trim();
     if (detectedPath) {
       if (GH_CACHE_FILE) {
-        await fs.writeFile(GH_CACHE_FILE, JSON.stringify({ path: detectedPath, mtime: Date.now() }));
+        try {
+          await fs.mkdir(stateDir, { recursive: true });
+          await fs.writeFile(GH_CACHE_FILE, JSON.stringify({ path: detectedPath, mtime: Date.now() }));
+        } catch {
+          // Кеш вторичен: путь к `gh` уже найден, в следующий раз найдём снова.
+        }
       }
       return detectedPath;
     }
@@ -156,14 +156,16 @@ function parseStatus(status) {
  * @returns {Object} Git client instance
  */
 export function createGitClient(projectPath) {
-  // Кеш пути к `gh` — часть состояния сервера, а не проекта: путь к бинарнику
-  // один на машину. Берём ровно тот же каталог, что и сервер — вместе с
-  // `WORKFLOW_STATE_DIR`, иначе при заданной переменной кеш уходил в XDG.
-  const stateResult = serverStateDir(mcpCwd());
+  // Кеш пути к `gh` — состояние машины, а не проекта и не рабочей области:
+  // путь к бинарнику один на всю систему. Раньше кеш лежал в каталоге рабочей
+  // области, и каждая новая область заводила свою копию — на машине их
+  // набралось 465 с одинаковым содержимым. `WORKFLOW_STATE_DIR` по-прежнему
+  // перекрывает всё состояние сервера, включая этот кеш.
+  const stateResult = machineStateDir();
   const stateWritable = stateResult.mode === 'writable' && !!stateResult.dir;
-  if (stateWritable) {
-    ensureStateDir(stateResult);
-  }
+  // Каталог заводит `detectGhCli`, когда ему действительно нужен кеш пути к
+  // `gh`. Создавать его здесь значило оставлять пустой каталог на каждый
+  // вызов любого git-tool'а — даже `git_status`, которому кеш не нужен.
   const stateDir = stateResult.dir;
 
   const git = simpleGit(projectPath, { timeout: GIT_TIMEOUT });

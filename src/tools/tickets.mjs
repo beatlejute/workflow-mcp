@@ -9,6 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import { z } from 'zod';
 import { mcpCwd, resolveProjectRoot } from '../lib/project-root.mjs';
+import { isWorkflowDoc } from '../lib/workflow-docs.mjs';
 
 const TICKETS_DIR = '.workflow/tickets';
 
@@ -63,7 +64,7 @@ export async function list_tickets({ project, status, plan_id, priority, type })
     const statusDir = path.join(ticketsDir, st);
     if (!fs.existsSync(statusDir)) continue;
 
-    const files = fs.readdirSync(statusDir).filter(f => f.endsWith('.md'));
+    const files = fs.readdirSync(statusDir).filter(f => isWorkflowDoc(f));
     for (const file of files) {
       const filePath = path.join(statusDir, file);
       try {

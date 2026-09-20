@@ -628,6 +628,69 @@ describe('aggregate_metrics tool tests', () => {
     expect(result.totals.blocked_count).toBe(0);
   });
 
+  test('среднее cycle time не пустое, когда тикеты есть', async () => {
+    // Поле читалось как `cycleTime.mean_sec`, а `computeCycleTime` отдаёт
+    // `avg` в днях: среднее было `null` при любом наборе тикетов, рядом с
+    // непустыми `count` и процентилями.
+    const parentDir = createMultiProjectParent('agg-mean-sec');
+    const proj = createNamedProject(parentDir, 'proj-mean', [
+      {
+        id: 'M-1',
+        status: 'done',
+        type: 'IMPL',
+        complexity: 1,
+        created_at: new Date(Date.now() - 2 * 86400000).toISOString(),
+        completed_at: new Date().toISOString()
+      },
+      {
+        id: 'M-2',
+        status: 'done',
+        type: 'IMPL',
+        complexity: 1,
+        created_at: new Date(Date.now() - 4 * 86400000).toISOString(),
+        completed_at: new Date().toISOString()
+      }
+    ]);
+
+    const result = await aggregate_metrics.execute({ projects: [proj], window_days: 14 });
+    const summary = result.projects.find(p => p.project === 'proj-mean').cycle_time_summary;
+
+    expect(summary.count).toBe(2);
+    // Два тикета по 2 и 4 дня — среднее 3 дня.
+    expect(summary.mean_sec).toBe(3 * 86400);
+  });
+
+  test('словесная сложность суммируется, а не даёт null', async () => {
+    // `complexity` в тикетах — слово. `Number('medium')` давал `NaN`, сумма
+    // проекта становилась `NaN`, а в JSON — `null`.
+    const parentDir = createMultiProjectParent('agg-word-complexity');
+    const proj = createNamedProject(parentDir, 'proj-words', [
+      {
+        id: 'W-1',
+        status: 'done',
+        type: 'IMPL',
+        complexity: 'simple',
+        created_at: new Date(Date.now() - 2 * 86400000).toISOString(),
+        completed_at: new Date().toISOString()
+      },
+      {
+        id: 'W-2',
+        status: 'done',
+        type: 'IMPL',
+        complexity: 'complex',
+        created_at: new Date(Date.now() - 2 * 86400000).toISOString(),
+        completed_at: new Date().toISOString()
+      }
+    ]);
+
+    const result = await aggregate_metrics.execute({ projects: [proj], window_days: 14 });
+    const velocity = result.projects.find(p => p.project === 'proj-words').velocity_summary;
+
+    expect(velocity.count).toBe(2);
+    // simple = 1, complex = 3.
+    expect(velocity.sum_complexity).toBe(4);
+  });
+
   test('один из проектов сломан → пропуск + warning, не fail', async () => {
     const parentDir = createMultiProjectParent('agg-broken-project');
 

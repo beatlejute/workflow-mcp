@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getFrontmatter } from '../caches/frontmatter-cache.mjs';
+import { isWorkflowDoc } from '../lib/workflow-docs.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -22,7 +23,7 @@ function getTicketFiles(projectPath) {
   for (const status of statuses) {
     const statusDir = path.join(ticketsDir, status);
     if (fs.existsSync(statusDir)) {
-      const files = fs.readdirSync(statusDir).filter(f => f.endsWith('.md'));
+      const files = fs.readdirSync(statusDir).filter(f => isWorkflowDoc(f));
       for (const file of files) {
         ticketFiles.push(path.join(statusDir, file));
       }
@@ -71,6 +72,27 @@ function hasFutureCreatedAt(fm) {
 }
 
 /**
+ * Вес тикета по сложности.
+ *
+ * `complexity` в тикетах — слово: `simple`, `medium`, `complex` (917 тикетов в
+ * рабочей области, других значений нет). Прежний `Number(complexity)` давал на
+ * них `NaN`, и вся сумма проекта превращалась в `NaN` — в JSON это `null`.
+ * Число тоже принимается: старые тикеты писали его цифрой.
+ *
+ * @param {string|number|null|undefined} complexity
+ * @returns {number}
+ */
+function complexityWeight(complexity) {
+  if (complexity == null) return 1;
+
+  const numeric = Number(complexity);
+  if (Number.isFinite(numeric)) return numeric;
+
+  const weights = { simple: 1, medium: 2, complex: 3 };
+  return weights[String(complexity).trim().toLowerCase()] ?? 1;
+}
+
+/**
  * Вычислить velocity за окно.
  * Суммирует complexity если поле есть, иначе count (по умолчанию 1).
  * @param {string} projectPath - путь к проекту
@@ -97,7 +119,7 @@ export function computeVelocity(projectPath, windowDays = null, groupBy = null) 
       }
 
       count++;
-      const complexity = frontmatter.complexity != null ? Number(frontmatter.complexity) : 1;
+      const complexity = complexityWeight(frontmatter.complexity);
       sum += complexity;
       included.push({ id: frontmatter.id, complexity });
     } catch (e) {

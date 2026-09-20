@@ -26,12 +26,30 @@ export function mcpCwd() {
 }
 
 /**
+ * Ключ рабочей области: то, что хешируют идентификатор экземпляра и каталог
+ * состояния.
+ *
+ * На Windows регистр пути ничего не значит для файловой системы, но значил для
+ * хеша: клиент передавал cwd то как `d:\Dev`, то как `D:\Dev`, и одна и та же
+ * рабочая область получала два разных каталога состояния и два разных
+ * идентификатора экземпляра. Живьём рядом лежали оба каталога: история алертов
+ * в одном, пустышка — во втором.
+ *
+ * @param {string} [cwd] - Корень; по умолчанию `mcpCwd()`
+ * @returns {string}
+ */
+export function workspaceKey(cwd = mcpCwd()) {
+  const absolute = path.resolve(cwd);
+  return process.platform === 'win32' ? absolute.toLowerCase() : absolute;
+}
+
+/**
  * Идентификатор экземпляра сервера, привязанный к рабочей области.
  * @param {string} [cwd] - Корень; по умолчанию `mcpCwd()`
  * @returns {string}
  */
 export function mcpInstanceId(cwd = mcpCwd()) {
-  const hash = createHash('sha256').update(path.resolve(cwd)).digest('hex');
+  const hash = createHash('sha256').update(workspaceKey(cwd)).digest('hex');
   return `workflow-mcp@${hash.slice(0, 12)}`;
 }
 

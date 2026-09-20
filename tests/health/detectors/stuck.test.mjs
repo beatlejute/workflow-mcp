@@ -34,6 +34,11 @@ describe('detectStuck (tests/health/detectors/stuck.test.mjs)', () => {
       timeout: 10
 `;
     fs.writeFileSync(path.join(configDir, 'pipeline.yaml'), pipelineYaml, 'utf8');
+
+    // Зависнуть может только идущий прогон, а идёт он пока лежит lock. Тесты
+    // его не клали и ловили зависание по одному логу: ровно так детектор и
+    // объявлял зависшим прогон, законченный полгода назад.
+    writeRunnerLock(projectPath, process.pid);
   });
 
   afterEach(() => {
@@ -484,6 +489,10 @@ describe('detectStuck (tests/health/detectors/stuck.test.mjs)', () => {
       const oldMtime = Date.now() - 20000;
       fs.utimesSync(logPath, oldMtime / 1000, oldMtime / 1000);
 
+      // Проект здесь свой, отдельный от того, что готовит beforeEach, — lock
+      // нужен и ему: без lock прогон не считается идущим.
+      writeRunnerLock(namedTestDir, process.pid);
+
       // Mock PIDs check
       vi.spyOn(pidCheck, 'isProcessAlive').mockReturnValue(true);
 
@@ -605,6 +614,53 @@ describe('detectStuck (tests/health/detectors/stuck.test.mjs)', () => {
 
       const result = detectStuck(projectPath, { stuck_headroom_sec: 5 });
 
+      expect(result).not.toBeNull();
+      expect(result.type).toBe('stuck');
+    });
+  });
+
+  describe('Прогона нет вовсе', () => {
+    /** Просроченная незакрытая стадия в логе, mtime — далеко в прошлом. */
+    function writeOverdueLog(name = 'pipeline_2026-03-24_09-14-21.log') {
+      const logContent = `[2026-03-24 09:14:21] [INFO] [PipelineRunner] Step 1
+[2026-03-24 09:14:21] [INFO] [PipelineRunner] Current stage: execute-task
+[2026-03-24 09:14:21] [INFO] [agent] START stage="execute-task" agent="test-agent"
+`;
+      const logPath = path.join(logsDir, name);
+      fs.writeFileSync(logPath, logContent, 'utf8');
+      const oldMtime = Date.now() - 180 * 24 * 3600 * 1000;
+      fs.utimesSync(logPath, oldMtime / 1000, oldMtime / 1000);
+      return logPath;
+    }
+
+    it('без lock зависания нет, каким бы старым ни был лог', () => {
+      writeOverdueLog();
+      fs.rmSync(path.join(projectPath, '.workflow', 'logs', '.pipeline.lock'), { force: true });
+
+      // Процесс жив — но это чужой процесс, к прогону он отношения не имеет.
+      vi.spyOn(pidCheck, 'isProcessAlive').mockReturnValue(true);
+
+      const result = detectStuck(projectPath, { stuck_headroom_sec: 5 });
+      expect(result).toBeNull();
+    });
+
+    it('битый lock читается как отсутствие прогона', () => {
+      writeOverdueLog();
+      fs.writeFileSync(path.join(projectPath, '.workflow', 'logs', '.pipeline.lock'), '{ это не json', 'utf8');
+
+      vi.spyOn(pidCheck, 'isProcessAlive').mockReturnValue(true);
+
+      const result = detectStuck(projectPath, { stuck_headroom_sec: 5 });
+      expect(result).toBeNull();
+    });
+
+    it('тот же лог при живом lock даёт алерт', () => {
+      // Контроль к двум проверкам выше: молчание там — от снятого lock, а не
+      // от того, что лог перестал считаться просроченным.
+      writeOverdueLog();
+      vi.spyOn(pidCheck, 'isProcessAlive').mockReturnValue(true);
+
+      const result = detectStuck(projectPath, { stuck_headroom_sec: 5 });
       expect(result).not.toBeNull();
       expect(result.type).toBe('stuck');
     });

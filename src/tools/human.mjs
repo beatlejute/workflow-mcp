@@ -6,6 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import { z } from 'zod';
 import { mcpCwd, resolveProjectRoot } from '../lib/project-root.mjs';
+import { isWorkflowDoc } from '../lib/workflow-docs.mjs';
 
 const TICKETS_DIR = '.workflow/tickets';
 const STATUS_DIRS = ['backlog', 'ready', 'in-progress', 'review', 'blocked', 'done', 'archive'];
@@ -64,7 +65,7 @@ export async function list_human_queue({ project, status }) {
         continue;
       }
 
-      const files = fs.readdirSync(statusDir).filter(f => f.endsWith('.md'));
+      const files = fs.readdirSync(statusDir).filter(f => isWorkflowDoc(f));
       for (const file of files) {
         const filePath = path.join(statusDir, file);
         try {
@@ -142,7 +143,7 @@ export async function get_human_context({ project, ticket_id }) {
     const statusDir = path.join(ticketsDir, status);
     if (!fs.existsSync(statusDir)) continue;
     
-    const files = fs.readdirSync(statusDir).filter(f => f.endsWith('.md'));
+    const files = fs.readdirSync(statusDir).filter(f => isWorkflowDoc(f));
     for (const file of files) {
       const filePath = path.join(statusDir, file);
       try {
@@ -209,7 +210,7 @@ export async function get_human_context({ project, ticket_id }) {
         const statusDir = path.join(ticketsDir, status);
         if (!fs.existsSync(statusDir)) continue;
         
-        const files = fs.readdirSync(statusDir).filter(f => f.endsWith('.md'));
+        const files = fs.readdirSync(statusDir).filter(f => isWorkflowDoc(f));
         for (const file of files) {
           const filePath = path.join(statusDir, file);
           try {
@@ -319,7 +320,7 @@ export async function resolve_human_ticket({ project, ticket_id, decision, resul
     const statusDir = path.join(ticketsDir, status);
     if (!fs.existsSync(statusDir)) continue;
     
-    const files = fs.readdirSync(statusDir).filter(f => f.endsWith('.md'));
+    const files = fs.readdirSync(statusDir).filter(f => isWorkflowDoc(f));
     for (const file of files) {
       const filePath = path.join(statusDir, file);
       try {

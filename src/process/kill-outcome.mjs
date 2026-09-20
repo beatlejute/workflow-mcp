@@ -75,16 +75,27 @@ export function readKillOutcome(projectRoot) {
   }
 }
 
-/** Убили ли именно тот прогон, который описан в lock'е. */
-export function killedThisRun(projectRoot, lock) {
-  if (!lock) return false;
+/**
+ * Исход, относящийся именно к прогону из lock'а, или null.
+ *
+ * @param {string} projectRoot
+ * @param {{pid: number, run_id: string|null}|null} lock
+ * @returns {{killed_at: string, pid: number|null, run_id: string|null, by: string|null}|null}
+ */
+export function killOutcomeForRun(projectRoot, lock) {
+  if (!lock) return null;
   const outcome = readKillOutcome(projectRoot);
-  if (!outcome) return false;
-  if (outcome.pid !== lock.pid) return false;
+  if (!outcome) return null;
+  if (outcome.pid !== lock.pid) return null;
   // `run_id` сверяется, только когда он есть в обоих местах: lock без `run_id`
   // пишут старые версии раннера.
-  if (outcome.run_id && lock.run_id && outcome.run_id !== lock.run_id) return false;
-  return true;
+  if (outcome.run_id && lock.run_id && outcome.run_id !== lock.run_id) return null;
+  return outcome;
+}
+
+/** Убили ли именно тот прогон, который описан в lock'е. */
+export function killedThisRun(projectRoot, lock) {
+  return killOutcomeForRun(projectRoot, lock) !== null;
 }
 
 /** Убрать запись. Идемпотентно. */

@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-09-20
+
+Проверка живого сервера по всей поверхности (25 из 38 tools, 41 ресурс, полный
+цикл состояний пайплайна на подставном раннере) нашла восемь дефектов. Все
+восемь здесь.
+
+### Fixed
+- **Ресурс `workflow://pipeline-state` отдавал первый снимок до конца жизни процесса.** Снимок лежал в кеше, а инвалидировали его только наблюдатели за файлами — и встают они лишь при подписке. Лог прогона их не будит намеренно (раннер дописывает его непрерывно), поэтому у клиента без подписки ресурс не менялся никогда. Живьём: инструмент `list_running_pipelines` отвечал `running` / pid 16284, ресурс в ту же секунду — `killed` / pid 1824 от прошлого прогона. Снимок строится заново на каждое чтение; кеш остался только для рассылки уведомлений.
+- **`create_ticket` терял `body` и `plan_id`.** Оба параметра объявлены в схеме, оба доходили до `createTicket` в workflow-ai и там отбрасывались. Починено в workflow-ai 1.6.1, здесь — проверки на стороне tool'а, включая human-тикет, файл которого MCP переписывает ради `executor_type`.
+- **Детектор `stuck` жаловался на давно законченные прогоны.** Он проверял живость раннера, только если lock есть, а при снятом lock'е брал самый свежий лог в каталоге и объявлял зависшей последнюю незакрытую стадию. В рабочей области из-за этого висел critical-алерт о прогоне от 24 марта: «running 15554267s, timeout is 300s». Теперь без живого `.pipeline.lock` прогона для детектора не существует. Прежние тесты lock не клали вовсе — то есть проверяли поведение, которого не требовали; фикстура исправлена, добавлены три проверки на отсутствие lock'а.
+- **Убитый нами прогон выглядел чужим.** Маркер запуска после убийства снимает сам MCP, поэтому сразу после своего же `stop_pipeline` снимок показывал `foreign: true` и `marker_reason: MISSING`. Запись об исходе (`.workflow/state/last-kill.json`) делает только MCP и привязывает её к pid и `run_id`, значит это второе доказательство владения — то самое, которое переживает убийство. Добавлено поле `killed_by` (`stop_pipeline` или `abort_pipeline`).
+- **Каталог состояния заводился на каждом запуске сервера.** Публикатор алертов создавал его при создании, git-клиент — при каждом вызове любого git-tool'а, сервер — на старте. В `%LOCALAPPDATA%\workflow-mcp` накопилось 16 255 каталогов (5,8 МБ): 15 789 пустых, 465 с одним лишь кешем пути к `gh` и один с историей алертов. Каталог создаётся первой записью. Кеш `gh` переехал уровнем выше: путь к бинарнику один на машину, а не на рабочую область (`machineStateDir()`).
+- **Каталог состояния зависел от регистра пути.** `path.resolve` регистр не меняет, и `d:\Dev` (так его передаёт клиент) и `D:\Dev` давали разные хеши: два каталога состояния и два разных `mcp_instance_id` на одну рабочую область. На Windows ключ рабочей области теперь считается по пути в нижнем регистре (`workspaceKey`). Прежняя проверка «case-insensitive on Windows» брала один путь и сверяла форму хеша — регистра не касалась вовсе.
+- **`aggregate_metrics` всегда отдавал `mean_sec: null`.** `computeCycleTime` возвращает среднее в поле `avg` и в днях, а читалось `cycleTime.mean_sec`, которого там нет. Рядом стояли непустые `count` и оба процентиля. Тот же класс дефекта, что и остальные в этом релизе: читатель без писателя.
+- **Словесная `complexity` обнуляла velocity.** `Number('medium')` → `NaN`, и сумма по проекту становилась `NaN`, а в JSON — `null`. В рабочей области 917 тикетов, и у всех `complexity` — слово. Введены веса: `simple` 1, `medium` 2, `complex` 3; число по-прежнему принимается как есть.
+- **`.gitkeep.md` числился тикетом, планом и отчётом.** `workflow init` кладёт его в каждый каталог, а фильтр везде проверял только расширение. `list_blocked_tickets` отдавал «тикет» с id `.gitkeep`, `list_plans` — два «плана» со статусом `unknown`. Общий фильтр `isWorkflowDoc` в десяти местах; в workflow-ai 1.6.1 — в планах.
+
+### Changed
+- `list_skill_tests` отвечает данными, а не конвертом CLI: `{tests, warnings}` вместо `{exit_code, stdout, stderr, duration_ms}`, при отказе — `{error, message, tests: [], warnings: []}`. Инструмент ничего не запускает: `duration_ms` был всегда 0, а `exit_code` — выдуманным.
+- Снимок состояния получил поле `killed_by`.
+
+### Tests
+- Новые файлы: `tests/resources/pipeline-state-freshness.test.mjs` (5), `tests/health/publisher-lazy-state-dir.test.mjs` (4), `tests/lib/workflow-docs.test.mjs` (6).
+- Дополнены: `stuck` (+3), `list_running_pipelines` (+3), `ticket-tools` (+3), `analytics` (+2), `state-dir` (+3), `git-client` (+1).
+- Два теста считали `mcp_instance_id` своей копией формулы вместо вызова кода — из-за этого падали на смене правила. Копии убраны.
+- Полный прогон: 96 файлов, 1549 passed, 30 skipped, 4 todo, 0 failed.
+
+### Саботаж
+
+Каждое исправление снимается по очереди, считаются падения. Замер на двух
+фиксированных наборах:
+
+```
+# workflow-mcp — 248 проверок, база зелёная
+npx vitest run tests/resources/pipeline-state-freshness.test.mjs \
+  tests/health/detectors/stuck.test.mjs tests/tools/list-running-pipelines.test.mjs \
+  tests/health/publisher-lazy-state-dir.test.mjs tests/paths/state-dir.test.mjs \
+  src/tools/analytics.test.mjs tests/lib/workflow-docs.test.mjs \
+  tests/git-client.test.mjs tests/tools/ticket-tools.test.mjs \
+  tests/tools/skill-tests-index.test.mjs
+
+# workflow-ai — 36 проверок, база зелёная
+node --test src/tests/operations-tickets.test.mjs src/tests/operations-plans.test.mjs
+```
+
+| Что ломается | Падений |
+|---|---|
+| ресурс снова отдаёт кеш снимка | 4 |
+| `stuck` без проверки lock'а | 3 |
+| убитый нами прогон снова «чужой» | 1 |
+| поле `killed_by` убрано | 2 |
+| регистр пути снова входит в ключ | 2 |
+| кеш `gh` снова на рабочую область | 2 |
+| среднее cycle time снова из `mean_sec` | 1 |
+| словесная сложность снова через `Number` | 1 |
+| точечные файлы снова считаются документами | 4 |
+| `list_skill_tests` снова отвечает конвертом CLI | 6 |
+| тело тикета снова отбрасывается (workflow-ai) | 1 |
+| `plan_id` снова не доходит до `parent_plan` (workflow-ai) | 1 |
+| точечные файлы снова становятся планами (workflow-ai) | 1 |
+
+Ленивое создание каталога состояния меряется отдельно — на наборе
+`tests/health/publisher-lazy-state-dir.test.mjs tests/e2e/health-alerts.test.mjs
+tests/health/publisher.test.mjs` (23 проверки): возврат раннего `ensureDir`
+валит 1.
+
+### Ops
+- Разово убраны 16 254 накопленных каталога состояния: 15 789 пустых и 465 с одним лишь кешем `gh`. Осталась история алертов. После обновления ключ рабочей области меняется (регистр), поэтому история начнётся заново — дедуп алертов один раз пропустит повтор.
+
+### Не починено
+- `cross_project_search` отвечает `RIPGREP_UNAVAILABLE`, `pause_pipeline` — `PAUSE_UNSUPPORTED`: на машине нет `rg` и `pssuspend`. Это окружение, а не код; `resume_pipeline` из-за этого проверить нечем.
+
 ## [1.5.0] — 2026-09-20
 
 ### Fixed

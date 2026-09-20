@@ -43,12 +43,12 @@ afterAll(() => {
 });
 
 describe('list_skill_tests', () => {
-  it('returns empty stdout and exit_code 1 when project is not provided', async () => {
+  it('returns an error object when project is not provided', async () => {
     const result = await list_skill_tests.execute({});
 
-    expect(result.exit_code).toBe(1);
-    expect(result.stderr).toContain('Project is required');
-    expect(result.stdout).toBe('');
+    expect(result.error).toBe('INVALID_PROJECT');
+    expect(result.message).toContain('Project is required');
+    expect(result.tests).toEqual([]);
   });
 
   it('returns expected test cases from valid fixture YAML', async () => {
@@ -57,8 +57,8 @@ describe('list_skill_tests', () => {
       skill_name: 'fixture-valid-skill'
     });
 
-    expect(result.exit_code).toBe(0);
-    const testCases = JSON.parse(result.stdout);
+    expect(result.error).toBeUndefined();
+    const testCases = result.tests;
 
     expect(Array.isArray(testCases)).toBe(true);
     expect(testCases.length).toBeGreaterThan(0);
@@ -75,7 +75,7 @@ describe('list_skill_tests', () => {
       skill_name: 'fixture-valid-skill'
     });
 
-    const testCases = JSON.parse(result.stdout);
+    const testCases = result.tests;
     for (const testCase of testCases) {
       expect(testCase.skill_name).toBe('fixture-valid-skill');
     }
@@ -87,21 +87,19 @@ describe('list_skill_tests', () => {
       skill_name: 'fixture-invalid-yaml'
     });
 
-    // Should exit with 0 despite invalid YAML (graceful skip)
-    expect(result.exit_code).toBe(0);
-    // The stdout should be empty or minimal since YAML is invalid
-    const testCases = JSON.parse(result.stdout);
+    // Битый YAML пропускается, а не роняет вызов.
+    expect(result.error).toBeUndefined();
+    const testCases = result.tests;
     expect(testCases.length).toBe(0);
   });
 
-  it('returns 0 exit code for missing skills directory', async () => {
+  it('returns an empty list for a missing skills directory', async () => {
     const result = await list_skill_tests.execute({
       project: emptyProject
     });
 
-    expect(result.exit_code).toBe(0);
-    const testCases = JSON.parse(result.stdout);
-    expect(Array.isArray(testCases)).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(result.tests).toEqual([]);
   });
 
   it('rejects invalid skill_name format (must match regex)', async () => {
@@ -110,8 +108,8 @@ describe('list_skill_tests', () => {
       skill_name: 'INVALID-SKILL-NAME' // uppercase not allowed
     });
 
-    expect(result.exit_code).toBe(1);
-    expect(result.stderr).toContain('Invalid skill name');
+    expect(result.error).toBe('INVALID_SKILL_NAME');
+    expect(result.message).toContain('Invalid skill name');
   });
 
   it('rejects skill_name with path traversal attempt', async () => {
@@ -120,9 +118,9 @@ describe('list_skill_tests', () => {
       skill_name: '../../etc/passwd'
     });
 
-    expect(result.exit_code).toBe(1);
+    expect(result.error).toBe('INVALID_SKILL_NAME');
     // Either path traversal check or regex check will reject this
-    expect(result.stderr).toMatch(/Invalid skill name|Path traversal/);
+    expect(result.message).toMatch(/Invalid skill name|Path traversal/);
   });
 
   it('includes test description and expected_verdict', async () => {
@@ -131,7 +129,7 @@ describe('list_skill_tests', () => {
       skill_name: 'fixture-valid-skill'
     });
 
-    const testCases = JSON.parse(result.stdout);
+    const testCases = result.tests;
     expect(testCases.length).toBeGreaterThan(0);
     expect(testCases[0]).toHaveProperty('description');
     expect(testCases[0]).toHaveProperty('expected_verdict');
@@ -144,7 +142,7 @@ describe('list_skill_tests', () => {
       skill_name: 'fixture-valid-skill'
     });
 
-    const testCases = JSON.parse(result.stdout);
+    const testCases = result.tests;
     const testWithSource = testCases.find(t => t.source_path);
 
     if (testWithSource) {
@@ -159,7 +157,7 @@ describe('list_skill_tests', () => {
       skill_name: 'fixture-valid-skill'
     });
 
-    const testCases = JSON.parse(result.stdout);
+    const testCases = result.tests;
     const testWithoutSource = testCases.find(t => !t.source_path);
 
     if (testWithoutSource) {
@@ -172,8 +170,8 @@ describe('list_skill_tests', () => {
       project: '/nonexistent/project/path'
     });
 
-    expect(result.exit_code).toBe(1);
-    expect(result.stderr).toContain('Project not found');
+    expect(result.error).toBe('INVALID_PROJECT');
+    expect(result.message).toContain('Project not found');
   });
 });
 

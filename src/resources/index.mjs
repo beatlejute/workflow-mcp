@@ -10,6 +10,7 @@ import { discoverProjects, readConfig } from '../discovery.mjs';
 import { parseFrontmatter } from 'workflow-ai/lib/utils.mjs';
 import { workflowAiPath } from '../lib/workflow-ai.mjs';
 import { mcpCwd } from '../lib/project-root.mjs';
+import { isWorkflowDoc } from '../lib/workflow-docs.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -159,12 +160,26 @@ export function clearPipelineStateCache() {
   }
 }
 
+/**
+ * Снимок состояния пайплайна по запросу клиента.
+ *
+ * Снимок строится заново на каждое чтение. Кеш остаётся только для рассылки
+ * уведомлений: его обновляет наблюдатель, и инвалидировать его больше некому.
+ * Наблюдатели встают лишь при подписке, а лог прогона их намеренно не будит —
+ * раннер дописывает его непрерывно. Отдавать этот кеш в ответ на чтение
+ * значило показывать первый снимок до конца жизни процесса: клиент без
+ * подписки видел «killed» от прошлого прогона, пока `list_running_pipelines`
+ * рядом отвечал `running`.
+ *
+ * Чтение стоит столько же, сколько вызов `list_running_pipelines`: он тоже
+ * обходит проекты на каждый вызов.
+ */
 export async function get_workflow_pipeline_state(cwd = mcpCwd()) {
-  if (pipelineStateCache === null) await buildPipelineStateSnapshot(cwd);
+  const snapshot = await buildPipelineStateSnapshot(cwd);
   return {
     uri: 'workflow://pipeline-state',
     mimeType: 'application/json',
-    text: JSON.stringify(pipelineStateCache, null, 2)
+    text: JSON.stringify(snapshot, null, 2)
   };
 }
 
@@ -239,7 +254,7 @@ export async function get_workflow_project_board(cwd = mcpCwd(), projectName) {
       board.columns[status] = [];
       const statusDir = path.join(ticketsDir, status);
       if (!fs.existsSync(statusDir)) continue;
-      for (const file of fs.readdirSync(statusDir).filter(f => f.endsWith('.md'))) {
+      for (const file of fs.readdirSync(statusDir).filter(f => isWorkflowDoc(f))) {
         const filePath = path.join(statusDir, file);
         try {
           const { frontmatter } = parseFrontmatter(fs.readFileSync(filePath, 'utf8'));
@@ -368,7 +383,7 @@ export async function get_workflow_human_queue(cwd = mcpCwd()) {
       for (const status of statuses) {
         const statusDir = path.join(ticketsDir, status);
         if (!fs.existsSync(statusDir)) continue;
-        for (const file of fs.readdirSync(statusDir).filter(f => f.endsWith('.md'))) {
+        for (const file of fs.readdirSync(statusDir).filter(f => isWorkflowDoc(f))) {
           const filePath = path.join(statusDir, file);
           const { frontmatter } = parseFrontmatter(fs.readFileSync(filePath, 'utf8'));
           const isHuman = file.startsWith('HUMAN-') || (frontmatter && frontmatter.type === 'human');

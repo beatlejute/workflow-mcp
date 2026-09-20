@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { readConfig } from '../discovery.mjs';
+import { workspaceKey } from '../lib/project-root.mjs';
 
 /**
  * Compute SHA-256 hash of the absolute path, first 12 characters.
@@ -10,8 +11,10 @@ import { readConfig } from '../discovery.mjs';
  * @returns {string}
  */
 function computeHash(cwd) {
-  const absolute = path.resolve(cwd);
-  const hash = crypto.createHash('sha256').update(absolute).digest('hex');
+  // Ключ считает `workspaceKey`: на Windows он гасит регистр пути. Тот же
+  // ключ берёт идентификатор экземпляра — иначе `d:\Dev` и `D:\Dev` дают две
+  // разные рабочие области там, где файловая система видит одну.
+  const hash = crypto.createHash('sha256').update(workspaceKey(cwd)).digest('hex');
   return hash.slice(0, 12);
 }
 
@@ -108,6 +111,36 @@ export function serverStateDir(cwd) {
     };
   }
   return resolveStateDir(cwd, readConfig(cwd));
+}
+
+/**
+ * Каталог состояния, общего для машины, — без привязки к рабочей области.
+ *
+ * Туда кладётся то, что от рабочей области не зависит: путь к `gh` один на
+ * машину. Прежде кеш лежал в каталоге рабочей области, и каждая новая область
+ * заводила свой — на машине их набралось 465 штук с одинаковым содержимым.
+ *
+ * `WORKFLOW_STATE_DIR` перекрывает и этот каталог: переменная задаёт всё
+ * состояние сервера целиком.
+ *
+ * @returns {{ dir: string|null, mode: 'writable'|'read-only' }}
+ */
+export function machineStateDir() {
+  if (process.env.WORKFLOW_STATE_DIR) {
+    return {
+      dir: process.env.WORKFLOW_STATE_DIR,
+      mode: process.env.WORKFLOW_STATE_MODE || 'writable'
+    };
+  }
+
+  let baseDir;
+  if (process.platform === 'win32') {
+    baseDir = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+  } else {
+    baseDir = process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state');
+  }
+
+  return { dir: path.join(baseDir, 'workflow-mcp'), mode: 'writable' };
 }
 
 /**

@@ -50,9 +50,11 @@ export function createPublisher({ onAlert, stateDir, config = {} }) {
   const isReadonly = mode === 'read-only';
   const historyPath = stateDirPath ? path.join(stateDirPath, 'alerts-history.jsonl') : null;
 
-  // If writable and stateDir provided, ensure directory exists and replay history.
-  if (!isReadonly && stateDirPath) {
-    ensureDir(stateDirPath);
+  // Каталог состояния создаётся первой записью, а не созданием публикатора.
+  // Пустой каталог заводил каждый запуск сервера в каждой рабочей области —
+  // включая временные каталоги тестов. Живьём их накопилось 15 789 пустых при
+  // одном каталоге с историей.
+  if (!isReadonly && historyPath) {
     replayHistory(historyPath, ttl, lastPublished);
   }
 
@@ -90,6 +92,7 @@ export function createPublisher({ onAlert, stateDir, config = {} }) {
       };
       const line = JSON.stringify(record);
       try {
+        ensureDir(path.dirname(historyPath));
         fs.appendFileSync(historyPath, line + '\n', { encoding: 'utf8' });
       } catch (err) {
         // Отказ записи не должен съедать алерт. Отпечаток уже помечен

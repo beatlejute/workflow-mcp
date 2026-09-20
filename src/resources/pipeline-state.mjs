@@ -4,7 +4,7 @@ import { discoverProjects } from '../discovery.mjs';
 import { mcpInstanceId as getMcpInstanceId } from '../lib/project-root.mjs';
 import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
 import { readAbortState } from '../process/abort-state.mjs';
-import { killedThisRun } from '../process/kill-outcome.mjs';
+import { killOutcomeForRun } from '../process/kill-outcome.mjs';
 import { parsePipelineLog } from '../parsers/pipeline-log.mjs';
 
 /**
@@ -163,16 +163,26 @@ export function get_workflow_pipeline_state(absoluteCwd) {
     // Владение привязано к запуску, а не к номеру процесса. Битый маркер
     // внутри читается безопасно: раньше один такой файл ронял снимок целиком.
     const markerValid = validateRunOwnership(projectRoot, pid, lock, getMcpInstanceId(absoluteCwd));
+
+    // Запись об исходе делает только MCP — `stop_pipeline` и эскалация
+    // `abort_pipeline`, — и она привязана к pid и `run_id` прогона. Значит это
+    // второе доказательство владения, причём то самое, которое переживает
+    // убийство: маркер после kill'а снимаем мы сами.
+    const killOutcome = killOutcomeForRun(projectRoot, lock);
+
     // Чужой — любой, чей маркер не доказывает наше владение: нет маркера
     // (запущен из CLI), чужой идентификатор или чужой pid. Проверка только на
     // PID_MISMATCH давала ровно обратный ответ: свои пайплайны считались чужими,
     // а запущенные из CLI (маркера нет вовсе) — своими.
-    const isForeign = !markerValid.valid;
+    // Убитый нами прогон под «чужой» не подпадает: маркера нет ровно потому,
+    // что мы его и убрали, — иначе снимок сразу после своего же
+    // `stop_pipeline` объявлял прогон чужим.
+    const isForeign = !markerValid.valid && killOutcome === null;
 
     const pidAlive = isProcessAlive(pid);
     const paused = getPausedState(projectRoot, pid);
     const aborting = isAbortingRun(projectRoot, lock);
-    const killed = !pidAlive && killedThisRun(projectRoot, lock);
+    const killed = !pidAlive && killOutcome !== null;
     const awaiting = getAwaitingApproval(projectRoot);
     const { runId, currentStage, stepNumber } = getRunInfo(projectRoot);
 
@@ -199,6 +209,9 @@ export function get_workflow_pipeline_state(absoluteCwd) {
       ...(isForeign && { foreign: true }),
       ...(staleLock && { stale_lock: true }),
       ...(markerValid.reason && { marker_reason: markerValid.reason }),
+      // Кто именно добивал: `stop_pipeline` или эскалация `abort_pipeline`.
+      // Заодно это объяснение, почему у убитого прогона нет маркера.
+      ...(killed && killOutcome.by ? { killed_by: killOutcome.by } : {}),
       ...(awaiting && { awaiting_approval: awaiting })
     };
 

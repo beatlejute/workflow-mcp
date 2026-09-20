@@ -12,7 +12,7 @@ import { dirname, resolve } from 'path';
 import fs from 'fs';
 import path from 'path';
 import semver from 'semver';
-import { serverStateDir, ensureStateDir } from './paths/state-dir.mjs';
+import { serverStateDir } from './paths/state-dir.mjs';
 import { workflowAiPath, workflowAiPackageJson } from './lib/workflow-ai.mjs';
 import { mcpCwd } from './lib/project-root.mjs';
 import { createHealthService } from './health/service.mjs';
@@ -140,18 +140,13 @@ async function main() {
   // ресурс `workflow://alerts`. На read-only дереве служба здоровья работает
   // без истории — алерты уходят уведомлениями, ресурс остаётся пустым.
   //
-  // Создание обязано быть необязательным. Прежде `ensureStateDir` вызывался
-  // только внутри `registerWorkflowResources`, под общим `try`: недоступный
-  // `state.dir` стоил ресурса алертов. Голый вызов здесь ронял весь сервер
-  // (`ENOTDIR` на старте), и клиент терял все 38 tools из-за каталога, без
-  // которого сервер прекрасно работает.
-  let healthStateDir = serverStateDir(cwd);
-  try {
-    ensureStateDir(healthStateDir);
-  } catch (err) {
-    console.error(`[workflow-mcp] state dir unavailable (${err.message}); running without state persistence`);
-    healthStateDir = { dir: null, mode: 'read-only' };
-  }
+  // Каталог не создаётся на старте: его заводит первая запись. Иначе каждый
+  // запуск сервера в новой рабочей области оставлял пустой каталог навсегда —
+  // на машине их накопилось 15 789 при одном каталоге с историей. Заодно исчезает и
+  // причина падения: прежний голый `ensureStateDir` ронял сервер (`ENOTDIR`)
+  // на старте, и клиент терял все 38 tools из-за каталога, без которого
+  // сервер прекрасно работает. Отказ записи разбирает тот, кто пишет.
+  const healthStateDir = serverStateDir(cwd);
 
   // Версия берётся из package.json, а не из хардкода: три разных номера
   // одного сервера (package.json, CHANGELOG и это место) расходились,

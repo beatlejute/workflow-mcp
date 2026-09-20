@@ -14,6 +14,7 @@ import process from 'process';
 import { pausePipelineImpl, resumePipelineImpl } from '../../src/tools/pipeline.mjs';
 import * as resources from '../../src/resources/index.mjs';
 import { writeRunnerLock } from '../helpers/pipeline-lock.mjs';
+import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -72,9 +73,9 @@ describe('pause_pipeline and resume_pipeline tools', () => {
   // раннера, который тест выдаёт за идущий, а не pid самого тестового процесса.
   function createMarker(runnerPid = process.pid) {
     const markerPath = path.join(logsDir, '.mcp-started-by');
-    // Use same mcp_instance_id calculation as the implementation
-    const hash = createHash('sha256').update(projectPath).digest('hex');
-    const mcp_instance_id = `workflow-mcp@${hash.slice(0, 12)}`;
+    // Идентификатор считает сам код: копия формулы здесь разошлась с
+    // оригиналом, как только тот стал гасить регистр пути.
+    const mcp_instance_id = mcpInstanceId(projectPath);
     fs.writeFileSync(markerPath, JSON.stringify({
       version: 1,
       mcp_instance_id,

@@ -278,6 +278,50 @@ describe('определение состояния', () => {
     expect(entry.state).toBe('killed');
     // Lock всё равно пережил процесс — признак сохраняется.
     expect(entry.stale_lock).toBe(true);
+    expect(entry.killed_by).toBe('stop_pipeline');
+  });
+
+  it('убитый нами прогон не считается чужим', async () => {
+    // Маркер после убийства снимает сам MCP, поэтому сразу после своего же
+    // `stop_pipeline` снимок показывал `foreign: true`: прогон, который мы
+    // только что убили, выглядел запущенным кем-то посторонним.
+    const root = makeProject('proj');
+    writeLock(root, DEAD_PID, { run_id: RUN_ID });
+    writeLog(root);
+    writeKillOutcome(root, { pid: DEAD_PID, runId: RUN_ID, by: 'abort_pipeline' });
+
+    const entry = await snapshotOne();
+    expect(entry.state).toBe('killed');
+    expect(entry.foreign).toBeUndefined();
+    expect(entry.killed_by).toBe('abort_pipeline');
+  });
+
+  it('запись об убийстве чужого прогона признак чужого не снимает', async () => {
+    // Исход от другого pid ничего не доказывает: прогон в lock'е — не наш.
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid, { run_id: RUN_ID });
+    writeLog(root);
+    writeKillOutcome(root, { pid: DEAD_PID, runId: RUN_ID, by: 'stop_pipeline' });
+
+    const entry = await snapshotOne();
+    expect(entry.state).toBe('running');
+    expect(entry.foreign).toBe(true);
+    expect(entry.killed_by).toBeUndefined();
+  });
+
+  it('живой прогон с записью о своём убийстве остаётся running без killed_by', async () => {
+    // pid переиспользован системой: исход относится к прошлому процессу с тем
+    // же номером, а этот — жив. Состояние определяет живость, не запись.
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid, { run_id: RUN_ID });
+    writeLog(root);
+    writeKillOutcome(root, { pid: victim.pid, runId: RUN_ID, by: 'stop_pipeline' });
+
+    const entry = await snapshotOne();
+    expect(entry.state).toBe('running');
+    expect(entry.killed_by).toBeUndefined();
   });
 
   it('запись об убийстве другого pid не даёт killed', async () => {

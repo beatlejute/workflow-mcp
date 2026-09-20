@@ -445,6 +445,62 @@ describe('Ticket Tools', () => {
       expect(ticket.body).toContain('## Описание');
       expect(ticket.body).toContain('## Критерии готовности');
     });
+
+    // Оба параметра объявлены в схеме tool'а, оба доходили до библиотеки и там
+    // молча отбрасывались: тикет всегда выходил с пустым шаблоном и без плана.
+    it('writes the body passed to it', async () => {
+      const result = await create_ticket({
+        project: projectPath,
+        type: 'IMPL',
+        title: 'Task with body',
+        body: '## Описание\n\nСобрать снимок состояния.\n'
+      });
+
+      const ticket = await get_ticket({
+        project: projectPath,
+        ticket_id: result.id
+      });
+
+      expect(ticket.body).toContain('Собрать снимок состояния.');
+      expect(ticket.body).not.toContain('## Критерии готовности');
+    });
+
+    it('records plan_id as parent_plan', async () => {
+      const result = await create_ticket({
+        project: projectPath,
+        type: 'IMPL',
+        title: 'Task in a plan',
+        plan_id: 'PLAN-042'
+      });
+
+      const ticket = await get_ticket({
+        project: projectPath,
+        ticket_id: result.id
+      });
+
+      expect(ticket.frontmatter.parent_plan).toBe('PLAN-042');
+    });
+
+    it('keeps body and plan_id together for a human ticket', async () => {
+      // У human-тикета MCP переписывает файл ради `executor_type` — тело и
+      // план обязаны пережить эту перезапись.
+      const result = await create_ticket({
+        project: projectPath,
+        type: 'human',
+        title: 'Manual check',
+        plan_id: 'PLAN-042',
+        body: '## Описание\n\nПроверить руками.\n'
+      });
+
+      const ticket = await get_ticket({
+        project: projectPath,
+        ticket_id: result.id
+      });
+
+      expect(ticket.frontmatter.executor_type).toBe('human');
+      expect(ticket.frontmatter.parent_plan).toBe('PLAN-042');
+      expect(ticket.body).toContain('Проверить руками.');
+    });
   });
 
   describe('pick_next_ticket', () => {

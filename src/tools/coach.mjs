@@ -143,43 +143,33 @@ export const list_skill_tests = {
     const cwd = mcpCwd();
 
     if (!args.project) {
-      return {
-        exit_code: 1,
-        stdout: '',
-        stderr: 'Project is required',
-        duration_ms: 0
-      };
+      return { error: 'INVALID_PROJECT', message: 'Project is required', tests: [], warnings: [] };
     }
 
     let projectPath;
     try {
       projectPath = resolveProjectRoot(args.project);
     } catch (err) {
-      return {
-        exit_code: 1,
-        stdout: '',
-        stderr: err.message,
-        duration_ms: 0
-      };
+      return { error: 'INVALID_PROJECT', message: err.message, tests: [], warnings: [] };
     }
 
     // Validate skill_name format if provided
     if (args.skill_name && !isValidSkillName(args.skill_name)) {
       return {
-        exit_code: 1,
-        stdout: '',
-        stderr: `Invalid skill name: ${args.skill_name}. Must match pattern ^[a-z][a-z0-9-]{0,50}$`,
-        duration_ms: 0
+        error: 'INVALID_SKILL_NAME',
+        message: `Invalid skill name: ${args.skill_name}. Must match pattern ^[a-z][a-z0-9-]{0,50}$`,
+        tests: [],
+        warnings: []
       };
     }
 
     // Path traversal protection
     if (args.skill_name && (args.skill_name.includes('..') || args.skill_name.includes('/') || args.skill_name.includes('\\'))) {
       return {
-        exit_code: 1,
-        stdout: '',
-        stderr: `Invalid skill name: ${args.skill_name}. Path traversal not allowed.`,
-        duration_ms: 0
+        error: 'INVALID_SKILL_NAME',
+        message: `Invalid skill name: ${args.skill_name}. Path traversal not allowed.`,
+        tests: [],
+        warnings: []
       };
     }
 
@@ -187,12 +177,7 @@ export const list_skill_tests = {
 
     // Check if skills directory exists
     if (!fs.existsSync(skillsDir)) {
-      return {
-        exit_code: 0,
-        stdout: JSON.stringify([]),
-        stderr: '',
-        duration_ms: 0
-      };
+      return { tests: [], warnings: [] };
     }
 
     // Dynamic import for zod
@@ -201,10 +186,10 @@ export const list_skill_tests = {
       zod = await import('zod');
     } catch (err) {
       return {
-        exit_code: 1,
-        stdout: JSON.stringify([]),
-        stderr: `Zod dependency not available: ${err.message}\n`,
-        duration_ms: 0
+        error: 'ZOD_UNAVAILABLE',
+        message: `Zod dependency not available: ${err.message}`,
+        tests: [],
+        warnings: []
       };
     }
 
@@ -309,12 +294,7 @@ export const list_skill_tests = {
       }
     }
 
-    return {
-      exit_code: 0,
-      stdout: JSON.stringify(allTestCases),
-      stderr: warnings.join('\n') + (warnings.length > 0 ? '\n' : ''),
-      duration_ms: 0
-    };
+    return { tests: allTestCases, warnings };
   }
 };
 

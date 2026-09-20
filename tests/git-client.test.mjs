@@ -1177,17 +1177,19 @@ describe('Git Client', () => {
 
     it('covers gh-detect cache hit with valid path (lines 56-66)', async () => {
       let tempDir;
-      // Путь к `gh` — состояние сервера, а не проекта: кеш лежит в каталоге
-      // состояния рабочей области (`MCP_CWD`), один на все проекты.
+      // Путь к `gh` — состояние машины: кеш один на систему, а не на рабочую
+      // область. Каталог области заводил свою копию на каждую новую область —
+      // их набралось 465 с одинаковым содержимым.
       const savedMcpCwd = process.env.MCP_CWD;
+      const savedStateDir = process.env.WORKFLOW_STATE_DIR;
       try {
         tempDir = fs.mkdtempSync(path.join(tmpdir(), 'gh-cache-hit-'));
         execSync('git init', { cwd: tempDir, stdio: 'pipe' });
         process.env.MCP_CWD = tempDir;
 
-        const { resolveStateDir } = await import('../src/paths/state-dir.mjs');
-        const stateInfo = resolveStateDir(tempDir);
-        const stateDirPath = stateInfo.dir;
+        // Машинный каталог уводится в temp, чтобы тест не писал в настоящий.
+        const stateDirPath = path.join(tempDir, '.machine-state');
+        process.env.WORKFLOW_STATE_DIR = stateDirPath;
         fs.mkdirSync(stateDirPath, { recursive: true });
 
         const fakeGhPath = process.execPath;
@@ -1202,6 +1204,7 @@ describe('Git Client', () => {
       } finally {
         vi.restoreAllMocks();
         if (savedMcpCwd === undefined) { delete process.env.MCP_CWD; } else { process.env.MCP_CWD = savedMcpCwd; }
+        if (savedStateDir === undefined) { delete process.env.WORKFLOW_STATE_DIR; } else { process.env.WORKFLOW_STATE_DIR = savedStateDir; }
         if (tempDir && fs.existsSync(tempDir)) {
           fs.rmSync(tempDir, { recursive: true, force: true });
         }
@@ -1261,6 +1264,30 @@ describe('Git Client', () => {
         if (tempDir && fs.existsSync(tempDir)) {
           fs.rmSync(tempDir, { recursive: true, force: true });
         }
+      }
+    });
+
+    it('кеш gh один на машину, а не на рабочую область', async () => {
+      // Кеш лежал в каталоге рабочей области, и каждая новая область (включая
+      // временный каталог теста) заводила свой. На машине их набралось 465 с
+      // одинаковым содержимым.
+      const { machineStateDir } = await import('../src/paths/state-dir.mjs');
+      const savedMcpCwd = process.env.MCP_CWD;
+      const savedStateDir = process.env.WORKFLOW_STATE_DIR;
+      delete process.env.WORKFLOW_STATE_DIR;
+
+      try {
+        process.env.MCP_CWD = path.join(tmpdir(), 'workspace-one');
+        const first = machineStateDir().dir;
+
+        process.env.MCP_CWD = path.join(tmpdir(), 'workspace-two');
+        const second = machineStateDir().dir;
+
+        expect(first).toBe(second);
+        expect(path.basename(first)).toBe('workflow-mcp');
+      } finally {
+        if (savedMcpCwd === undefined) { delete process.env.MCP_CWD; } else { process.env.MCP_CWD = savedMcpCwd; }
+        if (savedStateDir !== undefined) { process.env.WORKFLOW_STATE_DIR = savedStateDir; }
       }
     });
 

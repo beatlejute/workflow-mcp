@@ -7,6 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import { z } from 'zod';
 import { mcpCwd } from '../lib/project-root.mjs';
+import { isWorkflowDoc } from '../lib/workflow-docs.mjs';
 
 // FIX-001: excerpt строился без ограничения длины, и в него попадали строки
 // AI_APICallError по 232 КБ — ответ list_ghost_executions разрастался до 5.5 МБ.
@@ -79,7 +80,7 @@ export async function list_blocked_tickets({ project }) {
       continue;
     }
 
-    const files = fs.readdirSync(blockedDir).filter(f => f.endsWith('.md'));
+    const files = fs.readdirSync(blockedDir).filter(f => isWorkflowDoc(f));
 
     for (const file of files) {
       const filePath = path.join(blockedDir, file);
