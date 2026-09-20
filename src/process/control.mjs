@@ -108,8 +108,9 @@ function callExternal(command, args) {
  * @param {{exitCode?: number, stderr?: string, hint?: string}} failure
  * @param {number} pid
  * @param {Object} [options]
- * @param {boolean} [options.probeLiveness] спросить ОС, жив ли процесс, когда
- *   ни код возврата, ни текст ответа ничего не сказали
+ * @param {boolean} [options.probeLiveness] спросить ОС, жив ли процесс, если
+ *   код возврата ничего не сказал. Живость идёт раньше текста: текст локализован,
+ *   факт — нет
  * Экспортируется ради тестов: воспроизвести отказ `taskkill` с нужным кодом
  * возврата на живом процессе иначе нечем, а правило здесь — чистая функция от
  * ответа утилиты и номера процесса.
@@ -212,7 +213,7 @@ export async function resume(pid) {
  * @param {number} pid - Process ID to abort
  * @param {{grace_sec?: number}} [options] - Options object
  * @param {number} [options.grace_sec=10] - Grace period in seconds before force termination
- * @returns {Promise<{ok: true, pid: number, state: 'aborted', duration_ms: number, escalated: boolean} | {ok: false, code: string, hint?: string}>}
+ * @returns {Promise<{ok: true, pid: number, state: 'aborted', duration_ms: number, escalated: boolean} | {ok: false, code: string, pid?: number, hint?: string}>}
  */
 export async function abort(pid, options = {}) {
   const graceSec = options.grace_sec !== undefined ? options.grace_sec : 10;
@@ -263,7 +264,7 @@ export async function abort(pid, options = {}) {
     if (!gracefulResult.ok) {
       const reason = classifyTaskkillFailure(gracefulResult, pid);
       if (reason) {
-        return { ok: false, code: reason, hint: gracefulResult.hint };
+        return { ok: false, code: reason, pid, hint: gracefulResult.hint };
       }
       // Причина неясна — идём дальше по обычному пути: grace-окно и, если
       // владение подтвердится, принудительная остановка.
@@ -346,7 +347,9 @@ export async function abort(pid, options = {}) {
  * - POSIX: SIGKILL to process group using -pid (requires detached:true on spawn)
  * - Windows: taskkill /F /T /PID (kills process tree)
  * @param {number} pid - Process ID to kill
- * @returns {Promise<{ok: true, pid: number, state: 'killed'} | {ok: false, code: string, hint?: string}>}
+ * @returns {Promise<{ok: true, pid: number, state: 'killed'} | {ok: false, code: string, pid?: number, hint?: string}>}
+ *   `pid` есть у разобранных отказов (`NO_SUCH_PROCESS`, `PERMISSION_DENIED`) —
+ *   форма одна у всех операций.
  */
 export async function kill(pid) {
   if (process.platform === 'win32') {
@@ -356,7 +359,7 @@ export async function kill(pid) {
       return { ok: true, pid, state: 'killed' };
     }
     const reason = classifyTaskkillFailure(result, pid, { probeLiveness: true });
-    return reason ? { ok: false, code: reason, hint: result.hint } : result;
+    return reason ? { ok: false, code: reason, pid, hint: result.hint } : result;
   }
 
    // POSIX: SIGKILL to process group

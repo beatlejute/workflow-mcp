@@ -24,7 +24,7 @@ const INSTANCE = 'workflow-mcp@0123456789ab';
 const LEGACY_INSTANCE = 'workflow-mcp@cafecafecafe';
 const OTHER_INSTANCE = 'workflow-mcp@ffffffffffff';
 /** Заведомо свободный номер: время старта у него не спросить. */
-const DEAD_PID = 999999;
+const DEAD_PID = 999999999;
 
 let projectRoot;
 

@@ -23,7 +23,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SERVER = path.resolve(__dirname, '../../src/server.mjs');
 
-const DEAD_PID = 999999;
+const DEAD_PID = 999999999;
 
 describe('E2E: алерты здоровья доходят до клиента', () => {
   let workspace;

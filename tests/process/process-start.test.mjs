@@ -13,7 +13,7 @@ import { spawn } from 'child_process';
 import { processStartedAt, pidCouldBeFromRun } from '../../src/process/process-start.mjs';
 
 /** Заведомо свободный номер: столько процессов в системе не бывает. */
-const DEAD_PID = 999999;
+const DEAD_PID = 999999999;
 
 describe('processStartedAt', () => {
   it('отдаёт время старта своего процесса', () => {

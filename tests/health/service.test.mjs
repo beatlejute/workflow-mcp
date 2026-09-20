@@ -19,7 +19,7 @@ import * as thresholds from '../../src/health/thresholds.mjs';
 import { writeRunnerLock } from '../helpers/pipeline-lock.mjs';
 
 describe('createHealthService', () => {
-  const DEAD_PID = 999999;
+  const DEAD_PID = 999999999;
 
   let workspace;
   let stateDir;

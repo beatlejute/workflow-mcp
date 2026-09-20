@@ -107,7 +107,7 @@ describe('processStartedAtCached', () => {
   });
 
   it('память об одном pid не отвечает за другой', async () => {
-    const DEAD_PID = 999999;
+    const DEAD_PID = 999999999;
     expect(processStartedAtCached(DEAD_PID)).toBeNull();
 
     victim = await spawnVictim();

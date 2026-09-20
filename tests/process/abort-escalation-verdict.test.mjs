@@ -19,6 +19,9 @@ import { spawn } from 'child_process';
 import { abort } from '../../src/process/control.mjs';
 import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
 
+/** `System`: существует всегда, не убивается ничем — `taskkill` отвечает отказом. */
+const SYSTEM_PID = 4;
+
 let victim = null;
 
 async function spawnVictim() {
@@ -42,24 +45,30 @@ afterEach(() => {
 
 describe('отказ жёсткого сигнала разбирается по существу', () => {
   it.runIf(process.platform === 'win32')(
-    'процесс исчез за grace-окно — NO_SUCH_PROCESS, а не сырой отказ утилиты',
+    'жёсткий сигнал не прошёл, процесс жив — PERMISSION_DENIED, а не сырой отказ утилиты',
     { timeout: 30000 },
     async () => {
-      // Мягкий `taskkill` консольному процессу штатно не проходит, дальше идёт
-      // grace-окно. Раннер за это время выходит сам, и жёсткий сигнал получает
-      // код 128. Прежде наружу уходил `EXTERNAL_COMMAND_FAILED` с
+      // Процесс `System` (pid 4) не убить ни мягко, ни жёстко: `taskkill`
+      // отвечает отказом в доступе с кодом 1 на обеих попытках. Это даёт
+      // детерминированный проход до силового пути — без гонки «кто успеет».
+      //
+      // Прежде отсюда наружу уходил сырой `EXTERNAL_COMMAND_FAILED` с
       // локализованным текстом, по которому клиенту нечего решать.
-      victim = await spawnVictim();
       clearProcessAliveCache();
-      const doomed = victim;
-      setTimeout(() => {
-        try { doomed.kill('SIGKILL'); } catch { /* уже мёртв */ }
-      }, 300);
+      let escalationAsked = false;
 
-      const result = await abort(victim.pid, { grace_sec: 1, can_escalate: () => true });
+      const result = await abort(SYSTEM_PID, {
+        grace_sec: 0,
+        can_escalate: () => {
+          escalationAsked = true;
+          return true;
+        }
+      });
 
+      expect(escalationAsked, 'до силового пути не дошли — тест ничего не доказал').toBe(true);
       expect(result.ok).toBe(false);
-      expect(result.code).toBe('NO_SUCH_PROCESS');
+      expect(result.code).toBe('PERMISSION_DENIED');
+      expect(result.pid).toBe(SYSTEM_PID);
     }
   );
 });

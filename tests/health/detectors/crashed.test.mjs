@@ -17,7 +17,7 @@ import * as pidCheck from '../../../src/health/pid-check.mjs';
 import { writeRunnerLock, writeBrokenLock } from '../../helpers/pipeline-lock.mjs';
 
 describe('detectCrashed (tests/health/detectors/crashed.test.mjs)', () => {
-  const DEAD_PID = 999999;
+  const DEAD_PID = 999999999;
 
   let testDir;
   let projectPath;

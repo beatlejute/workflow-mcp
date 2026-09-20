@@ -38,7 +38,7 @@ async function spawnVictim() {
 }
 
 /** Заведомо свободный номер процесса. */
-const DEAD_PID = 999999;
+const DEAD_PID = 999999999;
 
 /** `run_id` фикстур — совпадает с именем лога по умолчанию. */
 const RUN_ID = 'pipeline_2026-09-20_10-00-00';

@@ -18,7 +18,7 @@ import {
   clearProcessAliveCache
 } from '../../src/health/pid-check.mjs';
 
-const DEAD_PID = 999999;
+const DEAD_PID = 999999999;
 
 let victim = null;
 let savedPath;

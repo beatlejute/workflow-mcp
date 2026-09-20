@@ -20,7 +20,7 @@ import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** PID, которого заведомо нет в системе. */
-const DEAD_PID = 999999;
+const DEAD_PID = 999999999;
 
 const LOCK_REL = ['.workflow', 'logs', '.pipeline.lock'];
 

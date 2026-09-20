@@ -19,7 +19,7 @@ import { readApproval } from '../../src/approvals/model.mjs';
 const approve_step = approveStepTool.execute;
 
 /** PID, которого заведомо нет в системе. */
-const DEAD_PID = 999999;
+const DEAD_PID = 999999999;
 
 function createProject(workspaceDir, name = 'cli-project') {
   const projectPath = path.join(workspaceDir, name);
