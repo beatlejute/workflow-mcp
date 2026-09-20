@@ -24,15 +24,22 @@ import { execFileSync } from 'child_process';
  * Без памяти `list_running_pipelines` и чтение `workflow://pipeline-state`
  * платили бы за один и тот же pid на каждый вызов, а зовут их часто.
  *
- * Срок жизни записи ограничен: освободившийся номер система переиспользует, и
- * запись о прежнем владельце тогда врёт. Минута — компромисс между этим риском
- * и ценой опроса; чтение состояния от него только выигрывает, а операции с
- * сигналом и так защищены сверкой pid и `started_by_id` в lock'е.
+ * Память годится только для чтения состояния. Перед сигналом она запрещена:
+ * прогретая чтением запись переживает смерть процесса, и если система за это
+ * время отдала номер другому, `stop_pipeline` получил бы «тот самый раннер» и
+ * послал `taskkill /F /T` постороннему дереву. Сверка `pid` и `started_by_id`
+ * тут не спасает — оба поля лежат в том же протухшем lock'е. Поэтому
+ * сигнальные пути зовут с `fresh: true` и всегда спрашивают ОС заново.
+ *
+ * Неудачный опрос (`null`) помнится отдельно и заметно меньше: он означает
+ * «процесса нет или не спросить» и ведёт к fail-open, так что застревать в
+ * этом ответе на минуту опаснее, чем переспросить.
  *
  * @type {Map<number, {at: number, value: Date|null}>}
  */
 const startCache = new Map();
 const START_CACHE_TTL_MS = 60_000;
+const UNKNOWN_CACHE_TTL_MS = 5_000;
 
 /** Забыть опрошенное. Нужно тестам: иначе pid из прошлого теста считается известным. */
 export function clearProcessStartCache() {
@@ -40,15 +47,35 @@ export function clearProcessStartCache() {
 }
 
 /**
- * Момент старта с памятью на минуту. Ошибку опроса (`null`) помним тоже:
- * повторять безуспешный вызов на каждом чтении — та же цена без пользы.
+ * Годится ли запись памяти к использованию.
+ *
+ * Вынесено отдельно, потому что у двух видов ответа разный срок: известное
+ * время старта живёт минуту, отказ опроса — пять секунд. Проверить это на
+ * живых процессах нельзя (мёртвый pid так и останется мёртвым), поэтому
+ * правило проверяется здесь напрямую.
+ *
+ * @param {{at: number, value: Date|null}|undefined} entry
+ * @param {number} now
+ * @returns {boolean}
+ */
+export function cacheEntryUsable(entry, now = Date.now()) {
+  if (!entry) return false;
+  const ttl = entry.value === null ? UNKNOWN_CACHE_TTL_MS : START_CACHE_TTL_MS;
+  return now - entry.at < ttl;
+}
+
+/**
+ * Момент старта с памятью.
  *
  * @param {number} pid
+ * @param {Object} [options]
+ * @param {boolean} [options.fresh] спросить ОС, не заглядывая в память.
+ *   Обязательно там, где по ответу отправляется сигнал процессу.
  * @returns {Date|null}
  */
-export function processStartedAtCached(pid) {
+export function processStartedAtCached(pid, { fresh = false } = {}) {
   const hit = startCache.get(pid);
-  if (hit && Date.now() - hit.at < START_CACHE_TTL_MS) {
+  if (!fresh && cacheEntryUsable(hit)) {
     return hit.value;
   }
   const value = processStartedAt(pid);
@@ -109,12 +136,16 @@ export function processStartedAt(pid) {
  *
  * @param {number} pid
  * @param {string|null} lockWrittenAt ISO-время записи lock'а
- * @param {number} [toleranceMs] запас на округление: `ps` отдаёт время с точностью
- *   до секунды. Шире делать незачем: это ровно окно, в котором переиспользованный
- *   pid пройдёт проверку
+ * @param {Object} [options]
+ * @param {boolean} [options.fresh] спрашивать ОС, минуя память. Обязательно
+ *   перед отправкой сигнала: прогретая чтением запись переживает смерть
+ *   процесса, и переиспользованный номер прошёл бы проверку
+ * @param {number} [options.toleranceMs] запас на округление: `ps` отдаёт время с
+ *   точностью до секунды. Шире делать незачем: это ровно окно, в котором
+ *   переиспользованный pid пройдёт проверку
  * @returns {boolean}
  */
-export function pidCouldBeFromRun(pid, lockWrittenAt, toleranceMs = 5000) {
+export function pidCouldBeFromRun(pid, lockWrittenAt, { fresh = false, toleranceMs = 5000 } = {}) {
   if (!lockWrittenAt) {
     return true;
   }
@@ -122,7 +153,7 @@ export function pidCouldBeFromRun(pid, lockWrittenAt, toleranceMs = 5000) {
   if (Number.isNaN(lockTime)) {
     return true;
   }
-  const startedAt = processStartedAtCached(pid);
+  const startedAt = processStartedAtCached(pid, { fresh });
   if (!startedAt) {
     return true;
   }

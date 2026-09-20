@@ -246,6 +246,34 @@ describe('stop_pipeline tool', () => {
     });
   });
 
+  describe('TC-005a: force не отменяет отказ по переиспользованному номеру', () => {
+    it('отказывает и с force=true, не трогая посторонний процесс', { timeout: 30000 }, async () => {
+      // `force` снимает вопрос «чей это пайплайн», но не вопрос «есть ли он
+      // вообще». При `PID_REUSED` номер из lock'а принадлежит постороннему
+      // процессу, и убийство «с force» — это `taskkill /F /T` по чужому дереву.
+      // Подсказка отказа прямо просит не повторять с force; обходить её же
+      // было бы странно.
+      const victim = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore' });
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        // Lock датирован прошлым: процесс с этим номером стартовал позже.
+        const ancient = '2020-01-01T00:00:00.000Z';
+        writeRunnerLock(projectPath, victim.pid, { started_at: ancient, timestamp: ancient });
+
+        const result = await stopPipelineImpl('.', { force: true });
+
+        expect(result.ok).toBe(false);
+        expect(result.code).toBe('STALE_PIPELINE_LOCK');
+        expect(result.reason).toBe('PID_REUSED');
+        // Посторонний процесс жив.
+        expect(() => process.kill(victim.pid, 0)).not.toThrow();
+      } finally {
+        try { victim.kill(); } catch { /* мог завершиться */ }
+      }
+    });
+  });
+
   describe('TC-006: файл владения остаётся за раннером', () => {
     it.skipIf(process.platform === 'win32')('не заводит своего файла и не снимает lock', async () => {
       // Прежде сервер писал `.mcp-started-by` и удалял его после убийства.

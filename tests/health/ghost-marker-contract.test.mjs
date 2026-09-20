@@ -77,6 +77,15 @@ describe('строка verify-artifacts ловится матчером', () => 
     const line = '[GHOST-EXECUTION] ticket=IMPL-993 reason=assertion_failed assertions_failed=1';
     expect(buildGhostMarkerMatcher().test(line)).toBe(true);
   });
+
+  it('пересказ строки внутри текста маркером не считается', () => {
+    // В блок `OUTPUT` попадает и вывод AI-агентов: они цитируют лог и тикеты.
+    // Токен посреди фразы — рассказ о событии, а не само событие.
+    const matcher = buildGhostMarkerMatcher();
+
+    expect(matcher.test('verify-artifacts напечатал [GHOST-EXECUTION] ticket=QA-903 — разберись')).toBe(false);
+    expect(matcher.test('[2026-09-20 19:51:00] [INFO] [claude] в логе вижу [GHOST-EXECUTION] ticket=X')).toBe(false);
+  });
 });
 
 describe('детектор здоровья', () => {
@@ -90,10 +99,18 @@ describe('детектор здоровья', () => {
     expect(alert.severity).toBe('critical');
     expect(alert.project).toBe('proj');
     expect(alert.run_id).toBe('2026-09-20_19-30-00');
+    // Тикет назван в самой строке — искать его в логе руками не нужно.
+    expect(alert.ticket_id).toBe('QA-903');
   });
 
   it('молчит на логе честного прогона', () => {
     writeLog(runnerLog('---RESULT---'));
+
+    expect(detectGhostExecution(projectRoot)).toBeNull();
+  });
+
+  it('молчит, когда агент пересказывает строку в своём выводе', () => {
+    writeLog(runnerLog(`агент сообщает: ${GHOST_STDOUT_LINE}`));
 
     expect(detectGhostExecution(projectRoot)).toBeNull();
   });
@@ -118,6 +135,7 @@ describe('list_ghost_executions', () => {
     expect(entry.project).toBe('proj');
     expect(entry.step_number).toBe(12);
     expect(entry.log_excerpt).toContain('[GHOST-EXECUTION]');
+    expect(entry.ticket_id).toBe('QA-903');
     // Время берётся из самой строки лога, а не из момента запроса.
     expect(entry.detected_at.startsWith('2026-09-20')).toBe(true);
   });

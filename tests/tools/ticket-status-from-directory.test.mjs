@@ -165,6 +165,31 @@ describe('аналитика', () => {
     expect(computeCycleTime(project).count).toBe(0);
   });
 
+  it('тикет без поля id опознаётся по имени файла', () => {
+    // Такой в рабочей области один на девять сотен
+    // (`PulseProxy/.workflow/tickets/done/IMPL-40.md`), и он настоящий:
+    // выкидывать его из velocity значит занижать её молча.
+    const filePath = path.join(project, '.workflow', 'tickets', 'done', 'IMPL-40.md');
+    fs.writeFileSync(filePath, [
+      '---',
+      'title: "Без поля id"',
+      'type: impl',
+      'complexity: simple',
+      'created_at: "2026-09-01T00:00:00Z"',
+      'completed_at: "2026-09-02T00:00:00Z"',
+      '---',
+      '',
+      'тело',
+      ''
+    ].join('\n'));
+
+    const velocity = computeVelocity(project);
+
+    expect(velocity.count).toBe(1);
+    expect(velocity.tickets.map((t) => t.id)).toEqual(['IMPL-40']);
+    expect(computeCycleTime(project).tickets.map((t) => t.id)).toEqual(['IMPL-40']);
+  });
+
   it('файл без frontmatter тикетом не считается', () => {
     // Обрывок записи или случайный `.md` в каталоге. Раньше его отсекало
     // требование `status: done` во frontmatter.

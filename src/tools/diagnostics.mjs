@@ -315,6 +315,12 @@ async function listGhostExecutionsImpl({ project, since }) {
         if (matchingStep && matchingStep.context) {
           ticketId = matchingStep.context.ticket_id || matchingStep.context.ticketId || '';
         }
+        // Запасной источник — сама строка маркера (`ticket=IMPL-42`). Шаг в
+        // логе не всегда несёт контекст, а строку печатает та стадия, которая
+        // призрака и нашла.
+        if (!ticketId) {
+          ticketId = lines[i].match(/\bticket=(\S+)/)?.[1] || '';
+        }
 
         // Extract run_id from log filename: pipeline_<run_id>.log
         const runIdMatch = logFile.name.match(/pipeline_(.+?)\.log$/);

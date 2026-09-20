@@ -50,9 +50,18 @@ export function normalizeGhostMarker(marker) {
  */
 export function buildGhostMarkerMatcher(marker) {
   const normalized = normalizeGhostMarker(marker);
-  // Токен обособлен: начало строки или пробел слева; пробел, конец строки
-  // или разделитель `:`/`=` справа.
-  const pattern = new RegExp(`(?:^|\\s)${escapeRegExp(normalized)}(?:\\s|[:=]|$)`, 'm');
+  // Токен открывает запись: либо строку целиком, либо её содержимое сразу за
+  // префиксом логгера (`[время] [INFO] [стадия]   …`). Справа — пробел, конец
+  // строки или разделитель `:`/`=`.
+  //
+  // Просто «обособленного» токена мало. Стадия печатает маркер в stdout, а
+  // раннер кладёт stdout стадии в лог; туда же попадает вывод AI-агентов,
+  // которые пересказывают лог и цитируют тикеты. Строка вида «verify-artifacts
+  // напечатал [GHOST-EXECUTION] ticket=…» — пересказ, а не событие, и по
+  // прежнему правилу давала `critical`-алерт. Это ровно тот способ ошибиться,
+  // из-за которого правило вообще появилось (FIX-001).
+  const logPrefix = '(?:\\[[^\\]]*\\]\\s*)*';
+  const pattern = new RegExp(`^\\s*${logPrefix}${escapeRegExp(normalized)}(?:\\s|[:=]|$)`, 'm');
 
   return {
     marker: normalized,

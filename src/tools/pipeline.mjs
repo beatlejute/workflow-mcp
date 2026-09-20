@@ -169,7 +169,7 @@ export const start_pipeline = {
         // процесс, — но и сносить lock автоматически нельзя: ошибёмся — поверх
         // живого раннера встанет второй пайплайн. Цена ошибки несимметрична,
         // поэтому протухший на вид lock с живым pid отдаётся человеку явно.
-        if (!pidCouldBeFromRun(lock.pid, lock.started_at)) {
+        if (!pidCouldBeFromRun(lock.pid, lock.started_at, { fresh: true })) {
           return {
             ok: false,
             code: 'STALE_PIPELINE_LOCK',
@@ -448,7 +448,7 @@ export async function pausePipelineImpl(project) {
   const pid = runner.pid;
 
   // Сверка владения по lock'у
-  const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true });
+  const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true, fresh: true });
   if (!validation.valid) {
     return ownershipRefusal(
       validation,
@@ -538,7 +538,7 @@ export const pause_pipeline = {
     const pid = runner.pid;
 
     // Сверка владения по lock'у
-    const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true });
+    const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true, fresh: true });
     if (!validation.valid) {
       return ownershipRefusal(
         validation,
@@ -623,16 +623,20 @@ export const resume_pipeline = {
     }
     const pid = runner.pid;
 
-    // Сверка владения по lock'у (кроме force=true)
-    if (!force) {
-      const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true });
-      if (!validation.valid) {
-        return ownershipRefusal(
-          validation,
-          'FOREIGN_PIPELINE',
-          `Pipeline is foreign (not started by this MCP workspace). Use force=true to override: ${validation.reason}`
-        );
-      }
+    // Сверка владения по lock'у. `force` снимает вопрос о том, чей это
+    // пайплайн, но не вопрос о том, есть ли он вообще: при `PID_REUSED` номер
+    // из lock'а принадлежит постороннему процессу, и убийство «с force» —
+    // это `taskkill /F /T` по чужому дереву. Подсказка в `ownershipRefusal`
+    // прямо говорит не повторять с force; странно было бы её же и обходить.
+    const validation = validateRunOwnership(
+      runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true, fresh: true }
+    );
+    if (!validation.valid && (!force || validation.reason === 'PID_REUSED')) {
+      return ownershipRefusal(
+        validation,
+        'FOREIGN_PIPELINE',
+        `Pipeline is foreign (not started by this MCP workspace). Use force=true to override: ${validation.reason}`
+      );
     }
 
     // Call process/control.kill()
@@ -714,7 +718,7 @@ export async function abortPipelineImpl(project, options = {}) {
   const pid = runner.pid;
 
   // Сверка владения по lock'у
-  const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true });
+  const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds(), { verifyProcessStart: true, fresh: true });
   if (!validation.valid) {
     return ownershipRefusal(
       validation,
@@ -766,7 +770,7 @@ export async function abortPipelineImpl(project, options = {}) {
           return { escalate: false, reason: 'RUNNER_GONE' };
         }
         const ownership = validateRunOwnership(
-          liveLock, pid, acceptedInstanceIds(), { verifyProcessStart: true }
+          liveLock, pid, acceptedInstanceIds(), { verifyProcessStart: true, fresh: true }
         );
         return ownership.valid
           ? { escalate: true }

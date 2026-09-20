@@ -57,13 +57,17 @@ export function detectGhostExecution(projectPath, marker) {
   // Прежний includes() давал critical-алерт на любое упоминание слов
   // «ghost-execution» в прозе — теге тикета, commit message, имени файла.
   const matcher = buildGhostMarkerMatcher(marker);
-  if (!logContent.split('\n').some(line => matcher.test(line))) {
+  const markerLine = logContent.split('\n').find(line => matcher.test(line));
+  if (!markerLine) {
     return null;
   }
 
   // Build the alert
   const runId = latestLog.match(/pipeline_(.+?)\.log$/)?.[1] || 'unknown';
   const projectName = projectPath.split(/[\\/]/).filter(Boolean).pop() || 'unknown';
+  // Тикет назван в самой строке (`ticket=IMPL-42`): её печатает та стадия,
+  // которая призрака и обнаружила. Пустое поле заставляло искать его руками.
+  const ticketId = markerLine.match(/\bticket=(\S+)/)?.[1] || '';
 
   const alert = {
     fingerprint: `ghost_execution:${projectName}:${runId}`,
@@ -71,7 +75,7 @@ export function detectGhostExecution(projectPath, marker) {
     severity: 'critical',
     project: projectName,
     run_id: runId,
-    ticket_id: '',
+    ticket_id: ticketId,
     message: `Ghost execution marker "${matcher.marker}" found in pipeline log`,
     detected_at: new Date().toISOString(),
     suggested_actions: ['get_pipeline_log']

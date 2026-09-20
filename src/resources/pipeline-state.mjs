@@ -191,7 +191,14 @@ export function get_workflow_pipeline_state(absoluteCwd) {
     // снимается лишь вместе с `killed`, то есть при мёртвом pid: у живого
     // процесса запись о прошлом убийстве ничего не доказывает — номер мог
     // переиспользоваться.
-    const isForeign = !ownership.valid && !killed;
+    //
+    // `PID_REUSED` — тоже не «чужой»: lock наш, просто раннера по этому номеру
+    // давно нет, а номер занял посторонний процесс. Про это говорят `stale`,
+    // `stale_lock` и `pid_reused`, а `foreign` увело бы к «пайплайн чужой,
+    // позовите с force» — ровно к тому, что убьёт постороннее дерево. Отказы
+    // инструментов трактуют этот случай так же: `STALE_PIPELINE_LOCK`, а не
+    // `FOREIGN_PIPELINE`.
+    const isForeign = !ownership.valid && !killed && ownership.reason !== 'PID_REUSED';
     const awaiting = getAwaitingApproval(projectRoot);
     const { runId, currentStage, stepNumber } = getRunInfo(projectRoot);
 

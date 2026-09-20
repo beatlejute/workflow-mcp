@@ -41,6 +41,26 @@ function getTicketFiles(projectPath) {
 }
 
 /**
+ * Идентификатор тикета.
+ *
+ * Обычно он во frontmatter, но бывает и без него: в рабочей области такой
+ * тикет один на девять сотен (`PulseProxy/.workflow/tickets/done/IMPL-40.md`).
+ * Имя файла — тот же идентификатор, и остальной код (`list_blocked_tickets`)
+ * давно так и делает. Требовать поле значило бы молча выкинуть настоящий тикет
+ * из velocity и cycle time.
+ *
+ * @param {object} frontmatter
+ * @param {string} filePath
+ * @returns {string} id либо пустая строка, если файл вообще не похож на тикет
+ */
+function ticketId(frontmatter, filePath) {
+  if (frontmatter && typeof frontmatter.id === 'string' && frontmatter.id.length > 0) {
+    return frontmatter.id;
+  }
+  return path.basename(filePath, '.md');
+}
+
+/**
  * Проверить, что тикет в статусе done и в пределах временного окна.
  * @param {object} fm - frontmatter тикета
  * @param {number} windowDays - окно в днях (null/undefined = все времени)
@@ -121,8 +141,9 @@ export function computeVelocity(projectPath, windowDays = null, groupBy = null) 
       // Файл без frontmatter — не тикет: так выглядит обрывок записи или
       // случайный `.md` в каталоге. Раньше его отсекало требование
       // `status: done` во frontmatter; теперь статус берётся из каталога, и
-      // отсечка нужна своя.
-      if (!frontmatter || !frontmatter.id) {
+      // отсечка нужна своя. Отсутствие одного лишь поля `id` тикетом быть не
+      // мешает — идентификатор тогда берётся из имени файла.
+      if (!frontmatter || Object.keys(frontmatter).length === 0) {
         continue;
       }
 
@@ -137,7 +158,7 @@ export function computeVelocity(projectPath, windowDays = null, groupBy = null) 
       count++;
       const complexity = complexityWeight(frontmatter.complexity);
       sum += complexity;
-      included.push({ id: frontmatter.id, complexity });
+      included.push({ id: ticketId(frontmatter, ticketPath), complexity });
     } catch (e) {
       // Пропускаем файлы с ошибками парсинга
       continue;
@@ -166,7 +187,7 @@ export function computeCycleTime(projectPath, windowDays = null, percentiles = [
     try {
       const { frontmatter } = getFrontmatter(ticketPath);
 
-      if (!frontmatter || !frontmatter.id) {
+      if (!frontmatter || Object.keys(frontmatter).length === 0) {
         continue;
       }
 
@@ -195,7 +216,7 @@ export function computeCycleTime(projectPath, windowDays = null, percentiles = [
       }
 
       const days = (completed - created) / (1000 * 60 * 60 * 24);
-      cycles.push({ id: frontmatter.id, days });
+      cycles.push({ id: ticketId(frontmatter, ticketPath), days });
     } catch (e) {
       continue;
     }
@@ -279,7 +300,7 @@ export function computeStats(projectPath, windowDays = null) {
     try {
       const { frontmatter } = getFrontmatter(ticketPath);
 
-      if (!frontmatter || !frontmatter.id) continue;
+      if (!frontmatter || Object.keys(frontmatter).length === 0) continue;
 
       // Пропускаем тикеты с created_at в будущем
       if (hasFutureCreatedAt(frontmatter)) continue;
@@ -295,7 +316,8 @@ export function computeStats(projectPath, windowDays = null) {
       // blocked_top: тикеты в каталоге blocked или с тегом blocked
       const isBlocked = status === 'blocked' ||
                         (Array.isArray(frontmatter.tags) && frontmatter.tags.includes('blocked'));
-      if (isBlocked && !blocked.some(b => b.id === frontmatter.id)) {
+      const id = ticketId(frontmatter, ticketPath);
+      if (isBlocked && !blocked.some(b => b.id === id)) {
         let blockedReason = '';
         // из последнего events
         if (Array.isArray(frontmatter.events) && frontmatter.events.length > 0) {
@@ -313,7 +335,7 @@ export function computeStats(projectPath, windowDays = null) {
             ageSec = Math.floor((Date.now() - dt.getTime()) / 1000);
           }
         }
-        blocked.push({ id: frontmatter.id, blocked_reason: blockedReason, age_sec: ageSec });
+        blocked.push({ id, blocked_reason: blockedReason, age_sec: ageSec });
       }
     } catch (e) {
       continue;

@@ -455,6 +455,10 @@ describe('чужие пайплайны', () => {
     expect(entry.pid_reused).toBe(true);
     expect(entry.stale_lock).toBe(true);
     expect(entry.ownership_reason).toBe('PID_REUSED');
+    // Но не «чужой»: lock наш, просто раннера по этому номеру давно нет.
+    // `foreign` увело бы к совету «позовите с force», то есть к убийству
+    // постороннего дерева.
+    expect(entry.foreign).toBeUndefined();
   });
 });
 

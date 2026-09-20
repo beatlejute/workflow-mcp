@@ -71,8 +71,13 @@ export function readPipelineLock(projectRoot) {
  *   принимаемых (`acceptedInstanceIds`: текущий плюс прежнего формата)
  * @param {Object} [options]
  * @param {boolean} [options.verifyProcessStart] спрашивать у ОС время старта процесса.
- *   Внешний вызов ценой в сотни миллисекунд; ответ кешируется на минуту
- *   (`pidCouldBeFromRun`), поэтому частые чтения состояния платят за него один раз.
+ *   Внешний вызов ценой в сотни миллисекунд; ответ помнится, поэтому частые
+ *   чтения состояния платят за него один раз.
+ * @param {boolean} [options.fresh] спрашивать ОС, минуя память. Обязательно там,
+ *   откуда следом уходит сигнал процессу: запись, прогретая чтением состояния,
+ *   переживает смерть раннера, и переиспользованный системой номер прошёл бы
+ *   проверку. Сверка `pid` и `started_by_id` от этого не защищает — оба поля
+ *   лежат в том же протухшем lock'е.
  * @returns {{valid: boolean, reason?: string, override?: boolean}}
  */
 export function validateRunOwnership(lock, pid, instanceId, options = {}) {
@@ -105,7 +110,8 @@ export function validateRunOwnership(lock, pid, instanceId, options = {}) {
     return { valid: false, reason: 'INSTANCE_MISMATCH' };
   }
 
-  if (options.verifyProcessStart && !pidCouldBeFromRun(pid, lock.started_at)) {
+  if (options.verifyProcessStart
+      && !pidCouldBeFromRun(pid, lock.started_at, { fresh: options.fresh === true })) {
     return { valid: false, reason: 'PID_REUSED' };
   }
 
