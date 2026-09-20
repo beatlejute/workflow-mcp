@@ -450,10 +450,9 @@ ${JSON.stringify({
     });
 
     it('уведомление шлёт клиенту resources/updated для workflow://alerts', () => {
-      // Обработчик ставился сервером и не читался нигде: подписчиков у
-      // `subscribe_workflow_alerts` в живом коде нет, а `resources/updated`
-      // для `workflow://alerts` не уходил никогда — клиент узнавал об алерте,
-      // только если сам решал перечитать ресурс.
+      // Обработчик ставился сервером и не читался нигде, поэтому
+      // `resources/updated` для `workflow://alerts` не уходил никогда — клиент
+      // узнавал об алерте, только если сам решал перечитать ресурс.
       const updated = [];
       resources.setResourceNotificationHandler((uri) => updated.push(uri));
 
@@ -466,151 +465,20 @@ ${JSON.stringify({
     });
 
     it('падение обработчика уведомлений не роняет notify_workflow_alerts', () => {
+      // Уведомление зовётся из тика детекторов: исключение из него уронило бы
+      // весь обход проектов.
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const seen = [];
-      const unsubscribe = resources.subscribe_workflow_alerts((alert) => seen.push(alert));
       resources.setResourceNotificationHandler(() => { throw new Error('transport closed'); });
 
       try {
         expect(() => resources.notify_workflow_alerts({ type: 'stuck', project: 'proj1' })).not.toThrow();
-        expect(seen).toHaveLength(1);
+        expect(errorSpy).toHaveBeenCalled();
       } finally {
         resources.setResourceNotificationHandler(null);
-        unsubscribe();
         errorSpy.mockRestore();
       }
     });
 
-    it('subscribe_workflow_alerts should return unsubscribe function', () => {
-      const callback = () => {};
-      const unsubscribe = resources.subscribe_workflow_alerts(callback);
-
-      expect(typeof unsubscribe).toBe('function');
-
-      // Should not throw when called
-      unsubscribe();
-    });
-
-    it('subscribing and notifying should call the callback', async () => {
-      const alerts = [];
-      const unsubscribe = resources.subscribe_workflow_alerts((alert) => {
-        alerts.push(alert);
-      });
-
-      const testAlert = {
-        type: 'stuck',
-        project: 'proj1',
-        severity: 'high',
-        detected_at: new Date().toISOString(),
-        fingerprint: 'fp-001'
-      };
-
-      try {
-        resources.notify_workflow_alerts(testAlert);
-
-        // Give callback time to execute
-        await delay(100);
-
-        expect(alerts.length).toBe(1);
-        expect(alerts[0].fingerprint).toBe('fp-001');
-      } finally {
-        // Отписка обязана произойти и при упавшем ожидании: подписчики живут в
-        // модуле, и утёкший колбэк ловит алерты следующих тестов.
-        unsubscribe();
-      }
-    });
-
-    it('multiple subscribers should all receive notifications', async () => {
-      const alerts1 = [];
-      const alerts2 = [];
-
-      const unsub1 = resources.subscribe_workflow_alerts((alert) => {
-        alerts1.push(alert);
-      });
-
-      const unsub2 = resources.subscribe_workflow_alerts((alert) => {
-        alerts2.push(alert);
-      });
-
-      const testAlert = {
-        type: 'error',
-        project: 'proj2',
-        severity: 'medium',
-        detected_at: new Date().toISOString(),
-        fingerprint: 'fp-002'
-      };
-
-      try {
-        resources.notify_workflow_alerts(testAlert);
-
-        await delay(100);
-
-        expect(alerts1.length).toBe(1);
-        expect(alerts2.length).toBe(1);
-        expect(alerts1[0].fingerprint).toBe('fp-002');
-        expect(alerts2[0].fingerprint).toBe('fp-002');
-      } finally {
-        unsub1();
-        unsub2();
-      }
-    });
-
-    it('unsubscribe should prevent further notifications', async () => {
-      const alerts = [];
-      const unsubscribe = resources.subscribe_workflow_alerts((alert) => {
-        alerts.push(alert);
-      });
-
-      try {
-        resources.notify_workflow_alerts({ fingerprint: 'fp-001' });
-
-        await delay(100);
-        expect(alerts.length).toBe(1);
-
-        unsubscribe();
-
-        resources.notify_workflow_alerts({ fingerprint: 'fp-002' });
-
-        await delay(100);
-        // Should still be 1 (not 2)
-        expect(alerts.length).toBe(1);
-      } finally {
-        unsubscribe();
-      }
-    });
-
-    it('callback errors should not block other subscribers', async () => {
-      const alerts2 = [];
-
-      // First subscriber throws error
-      const unsub1 = resources.subscribe_workflow_alerts(() => {
-        throw new Error('Subscriber 1 error');
-      });
-
-      // Second subscriber should still receive
-      const unsub2 = resources.subscribe_workflow_alerts((alert) => {
-        alerts2.push(alert);
-      });
-
-      const testAlert = { fingerprint: 'fp-test' };
-
-      // Suppress console.error for this test
-      const originalError = console.error;
-      console.error = () => {};
-
-      try {
-        resources.notify_workflow_alerts(testAlert);
-
-        await delay(100);
-
-        expect(alerts2.length).toBe(1);
-        expect(alerts2[0].fingerprint).toBe('fp-test');
-      } finally {
-        console.error = originalError;
-        unsub1();
-        unsub2();
-      }
-    });
   });
 
   describe('Error handling and edge cases', () => {

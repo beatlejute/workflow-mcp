@@ -22,10 +22,20 @@ import { detectBranchDiverged } from './detectors/branch-diverged.mjs';
 export function createWatcher({ cwd, projects, onAlert }) {
   let intervalId = null;
 
-  /** Текущий список проектов — массив либо результат вызова функции. */
+  /**
+   * Текущий список проектов — массив либо результат вызова функции.
+   *
+   * Отказ функции не должен ронять ни старт, ни тик: список пересобирает
+   * discovery, и его поломка не причина ронять сервер.
+   */
   function currentProjects() {
-    const list = typeof projects === 'function' ? projects() : projects;
-    return Array.isArray(list) ? list : [];
+    try {
+      const list = typeof projects === 'function' ? projects() : projects;
+      return Array.isArray(list) ? list : [];
+    } catch (err) {
+      console.error('[health] project list unavailable:', err.message);
+      return [];
+    }
   }
 
   /**
@@ -127,18 +137,25 @@ export function createWatcher({ cwd, projects, onAlert }) {
     
     // Set up tick loop
     intervalId = setInterval(() => {
-      // Get config once per tick for detector thresholds
-      const config = getMcpConfig(cwd);
-      
-      // Loop through projects and run all detectors
-      for (const project of currentProjects()) {
-        // Run each detector and collect non-null alerts
-        const alerts = runDetectorsForProject(project.path, config);
-        
-        // Send alerts to callback
-        for (const alert of alerts) {
-          onAlert(alert);
+      // Тело тика целиком под защитой. Внутри защищены только детекторы, а
+      // чтение конфига и получение списка проектов — нет: исключение в
+      // колбэке `setInterval` не ловит никто, и процесс сервера умирает.
+      try {
+        // Get config once per tick for detector thresholds
+        const config = getMcpConfig(cwd);
+
+        // Loop through projects and run all detectors
+        for (const project of currentProjects()) {
+          // Run each detector and collect non-null alerts
+          const alerts = runDetectorsForProject(project.path, config);
+
+          // Send alerts to callback
+          for (const alert of alerts) {
+            onAlert(alert);
+          }
         }
+      } catch (err) {
+        console.error('[health] tick failed:', err.message);
       }
     }, tickIntervalMs);
   }

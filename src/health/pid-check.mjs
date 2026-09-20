@@ -16,12 +16,48 @@ export function isProcessAlive(pid) {
     return false;
   }
 
-  // Platform-specific check
-  if (process.platform === 'win32') {
-    return isProcessAliveWindows(pid);
-  } else {
-    return isProcessAlivePosix(pid);
+  const cached = recentChecks.get(pid);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    return cached.alive;
   }
+
+  // Platform-specific check
+  const alive = process.platform === 'win32'
+    ? isProcessAliveWindows(pid)
+    : isProcessAlivePosix(pid);
+
+  rememberCheck(pid, alive);
+  return alive;
+}
+
+/**
+ * Короткая память ответов.
+ *
+ * За один тик про один и тот же pid спрашивают дважды: `detectCrashed` и
+ * `detectStuck`. На Windows каждый вопрос — запуск `tasklist` с таймаутом в 5
+ * секунд, и тик синхронный: сервер на это время не отвечает клиенту. Окно
+ * короче периода тика, поэтому состояние процесса между тиками всегда
+ * перепроверяется.
+ */
+const CACHE_TTL_MS = 1000;
+const recentChecks = new Map();
+
+function rememberCheck(pid, alive) {
+  const now = Date.now();
+  recentChecks.set(pid, { alive, at: now });
+  // Карта не должна расти вечно: pid'ы мёртвых прогонов накапливаются.
+  if (recentChecks.size > 64) {
+    for (const [key, value] of recentChecks) {
+      if (now - value.at >= CACHE_TTL_MS) {
+        recentChecks.delete(key);
+      }
+    }
+  }
+}
+
+/** Забыть ответы. Нужно тестам, которые проверяют настоящую ветку платформы. */
+export function clearProcessAliveCache() {
+  recentChecks.clear();
 }
 
 /**

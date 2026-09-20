@@ -28,6 +28,17 @@ export function createHealthService({ cwd, projects, stateDir, onAlert }) {
   const config = getMcpConfig(cwd);
   const enabled = config.enabled !== false;
 
+  // Выключенная служба не должна оставлять следов: `createPublisher` создаёт
+  // каталог состояния и перечитывает историю алертов, поэтому собирается
+  // только при старте.
+  if (!enabled) {
+    return {
+      enabled: false,
+      start() { return false; },
+      stop() { }
+    };
+  }
+
   const publisher = createPublisher({
     // Исключение из колбэка не должно ронять тик: следующие проекты в том же
     // проходе иначе остались бы непроверенными.
@@ -63,7 +74,7 @@ export function createHealthService({ cwd, projects, stateDir, onAlert }) {
 
     /** @returns {boolean} запустилась ли служба (false, если выключена конфигом) */
     start() {
-      if (!enabled || started) {
+      if (started) {
         return false;
       }
       watcher.start();

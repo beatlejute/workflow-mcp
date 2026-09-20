@@ -239,7 +239,7 @@ describe('detectStuck (tests/health/detectors/stuck.test.mjs)', () => {
       expect(result).toBeNull();
     });
 
-    it('should return null and log warning for STAGE_NOT_FOUND', () => {
+    it('should return null without logging for STAGE_NOT_FOUND', () => {
       // Create a running stage log with non-existent stage
       const logContent = `[2026-04-26 12:00:00] [INFO] [PipelineRunner] Step 1
 [2026-04-26 12:00:00] [INFO] [PipelineRunner] Current stage: unknown-stage
@@ -255,15 +255,14 @@ describe('detectStuck (tests/health/detectors/stuck.test.mjs)', () => {
       // Mock PIDs check
       vi.spyOn(pidCheck, 'isProcessAlive').mockReturnValue(true);
 
-      // Mock console.error to verify warning is logged
+      // Расхождение лога с pipeline.yaml — состояние, а не событие: детектор
+      // попадал в эту ветку каждый тик и каждый раз писал в stderr.
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       const result = detectStuck(projectPath, { stuck_headroom_sec: 5 });
 
       expect(result).toBeNull();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Warning: Stage "unknown-stage" not found')
-      );
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
 
       consoleErrorSpy.mockRestore();
     });

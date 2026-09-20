@@ -188,6 +188,49 @@ describe('E2E: алерты здоровья доходят до клиента'
     expect(after.length).toBe(before.length);
   }, 30000);
 
+  it('недоступный каталог состояния не роняет сервер', async () => {
+    // `ensureStateDir` вызывался без обёртки: `state.dir`, который нельзя
+    // создать, давал `ENOTDIR` прямо в `main()` и выход с кодом 1 — клиент
+    // терял все tools из-за каталога, без которого сервер прекрасно работает.
+    const badRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'health-e2e-bad-'));
+    const blocker = path.join(badRoot, 'not-a-dir');
+    fs.writeFileSync(blocker, 'x');
+
+    const broken = spawn(process.execPath, [SERVER], {
+      env: { ...process.env, MCP_CWD: badRoot, WORKFLOW_STATE_DIR: path.join(blocker, 'state') },
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let out = '';
+    broken.stdout.on('data', (chunk) => { out += chunk.toString('utf8'); });
+
+    const ask = (id, method, params) =>
+      broken.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+
+    try {
+      ask(1, 'initialize', {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'health-e2e-bad', version: '1.0.0' }
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      ask(2, 'tools/list', {});
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+
+      const toolsResponse = out.split('\n')
+        .filter(Boolean)
+        .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+        .find((message) => message && message.id === 2);
+
+      expect(broken.exitCode, 'сервер завершился из-за каталога состояния').toBeNull();
+      expect(toolsResponse?.result?.tools?.length ?? 0).toBeGreaterThan(0);
+    } finally {
+      broken.kill();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      fs.rmSync(badRoot, { recursive: true, force: true });
+    }
+  }, 30000);
+
   it('stderr сервера не засоряется каждый тик', () => {
     const stderr = stderrChunks.join('');
 

@@ -215,6 +215,27 @@ describe('publisher.mjs — createPublisher', () => {
     expect(lines.length).toBe(2);
   });
 
+  it('отказ записи истории не отменяет уведомление', () => {
+    // Отпечаток помечается опубликованным до записи. Пока исключение из
+    // `appendFileSync` пробрасывалось наверх, колбэк не вызывался, а повтор
+    // давился дедупом — алерт терялся на весь TTL.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const appendSpy = vi.spyOn(fs, 'appendFileSync').mockImplementation(() => {
+      const err = new Error('ENOSPC: no space left on device');
+      err.code = 'ENOSPC';
+      throw err;
+    });
+
+    const { publishAlert } = makePublisher({ ttl: 3600 });
+
+    expect(() => publishAlert(alert())).not.toThrow();
+    expect(onAlert).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalled();
+
+    appendSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
   it('одинаковый fingerprint детектора дедуплицируется', () => {
     const { publishAlert } = makePublisher({ ttl: 3600 });
     const a = { type: 'crashed', project: 'proj', fingerprint: 'crashed:proj:111' };
@@ -234,7 +255,7 @@ describe('publisher.mjs — createPublisher', () => {
     const { publishAlert } = createPublisher({
       onAlert: () => {
         linesAtCallback = fs.existsSync(jsonlPath)
-          ? fs.readFileSync(jsonlPath, 'utf8').trim().split('\\n').filter(Boolean).length
+          ? fs.readFileSync(jsonlPath, 'utf8').trim().split('\n').filter(Boolean).length
           : 0;
       },
       stateDir: { mode: 'writable', dir: tempDir },

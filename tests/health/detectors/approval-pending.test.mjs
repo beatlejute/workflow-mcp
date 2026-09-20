@@ -521,8 +521,12 @@ describe('detectApprovalPending (tests/health/detectors/approval-pending.test.mj
 
       expect(result).not.toBeNull();
       expect(result.detected_at).toBeDefined();
-      expect(result.detected_at >= beforeTime).toBe(true);
-      expect(result.detected_at <= afterTime).toBe(true);
+      // Формат — ISO-строка, как у остальных детекторов. Число здесь ломало
+      // ресурс `workflow://alerts`: он отбирает записи по `new Date(...)`.
+      expect(new Date(result.detected_at).toISOString()).toBe(result.detected_at);
+      const detectedMs = new Date(result.detected_at).getTime();
+      expect(detectedMs >= beforeTime).toBe(true);
+      expect(detectedMs <= afterTime).toBe(true);
     });
 
     it('should extract project name from directory path', () => {

@@ -17,6 +17,17 @@ export function getApprovalPendingThreshold(config) {
  * @param {Object} config - MCP health configuration
  * @returns {Object|null} Alert object or null
  */
+/**
+ * Имя проекта из пути.
+ *
+ * Разделитель обязан быть обоим: `discoverProjects` отдаёт на Windows пути с
+ * `\`, и разбор только по `/` клал в `project` и в отпечаток весь путь
+ * вида `D:\Dev\proj` вместо имени. Остальные детекторы считают так же.
+ */
+function projectName(projectPath) {
+  return projectPath.split(/[\/]/).filter(Boolean).pop() || 'unknown';
+}
+
 export function detectApprovalPending(projectPath, config) {
   const approvalsDir = join(projectPath, '.workflow', 'approvals');
   const threshold = getApprovalPendingThreshold(config);
@@ -36,19 +47,21 @@ export function detectApprovalPending(projectPath, config) {
              const ageSec = (now - new Date(approval.created_at).getTime()) / 1000;
              if (ageSec > threshold / 2) {
                return {
-                 fingerprint: `approval_pending:${projectPath.split('/').pop()}:${file}`,
+                 fingerprint: `approval_pending:${projectName(projectPath)}:${file}`,
                  type: 'approval_pending',
                  severity: ageSec > threshold ? 'warning' : 'info',
-                 project: projectPath.split('/').pop(),
+                 project: projectName(projectPath),
                  step_id: file.replace('.json', ''),
                  message: `Approval pending for ${file} since ${new Date(approval.created_at).toISOString()}`,
-                detected_at: now,
+                detected_at: new Date(now).toISOString(),
                 suggested_actions: ['approve_step', 'list_running_pipelines']
               };
             }
           }
         } catch (e) {
-          console.warn(`[approval-pending] Error parsing ${filePath}:`, e.message);
+          // Битый файл одобрения остаётся битым: жаловаться на него каждый
+          // тик бессмысленно. Пропускаем молча — как и остальные детекторы,
+          // которые не печатают своё обычное «нечего сказать».
         }
       }
     }

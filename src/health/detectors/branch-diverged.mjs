@@ -1,4 +1,6 @@
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 /**
  * Detects if current branch is diverged from remote tracking branch
@@ -7,6 +9,13 @@ import { execSync } from 'node:child_process';
  * @returns {Object|null} Alert object if branch is diverged, null otherwise
  */
 export function detectBranchDiverged(projectPath, config) {
+  // Не репозиторий — и спрашивать нечего. Без этой проверки `git` порождался
+  // на каждом проекте каждый тик, только чтобы ответить `fatal: not a git
+  // repository`: тик синхронный, и каждый такой запуск — задержка сервера.
+  if (!existsSync(join(projectPath, '.git'))) {
+    return null;
+  }
+
   // Check if config has auto_fetch override
   const autoFetch = config.branch_diverged_auto_fetch ?? false;
   
@@ -22,10 +31,12 @@ export function detectBranchDiverged(projectPath, config) {
     } catch (err) {
       // If fetch fails, continue with status anyway (non-fatal)
     }
-  } else {
-    // Add --no-fetch to prevent automatic fetch
-    gitArgs.push('--no-fetch');
   }
+  // Ветки «иначе» нет намеренно: сюда дописывался флаг `--no-fetch`, которого
+  // у `git status` не существует (`error: unknown option 'no-fetch'`, код 129).
+  // Команда падала, детектор молча возвращал null — то есть при дефолтном
+  // `branch_diverged_auto_fetch: false` не срабатывал никогда. `git status`
+  // сам по себе в сеть не ходит, запрещать ему нечего.
   
   try {
     // Execute git status
@@ -98,9 +109,15 @@ export function detectBranchDiverged(projectPath, config) {
       const projectName = projectPath.split(/[\\/]/).pop() || 'unknown';
       const fingerprint = `branch_diverged:${projectName}:${localBranch}`;
       
+      // `project` и `detected_at` — не украшения: ресурс `workflow://alerts`
+      // отбирает записи по `detected_at` (без него `new Date(undefined)` даёт
+      // NaN, и алерт выпадает из выдачи), а имя проекта в остальных алертах
+      // есть отдельным полем, и клиент читает его оттуда.
       return {
         type: 'branch_diverged',
         severity: 'warning',
+        project: projectName,
+        detected_at: new Date().toISOString(),
         message: `Branch '${localBranch}' has diverged from tracking branch '${remoteBranch}' (ahead ${ahead}, behind ${behind})`,
         fingerprint,
         suggested_actions: ['git_status', 'git_create_branch'],

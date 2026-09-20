@@ -5,8 +5,16 @@ vi.mock('node:child_process', () => ({
   execSync: vi.fn(),
 }));
 
+// Детектор больше не зовёт git вне репозитория: без этой подмены все случаи
+// ниже выходили бы на первой строке, потому что пути здесь выдуманные.
+vi.mock('node:fs', () => ({
+  existsSync: vi.fn(() => true),
+  default: { existsSync: vi.fn(() => true) }
+}));
+
 import { detectBranchDiverged } from '../../../src/health/detectors/branch-diverged.mjs';
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 describe('branch-diverged.mjs', () => {
   let execSyncMock;
@@ -188,15 +196,32 @@ describe('branch-diverged.mjs', () => {
       expect(execSyncMock).toHaveBeenCalled();
     });
 
-    // ===== Test Case 11: No--fetch parameter handling =====
-    it('should use --no-fetch when auto_fetch is not enabled', () => {
+    it('should not spawn git when there is no .git directory', () => {
+      // Раньше git порождался на каждом проекте каждый тик — только чтобы
+      // ответить `fatal: not a git repository`. Тик синхронный, и каждый такой
+      // запуск задерживает ответы сервера. Результат детектора в обоих случаях
+      // одинаков (null), поэтому поймать это можно только по факту вызова.
+      vi.mocked(existsSync).mockReturnValueOnce(false);
+
+      const result = detectBranchDiverged(projectPath, config);
+
+      expect(result).toBeNull();
+      expect(execSyncMock).not.toHaveBeenCalled();
+    });
+
+    // ===== Test Case 11: команда git без несуществующих опций =====
+    it('should call plain `git status -sb` when auto_fetch is not enabled', () => {
       const gitOutput = '## main\n';
       execSyncMock.mockReturnValue(gitOutput);
 
       detectBranchDiverged(projectPath, config);
 
-      // Should be called with the --no-fetch flag for normal operation
-      expect(execSyncMock).toHaveBeenCalled();
+      // Раньше сюда дописывался флаг `--no-fetch`, которого у `git status`
+      // нет: команда падала с кодом 129, детектор молча возвращал null и при
+      // дефолтной конфигурации не срабатывал никогда. Прежний тест проверял
+      // только факт вызова и этого не замечал.
+      expect(execSyncMock).toHaveBeenCalledTimes(1);
+      expect(execSyncMock.mock.calls[0][0]).toBe('git status -sb');
     });
 
     // ===== Test Case 12: Fingerprint is stable between calls (DoD: fingerprint стабилен между тиками) =====

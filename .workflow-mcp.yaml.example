@@ -42,14 +42,15 @@ state:
 #
 # Сервер запускает службу здоровья при старте (src/health/service.mjs) и
 # останавливает при завершении. Алерты пишутся в `alerts-history.jsonl` в
-# каталоге состояния и отдаются ресурсом `workflow://alerts`; про каждый новый
-# клиент узнаёт уведомлением `resources/updated`.
+# каталоге состояния и отдаются ресурсом `workflow://alerts`. Уведомление
+# `resources/updated` уходит только тем, кто подписался на этот URI через
+# `resources/subscribe`.
 #
 # Все ключи ниже читаются из конфига в cwd сервера. Исключение —
 # `ghost_execution_log_marker`: его читает ещё и `list_ghost_executions`, но
 # из `<project>/.workflow-mcp.yaml`.
 #
-# Детектор `ghost-execution` пока не даст истинных срабатываний: маркер
+# Детектор `ghost_execution` пока не даст истинных срабатываний: маркер
 # `[GHOST-EXECUTION]` в лог не пишет ни раннер, ни сервер.
 health:
   # Выключатель всей службы здоровья (src/health/service.mjs).

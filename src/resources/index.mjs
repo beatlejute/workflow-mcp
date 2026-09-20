@@ -17,26 +17,21 @@ const __dirname = path.dirname(__filename);
 // ============================================================
 // Global alert subscribers
 // ============================================================
-const alertSubscribers = new Set();
 let notificationHandler = null;
-
-export function subscribe_workflow_alerts(callback) {
-  alertSubscribers.add(callback);
-  return () => { alertSubscribers.delete(callback); };
-}
 
 export function setResourceNotificationHandler(handler) {
   notificationHandler = handler;
 }
 
+/**
+ * Сообщить об алерте: клиенту уходит `resources/updated` по `workflow://alerts`.
+ *
+ * Рядом жил второй механизм — `subscribe_workflow_alerts` с набором колбэков
+ * внутри процесса. Подписчиков у него не было ни одного во всём живом коде,
+ * только в тестах, а обработчик, который ставил сервер, не читался вовсе:
+ * уведомление не уходило никуда. Набор колбэков убран, остался один путь.
+ */
 export function notify_workflow_alerts(alert) {
-  for (const cb of alertSubscribers) {
-    try { cb(alert); } catch (e) { console.error('Error in workflow alerts subscriber:', e.message); }
-  }
-  // Обработчик ставился сервером и не читался нигде: подписчиков у
-  // `subscribe_workflow_alerts` в живом коде нет, а `resources/updated` для
-  // `workflow://alerts` не уходил никогда. Без этой строки клиент узнавал бы
-  // про алерт, только если сам решит перечитать ресурс.
   if (notificationHandler) {
     try { notificationHandler('workflow://alerts'); } catch (e) { console.error('Error notifying workflow://alerts update:', e.message); }
   }

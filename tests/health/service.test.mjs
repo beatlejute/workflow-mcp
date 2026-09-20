@@ -182,6 +182,38 @@ describe('createHealthService', () => {
     expect(seen).toEqual(['late']);
   });
 
+  it('исключение внутри тика не убивает службу', () => {
+    // Исключение в колбэке `setInterval` не ловит никто: раньше под защитой
+    // были только детекторы, а чтение конфига и список проектов — нет.
+    writeConfig();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let firstTick = true;
+    const seen = [];
+
+    service = createHealthService({
+      cwd: workspace,
+      projects: () => {
+        if (firstTick) {
+          firstTick = false;
+          throw new Error('discovery сломалась');
+        }
+        return [makeCrashedProject('after')];
+      },
+      stateDir: { dir: stateDir, mode: 'writable' },
+      onAlert: (alert) => seen.push(alert.project)
+    });
+    service.start();
+
+    expect(() => vi.advanceTimersByTime(1000)).not.toThrow();
+    expect(errorSpy).toHaveBeenCalled();
+
+    // Служба пережила отказ и работает дальше.
+    vi.advanceTimersByTime(1000);
+    expect(seen).toEqual(['after']);
+
+    errorSpy.mockRestore();
+  });
+
   it('health.enabled: false выключает службу', () => {
     writeConfig('  enabled: false\n');
     const projects = [makeCrashedProject('proj')];

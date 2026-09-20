@@ -92,9 +92,11 @@ export function createPublisher({ onAlert, stateDir, config = {} }) {
       try {
         fs.appendFileSync(historyPath, line + '\n', { encoding: 'utf8' });
       } catch (err) {
-        // If write fails we keep in-memory state.
-        // Surface error silently to caller via exception (caller may want to know).
-        throw err;
+        // Отказ записи не должен съедать алерт. Отпечаток уже помечен
+        // опубликованным выше, поэтому проброс исключения означал бы потерю
+        // алерта на весь TTL: колбэк не вызван, повтор задавлен дедупом.
+        // История вторична, уведомление клиенту — нет.
+        console.error('[health] failed to append alerts history:', err.message);
       }
     }
 

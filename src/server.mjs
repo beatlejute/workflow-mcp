@@ -139,8 +139,19 @@ async function main() {
   // Каталог состояния: там же, где лежит история алертов, которую читает
   // ресурс `workflow://alerts`. На read-only дереве служба здоровья работает
   // без истории — алерты уходят уведомлениями, ресурс остаётся пустым.
-  const healthStateDir = serverStateDir(cwd);
-  ensureStateDir(healthStateDir);
+  //
+  // Создание обязано быть необязательным. Прежде `ensureStateDir` вызывался
+  // только внутри `registerWorkflowResources`, под общим `try`: недоступный
+  // `state.dir` стоил ресурса алертов. Голый вызов здесь ронял весь сервер
+  // (`ENOTDIR` на старте), и клиент терял все 38 tools из-за каталога, без
+  // которого сервер прекрасно работает.
+  let healthStateDir = serverStateDir(cwd);
+  try {
+    ensureStateDir(healthStateDir);
+  } catch (err) {
+    console.error(`[workflow-mcp] state dir unavailable (${err.message}); running without state persistence`);
+    healthStateDir = { dir: null, mode: 'read-only' };
+  }
 
   // Версия берётся из package.json, а не из хардкода: три разных номера
   // одного сервера (package.json, CHANGELOG и это место) расходились,
@@ -188,8 +199,17 @@ async function main() {
     if (!subscribedUris.has(uri)) {
       return;
     }
+    // `sendResourceUpdated` асинхронен: без транспорта он отвергает промис
+    // (`Not connected`), а синхронный `try/catch` этого не видит — Node падал
+    // бы на unhandledRejection. Окно реально: наблюдатели переживают
+    // `server.close()` в `shutdown`.
     try {
-      server.server.sendResourceUpdated({ uri });
+      const sent = server.server.sendResourceUpdated({ uri });
+      if (sent && typeof sent.catch === 'function') {
+        sent.catch((err) => {
+          console.error(`Failed to send resource update notification for ${uri}:`, err.message);
+        });
+      }
     } catch (err) {
       console.error(`Failed to send resource update notification for ${uri}:`, err.message);
     }
@@ -318,8 +338,10 @@ async function main() {
      */
   async function registerWorkflowResources() {
     try {
-      const stateDir = serverStateDir(mcpCwd());
-      ensureStateDir(stateDir);
+      // Тот же каталог, что у службы здоровья: второй вызов `serverStateDir`
+      // мог дать другой ответ (он читает конфиг заново) и увести ресурс
+      // алертов от файла, в который пишет publisher.
+      const stateDir = healthStateDir;
 
       // Set notification handler for alerts and human-queue
       const notificationHandler = sendResourceUpdated;
@@ -582,17 +604,25 @@ async function main() {
   // было только имя. Сами детекторы, дедуп и ресурс `workflow://alerts` были
   // написаны, но не связаны ничем, поэтому список алертов всегда был пуст.
   // Список проектов передаётся функцией: discovery пересобирает его на лету.
-  const healthService = createHealthService({
-    cwd,
-    projects: () => discoveredProjects,
-    stateDir: healthStateDir,
-    onAlert: (alert) => {
-      resources.notify_workflow_alerts(alert);
-      console.error(`[health] ${alert.severity ?? 'warning'} ${alert.type} in ${alert.project}: ${alert.message ?? ''}`);
+  let healthService = null;
+  try {
+    healthService = createHealthService({
+      cwd,
+      projects: () => discoveredProjects,
+      stateDir: healthStateDir,
+      onAlert: (alert) => {
+        resources.notify_workflow_alerts(alert);
+        console.error(`[health] ${alert.severity ?? 'warning'} ${alert.type} in ${alert.project}: ${alert.message ?? ''}`);
+      }
+    });
+    if (!healthService.start()) {
+      console.error('[health] detectors disabled by config (health.enabled: false)');
     }
-  });
-  if (!healthService.start()) {
-    console.error('[health] detectors disabled by config (health.enabled: false)');
+  } catch (err) {
+    // Мониторинг — не условие работы сервера: tools и ресурсы должны остаться
+    // доступны, даже если служба не поднялась.
+    console.error('[health] service failed to start:', err.message);
+    healthService = null;
   }
 
   // Handle graceful shutdown
@@ -601,7 +631,9 @@ async function main() {
     if (humanQueueWatcher) {
       humanQueueWatcher.stop();
     }
-    healthService.stop();
+    if (healthService) {
+      healthService.stop();
+    }
     // Stop pipeline log watchers
     for (const projectName of pipelineLogWatchers.keys()) {
       try {

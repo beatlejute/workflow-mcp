@@ -89,8 +89,9 @@ export function detectStuck(projectPath, thresholds) {
     timeoutSec = getStageTimeout(projectPath, runningStep.stage);
   } catch (error) {
     if (error.message === 'STAGE_NOT_FOUND') {
-      // Stage not found - return null + warning
-      console.error(`Warning: Stage "${runningStep.stage}" not found in pipeline.yaml`);
+      // Расхождение лога с `pipeline.yaml` — состояние, а не событие: пока оно
+      // держится, детектор попадает сюда каждый тик. Печать в stderr на каждом
+      // тике засоряет лог клиента, а поправить это сообщение всё равно нельзя.
       return null;
     }
     // Other errors - return null

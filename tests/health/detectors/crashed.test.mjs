@@ -117,14 +117,11 @@ describe('detectCrashed (tests/health/detectors/crashed.test.mjs)', () => {
       expect(detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 })).toBeNull();
     });
 
-    it('should return null when logs directory cannot be read', () => {
-      writeRunnerLock(projectPath, DEAD_PID);
-      killPid();
-      // Lock прочитан, а каталога уже нет — гонка с уборкой рабочей папки.
-      fs.rmSync(logsDir, { recursive: true, force: true });
-
-      expect(detectCrashed(projectPath, { crash_mtime_freshness_sec: 60 })).toBeNull();
-    });
+    // Случая «каталог логов не читается» здесь нет намеренно: lock лежит в том
+    // же каталоге, поэтому его исчезновение означает исчезновение lock'а, и
+    // детектор выходит раньше — на `!lock`. Прежний вариант этого теста
+    // выглядел проверкой `catch` вокруг `readdirSync`, а на деле не доходил
+    // до него ни разу.
   });
 
   describe('Configuration handling', () => {
