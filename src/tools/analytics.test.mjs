@@ -335,6 +335,29 @@ describe('get_ticket_stats tool tests', () => {
     expect(result.by_type.SOME_UNKNOWN).toBeUndefined();
   });
 
+  test('by_type узнаёт типы, записанные строчными — так их и пишут в тикетах', async () => {
+    // Фикстура выше писала типы прописными, а настоящие тикеты — строчными
+    // (`type: impl`). Буквальное сравнение со списком известных типов
+    // отправляло в OTHER вообще всё: в рабочей области documentaions ответ
+    // выглядел как «16 тикетов неизвестного типа» при шести human, восьми
+    // admin и двух impl.
+    const proj = createTempProject('stats-by-type-lowercase');
+    const ticketsDir = path.join(proj, '.workflow/tickets');
+
+    createTempTicket(path.join(ticketsDir, 'ready'), 'IMPL-2', { status: 'ready', type: 'impl' });
+    createTempTicket(path.join(ticketsDir, 'ready'), 'HUMAN-2', { status: 'ready', type: 'human' });
+    createTempTicket(path.join(ticketsDir, 'ready'), 'ADMIN-2', { status: 'ready', type: 'admin' });
+    createTempTicket(path.join(ticketsDir, 'ready'), 'GML-2', { status: 'ready', type: 'gml' });
+
+    const result = await get_ticket_stats.execute({ project: proj, window_days: 30 });
+
+    expect(result.by_type.IMPL).toBe(1);
+    expect(result.by_type.HUMAN).toBe(1);
+    expect(result.by_type.ADMIN).toBe(1);
+    // Собственный тип проекта известным не становится.
+    expect(result.by_type.OTHER).toBe(1);
+  });
+
   test('blocked_top ≤ 10, сорт по age DESC', async () => {
     const proj = createTempProject('stats-blocked-top');
     const ticketsDir = path.join(proj, '.workflow/tickets');

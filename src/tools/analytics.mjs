@@ -171,12 +171,19 @@ export const get_ticket_stats = {
       by_status[status] = count;
     }
 
-    // Normalize by_type: map invalid types to OTHER
+    // Normalize by_type: map invalid types to OTHER.
+    //
+    // Сравнение регистронезависимое: в тикетах поле пишется строчными
+    // (`type: impl`), а список известных типов — прописными. Буквальное
+    // сравнение отправляло в `OTHER` вообще всё, и ответ выглядел как
+    // «16 тикетов неизвестного типа» на проекте, где шесть из них human,
+    // восемь admin и два impl.
     const by_type = {};
     const validTypes = ['IMPL', 'QA', 'DOCS', 'ARCH', 'FIX', 'REVIEW', 'ADMIN', 'HUMAN', 'RSH'];
     for (const [type, count] of Object.entries(result.by_type)) {
-      if (validTypes.includes(type)) {
-        by_type[type] = (by_type[type] || 0) + count;
+      const upper = typeof type === 'string' ? type.toUpperCase() : '';
+      if (validTypes.includes(upper)) {
+        by_type[upper] = (by_type[upper] || 0) + count;
       } else {
         by_type.OTHER = (by_type.OTHER || 0) + count;
       }
