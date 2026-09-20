@@ -2,32 +2,56 @@ import { execSync } from 'node:child_process';
 import process from 'node:process';
 
 /**
- * Check if a process is alive.
+ * Что известно про процесс с этим номером.
  *
- * Platform-specific implementation:
- * - POSIX: uses process.kill(pid, 0) - no signal sent, just availability check
- * - Windows: uses tasklist /FI "PID eq <n>" /NH with 2-second timeout
+ * Три ответа, а не два. `unknown` — это «спросить не удалось»: на Windows
+ * `tasklist` не нашёлся в PATH, упал или не уложился в таймаут; на POSIX
+ * `kill(pid, 0)` вернул ошибку, которая не значит «процесса нет».
  *
- * @param {number} pid - Process ID to check
- * @returns {boolean} true if process is alive, false if not
+ * Разница между `dead` и `unknown` дорогая. По `dead` сервер снимает
+ * `.pipeline.lock` и разрешает новый запуск: ошибиться тут — значит поставить
+ * второй пайплайн поверх живого и отнять у идущего его lock. Поэтому всё, что
+ * не доказано мёртвым, считается живым, а `start_pipeline` отдаёт решение
+ * человеку.
+ *
+ * - POSIX: `process.kill(pid, 0)`; `ESRCH` — мёртв, `EPERM` — жив (процесс
+ *   есть, просто не наш), остальное — `unknown`.
+ * - Windows: `tasklist /FI "PID eq <n>" /NH /FO CSV` с таймаутом 5 секунд;
+ *   при сбое утилиты — второе мнение через `kill(pid, 0)`, и только если и оно
+ *   не даёт ответа — `unknown`.
+ *
+ * @param {number} pid
+ * @returns {'alive'|'dead'|'unknown'}
  */
-export function isProcessAlive(pid) {
+export function probeProcess(pid) {
   if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
+    return 'dead';
   }
 
   const cached = recentChecks.get(pid);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-    return cached.alive;
+    return cached.state;
   }
 
-  // Platform-specific check
-  const alive = process.platform === 'win32'
-    ? isProcessAliveWindows(pid)
-    : isProcessAlivePosix(pid);
+  const state = process.platform === 'win32'
+    ? probeProcessWindows(pid)
+    : probeProcessPosix(pid);
 
-  rememberCheck(pid, alive);
-  return alive;
+  rememberCheck(pid, state);
+  return state;
+}
+
+/**
+ * Жив ли процесс с этим номером.
+ *
+ * `unknown` считается живым: см. `probeProcess` — цена ошибки в сторону
+ * «мёртв» несимметрично выше.
+ *
+ * @param {number} pid - Process ID to check
+ * @returns {boolean}
+ */
+export function isProcessAlive(pid) {
+  return probeProcess(pid) !== 'dead';
 }
 
 /**
@@ -42,9 +66,9 @@ export function isProcessAlive(pid) {
 const CACHE_TTL_MS = 1000;
 const recentChecks = new Map();
 
-function rememberCheck(pid, alive) {
+function rememberCheck(pid, state) {
   const now = Date.now();
-  recentChecks.set(pid, { alive, at: now });
+  recentChecks.set(pid, { state, at: now });
   // Карта не должна расти вечно: pid'ы мёртвых прогонов накапливаются.
   if (recentChecks.size > 64) {
     for (const [key, value] of recentChecks) {
@@ -56,38 +80,53 @@ function rememberCheck(pid, alive) {
 }
 
 /** Забыть ответы. Нужно тестам, которые проверяют настоящую ветку платформы. */
+/**
+ * Забыть ответ про один номер.
+ *
+ * Нужно тому, кто сам изменил положение дел: после `taskkill` память ещё
+ * секунду отвечала бы «жив», а уведомление о смене состояния уходит клиенту
+ * через 200 мс.
+ *
+ * @param {number} pid
+ */
+export function forgetProcessAlive(pid) {
+  recentChecks.delete(pid);
+}
+
 export function clearProcessAliveCache() {
   recentChecks.clear();
 }
 
 /**
- * POSIX implementation using process.kill(pid, 0)
+ * `process.kill(pid, 0)`: сигнал не посылается, проверяется доступность.
  * @param {number} pid - Process ID
- * @returns {boolean}
+ * @returns {'alive'|'dead'|'unknown'}
  */
-function isProcessAlivePosix(pid) {
+function probeProcessPosix(pid) {
   try {
-    // Signal 0 means: check if we can send a signal to this process
-    // If process doesn't exist, throws with code ESRCH
     process.kill(pid, 0);
-    return true;
+    return 'alive';
   } catch (error) {
-    // ESRCH = no such process
-    // EPERM = permission denied (process exists but we can't signal it)
+    // ESRCH — процесса нет.
     if (error.code === 'ESRCH') {
-      return false;
+      return 'dead';
     }
-    // For EPERM or other errors, assume process exists
-    return true;
+    // EPERM — процесс есть, просто не наш: чужой пользователь, служба,
+    // процесс с большими правами.
+    if (error.code === 'EPERM') {
+      return 'alive';
+    }
+    return 'unknown';
   }
 }
 
 /**
- * Windows implementation using tasklist command
+ * Windows: `tasklist`. Отвечает и про чужие процессы, в отличие от
+ * `kill(pid, 0)`, который на них даёт `EPERM`.
  * @param {number} pid - Process ID
- * @returns {boolean}
+ * @returns {'alive'|'dead'|'unknown'}
  */
-function isProcessAliveWindows(pid) {
+function probeProcessWindows(pid) {
   try {
     // tasklist /FI "PID eq <n>" /NH /FO CSV
     // Живой процесс: "node.exe","1234","Console","1","12 345 КБ"
@@ -108,12 +147,17 @@ function isProcessAliveWindows(pid) {
     for (const line of output.split('\n')) {
       const fields = line.trim().split('","');
       if (fields.length >= 2 && fields[1] === String(pid)) {
-        return true;
+        return 'alive';
       }
     }
-    return false;
+    return 'dead';
   } catch (error) {
-    // Timeout or command error - assume process doesn't exist
-    return false;
+    // Утилита не нашлась, упала или не уложилась в таймаут. Прежде это
+    // читалось как «процесса нет», и `start_pipeline` снимал lock живого
+    // раннера — достаточно было занятой машины или пустого PATH у хоста MCP.
+    // Второе мнение дешёвое: `kill(pid, 0)` про свои процессы отвечает точно,
+    // про чужие даёт `EPERM` — тоже ответ.
+    const fallback = probeProcessPosix(pid);
+    return fallback === 'dead' ? 'unknown' : fallback;
   }
 }

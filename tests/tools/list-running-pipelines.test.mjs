@@ -23,6 +23,7 @@ import { mcpInstanceId, legacyMcpInstanceId } from '../../src/lib/project-root.m
 import { writeAbortState, abortStatePath, ABORT_STATE_TTL_MS } from '../../src/process/abort-state.mjs';
 import { writeKillOutcome } from '../../src/process/kill-outcome.mjs';
 import * as pidCheck from '../../src/health/pid-check.mjs';
+import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
 
 let workspace;
 let prevMcpCwd;
@@ -101,6 +102,9 @@ async function snapshotOne() {
 }
 
 beforeEach(() => {
+  // Память живости общая на весь процесс, а Windows охотно переиспользует
+  // номера: ответ про жертву прошлого теста иначе достаётся следующей.
+  clearProcessAliveCache();
   workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'list-running-'));
   prevMcpCwd = process.env.MCP_CWD;
   process.env.MCP_CWD = workspace;

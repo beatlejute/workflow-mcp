@@ -15,6 +15,7 @@ import { spawn } from 'child_process';
 import { start_pipeline } from '../../src/tools/pipeline.mjs';
 import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 import * as pidCheck from '../../src/health/pid-check.mjs';
+import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -89,6 +90,9 @@ describe('start_pipeline', () => {
   let originalBin;
 
   beforeEach(() => {
+    // Память живости общая на весь процесс, а Windows охотно переиспользует
+    // номера: ответ про жертву прошлого теста иначе достаётся следующей.
+    clearProcessAliveCache();
     originalCwd = process.cwd();
     originalBin = process.env.WORKFLOW_AI_BIN;
     workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'start-pipeline-'));

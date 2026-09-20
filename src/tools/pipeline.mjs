@@ -5,7 +5,7 @@ import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs'
 import { writeAbortState, clearAbortState, isAbortInProgress } from '../process/abort-state.mjs';
 import { writeKillOutcome, clearKillOutcome } from '../process/kill-outcome.mjs';
 import { pidCouldBeFromRun, processStartedAtCached } from '../process/process-start.mjs';
-import { isProcessAlive } from '../health/pid-check.mjs';
+import { isProcessAlive, forgetProcessAlive } from '../health/pid-check.mjs';
 import { kill, pause, resume, abort } from '../process/control.mjs';
 import { notify_workflow_pipeline_state } from '../resources/index.mjs';
 import { get_workflow_pipeline_state } from '../resources/pipeline-state.mjs';
@@ -223,7 +223,11 @@ export const start_pipeline = {
         // отваливается по таймауту. Проверка в таком случае намеренно
         // пропускается (fail-open), и утверждать «пайплайн идёт» было бы
         // сильнее, чем мы знаем.
-        const startKnown = processStartedAtCached(lock.pid) !== null;
+        //
+        // Лишнего вызова ОС тут нет: при живом `started_at` ответ уже лежит в
+        // памяти после проверки выше. Lock без времени записи (раннер ≤ 1.5.x
+        // либо обрывок) сверять не с чем — спрашивать ОС незачем.
+        const startKnown = lock.started_at !== null && processStartedAtCached(lock.pid) !== null;
         return {
           ok: false,
           code: 'ALREADY_RUNNING',
@@ -727,6 +731,11 @@ export const resume_pipeline = {
       runId: runner.lock?.run_id ?? null,
       by: 'stop_pipeline'
     });
+
+    // Память о живости держится секунду, а уведомление о смене состояния
+    // уходит через 200 мс: клиент успел бы перечитать снимок и увидеть
+    // `running` у только что убитого прогона. Забываем ответ про этот номер.
+    forgetProcessAlive(pid);
 
     // Success: send notification to pipeline-state resource
     try {

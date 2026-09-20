@@ -154,17 +154,34 @@ export async function abort(pid, options = {}) {
     if (verdict === false) return { escalate: false, reason: 'OWNERSHIP_LOST' };
     return { escalate: verdict.escalate !== false, reason: verdict.reason };
   };
-  const escalationRefused = (verdict) => (
-    verdict.reason === 'RUNNER_GONE'
-      ? { ok: true, pid, state: 'aborted', duration_ms: clampedGraceSec * 1000, escalated: false }
-      : {
-          ok: false,
-          code: 'OWNERSHIP_LOST',
-          pid,
-          reason: verdict.reason,
-          hint: `Process ${pid} is no longer the pipeline runner; not escalating to a forced kill`
-        }
-  );
+  const escalationRefused = (verdict) => {
+    // Раннер вышел сам за grace-окно — штатный исход.
+    if (verdict.reason === 'RUNNER_GONE') {
+      return { ok: true, pid, state: 'aborted', duration_ms: clampedGraceSec * 1000, escalated: false };
+    }
+    // Номер занял посторонний процесс. Тот же код и та же подсказка, что у
+    // остальных операций: «удалите lock, не повторяйте с force». Прежде здесь
+    // отвечал общий `OWNERSHIP_LOST` — «пайплайн больше не ваш», — и совет
+    // расходился с тем, что говорят `stop`, `pause` и `resume` про ровно это
+    // же положение дел.
+    if (verdict.reason === 'PID_REUSED') {
+      return {
+        ok: false,
+        code: 'STALE_PIPELINE_LOCK',
+        pid,
+        reason: verdict.reason,
+        hint: 'The recorded runner is gone and its pid now belongs to another process. '
+          + 'Remove .workflow/logs/.pipeline.lock; do not retry with force — that would kill the unrelated process.'
+      };
+    }
+    return {
+      ok: false,
+      code: 'OWNERSHIP_LOST',
+      pid,
+      reason: verdict.reason,
+      hint: `Process ${pid} is no longer the pipeline runner; not escalating to a forced kill`
+    };
+  };
 
   if (process.platform === 'win32') {
     // First attempt: graceful taskkill (without /F)

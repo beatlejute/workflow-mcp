@@ -26,6 +26,7 @@ import {
   abortPipelineImpl
 } from '../../src/tools/pipeline.mjs';
 import { writeRunnerLock } from '../helpers/pipeline-lock.mjs';
+import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
 
 const ANCIENT = '2020-01-01T00:00:00.000Z';
 
@@ -47,6 +48,9 @@ function stalelock(pid, extra = {}) {
 }
 
 beforeEach(async () => {
+  // Память живости общая на весь процесс, а Windows охотно переиспользует
+  // номера: ответ про жертву прошлого теста иначе достаётся следующей.
+  clearProcessAliveCache();
   workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pid-reuse-')));
   projectRoot = path.join(workspace, 'proj');
   fs.mkdirSync(path.join(projectRoot, '.workflow', 'logs'), { recursive: true });

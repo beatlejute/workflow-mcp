@@ -22,6 +22,7 @@ import * as control from '../../src/process/control.mjs';
 import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 import { isAbortInProgress } from '../../src/process/abort-state.mjs';
 import { readKillOutcome } from '../../src/process/kill-outcome.mjs';
+import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
 
 let workspace;
 let projectRoot;
@@ -70,6 +71,9 @@ async function currentState() {
 }
 
 beforeEach(async () => {
+  // Память живости общая на весь процесс, а Windows охотно переиспользует
+  // номера: ответ про жертву прошлого теста иначе достаётся следующей.
+  clearProcessAliveCache();
   workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'abort-state-view-'));
   prevMcpCwd = process.env.MCP_CWD;
   process.env.MCP_CWD = workspace;

@@ -12,6 +12,7 @@ import { spawn } from 'child_process';
 import process from 'process';
 import { stopPipelineImpl } from '../../src/tools/pipeline.mjs';
 import { writeRunnerLock, writeBrokenLock } from '../helpers/pipeline-lock.mjs';
+import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,6 +27,9 @@ describe('stop_pipeline tool', () => {
   let originalMcpCwd;
 
   beforeEach(() => {
+    // Память живости общая на весь процесс, а Windows охотно переиспользует
+    // номера: ответ про жертву прошлого теста иначе достаётся следующей.
+    clearProcessAliveCache();
     // Save original working directory
     originalCwd = process.cwd();
 
