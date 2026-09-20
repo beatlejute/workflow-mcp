@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] — 2026-09-20
+
+### Fixed
+
+- **Статус тикета берётся из каталога, а не из frontmatter.** Поле `status` внутри тикета пишут скилы и раннер, и оно остаётся тем, чем было в момент последней записи; статус на доске меняет перенос файла между каталогами. Два читателя брали статус из frontmatter и расходились со всеми остальными:
+
+  - `get_project_status` — счётчики доски и `pending_human`. В рабочей области PulseProxy это давало `6/8/5/4/9` при одном-единственном тикете в `done/` и пустых остальных каталогах; два human-тикета из `archive/` числились ожидающими человека, хотя `list_human_queue` рядом честно показывал их `archive`. Расхождение между двумя инструментами и было первым видимым симптомом.
+  - `analytics/aggregate.mjs` — `get_ticket_stats`, `get_velocity`, `get_cycle_time` и `blocked_top`.
+
+  `list_tickets`, `get_ticket` и `list_human_queue` всегда брали статус из каталога — их ответы не меняются.
+
+- **Файл без frontmatter больше не считается тикетом.** Прежде такой обрывок отсекало требование `status: done` во frontmatter; после перехода на каталог понадобилась своя отсечка — по наличию `id`.
+
+### Tests
+
+- `tests/tools/ticket-status-from-directory.test.mjs` (новый, 11 проверок): счётчики доски, `pending_human`, согласие с `list_human_queue`, `by_status`, `blocked_top`, velocity, cycle time — везде каталог против расходящегося frontmatter; архив не попадает ни в счётчики, ни в аналитику; файл без frontmatter пропускается.
+- Фикстуры `aggregate.test.mjs` переехали: заблокированные тикеты лежат в `blocked/`, а не в `in-progress/` с `status: blocked` во frontmatter. Прежние фикстуры воспроизводили ровно то поведение, которое оказалось дефектом.
+
+Саботаж на наборе из 89 проверок: вернуть frontmatter в счётчики доски — 5 падений, в velocity — 2, в `by_status` — 1, в `blocked_top` — 1, добавить `archive` в обход аналитики — 1, снять фильтр статусов в `pending_human` — 2.
+
+Полный прогон: 100 файлов, 1560 passed, 0 failed.
+
 ## [3.0.0] — 2026-09-20
 
 Долг по владению запуском, накопленный за восемь кругов ревью, закрыт одним

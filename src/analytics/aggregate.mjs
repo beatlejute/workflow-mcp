@@ -8,8 +8,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Получить все тикеты проекта из .workflow/tickets.
+ *
+ * Вместе с путём возвращается статус — имя каталога, в котором лежит файл.
+ * Это единственный источник статуса: поле `status` во frontmatter живёт своей
+ * жизнью и остаётся тем, чем было в момент последней записи в тикет. Тикет,
+ * перенесённый в `done/`, продолжает носить в себе `status: in-progress`, и
+ * счёт по frontmatter врал в обе стороны.
+ *
  * @param {string} projectPath - Абсолютный путь к корню проекта
- * @returns {string[]} Массив абсолютных путей к файлам тикетов
+ * @returns {Array<{path: string, status: string}>}
  */
 function getTicketFiles(projectPath) {
   const ticketsDir = path.join(projectPath, '.workflow', 'tickets');
@@ -25,7 +32,7 @@ function getTicketFiles(projectPath) {
     if (fs.existsSync(statusDir)) {
       const files = fs.readdirSync(statusDir).filter(f => isWorkflowDoc(f));
       for (const file of files) {
-        ticketFiles.push(path.join(statusDir, file));
+        ticketFiles.push({ path: path.join(statusDir, file), status });
       }
     }
   }
@@ -37,10 +44,11 @@ function getTicketFiles(projectPath) {
  * Проверить, что тикет в статусе done и в пределах временного окна.
  * @param {object} fm - frontmatter тикета
  * @param {number} windowDays - окно в днях (null/undefined = все времени)
+ * @param {string} status - статус из каталога, а не из frontmatter
  * @returns {boolean}
  */
-function isTicketInWindow(fm, windowDays) {
-  if (fm.status !== 'done') {
+function isTicketInWindow(fm, windowDays, status) {
+  if (status !== 'done') {
     return false;
   }
 
@@ -106,15 +114,23 @@ export function computeVelocity(projectPath, windowDays = null, groupBy = null) 
   let count = 0;
   const included = [];
 
-  for (const ticketPath of tickets) {
+  for (const { path: ticketPath, status } of tickets) {
     try {
       const { frontmatter } = getFrontmatter(ticketPath);
+
+      // Файл без frontmatter — не тикет: так выглядит обрывок записи или
+      // случайный `.md` в каталоге. Раньше его отсекало требование
+      // `status: done` во frontmatter; теперь статус берётся из каталога, и
+      // отсечка нужна своя.
+      if (!frontmatter || !frontmatter.id) {
+        continue;
+      }
 
       if (hasFutureCreatedAt(frontmatter)) {
         continue; // пропускаем edge case
       }
 
-      if (!isTicketInWindow(frontmatter, windowDays)) {
+      if (!isTicketInWindow(frontmatter, windowDays, status)) {
         continue;
       }
 
@@ -146,15 +162,19 @@ export function computeCycleTime(projectPath, windowDays = null, percentiles = [
   const tickets = getTicketFiles(projectPath);
   const cycles = [];
 
-  for (const ticketPath of tickets) {
+  for (const { path: ticketPath, status } of tickets) {
     try {
       const { frontmatter } = getFrontmatter(ticketPath);
+
+      if (!frontmatter || !frontmatter.id) {
+        continue;
+      }
 
       if (hasFutureCreatedAt(frontmatter)) {
         continue;
       }
 
-      if (!isTicketInWindow(frontmatter, windowDays)) {
+      if (!isTicketInWindow(frontmatter, windowDays, status)) {
         continue;
       }
 
@@ -255,9 +275,11 @@ export function computeStats(projectPath, windowDays = null) {
   const by_type = {};
   const blocked = [];
 
-  for (const ticketPath of tickets) {
+  for (const { path: ticketPath, status } of tickets) {
     try {
       const { frontmatter } = getFrontmatter(ticketPath);
+
+      if (!frontmatter || !frontmatter.id) continue;
 
       // Пропускаем тикеты с created_at в будущем
       if (hasFutureCreatedAt(frontmatter)) continue;
@@ -265,14 +287,13 @@ export function computeStats(projectPath, windowDays = null) {
       // Применяем фильтр по created_at, если задан windowDays
       if (windowDays != null && !isCreatedWithinWindow(frontmatter, windowDays)) continue;
 
-      const status = frontmatter.status || 'unknown';
       by_status[status] = (by_status[status] || 0) + 1;
 
       const type = frontmatter.type || 'unknown';
       by_type[type] = (by_type[type] || 0) + 1;
 
-      // blocked_top: тикеты с тегом blocked или статусом blocked
-      const isBlocked = (frontmatter.status === 'blocked') ||
+      // blocked_top: тикеты в каталоге blocked или с тегом blocked
+      const isBlocked = status === 'blocked' ||
                         (Array.isArray(frontmatter.tags) && frontmatter.tags.includes('blocked'));
       if (isBlocked && !blocked.some(b => b.id === frontmatter.id)) {
         let blockedReason = '';

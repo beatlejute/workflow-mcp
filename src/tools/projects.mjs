@@ -37,9 +37,15 @@ async function listTickets(projectPath, options = {}) {
       try {
         const { frontmatter } = frontmatterCache.getFrontmatter(filePath);
 
+        // Каталог — единственный источник статуса, и он идёт последним.
+        // Прежде frontmatter затирал его собой: поле `status` в тикете живёт
+        // своей жизнью и остаётся тем, чем было в момент последней записи.
+        // Из-за этого архив попадал в счётчики доски и в `pending_human`:
+        // в PulseProxy пять тикетов из `archive/` числились `in-progress`,
+        // а два human-тикета оттуда же — ожидающими человека.
         const ticket = {
-          status,
-          ...frontmatter
+          ...frontmatter,
+          status
         };
 
         // Фильтр по типу если указан

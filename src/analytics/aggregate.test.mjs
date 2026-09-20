@@ -49,7 +49,7 @@ function createTempProject(prefix) {
   }
   // Создать структуру .workflow/tickets с все статусами
   const ticketsDir = path.join(projDir, '.workflow', 'tickets');
-  const statuses = ['backlog', 'ready', 'in-progress', 'review', 'done'];
+  const statuses = ['backlog', 'ready', 'in-progress', 'blocked', 'review', 'done'];
   for (const st of statuses) {
     fs.mkdirSync(path.join(ticketsDir, st), { recursive: true });
   }
@@ -204,7 +204,7 @@ describe('aggregate analytics (edge cases)', () => {
       tags: ['blocked'],
       blocked_reason: 'Ждёт ревью'
     });
-    createTempTicket(path.join(proj, '.workflow', 'tickets', 'in-progress'), 'B-2', {
+    createTempTicket(path.join(proj, '.workflow', 'tickets', 'blocked'), 'B-2', {
       status: 'blocked',
       blocked_reason: 'Нет ресурсов'
     });
@@ -305,14 +305,14 @@ describe('aggregate analytics (edge cases)', () => {
     const base = Date.now();
     // Старый заблокированный тикет
     const oldDate = new Date(base - 200 * 86400000).toISOString();
-    createTempTicket(path.join(proj, '.workflow/tickets/in-progress'), 'OLD-BLOCK', {
+    createTempTicket(path.join(proj, '.workflow/tickets/blocked'), 'OLD-BLOCK', {
       status: 'blocked',
       updated_at: oldDate,
       blocked_reason: 'Очень старый'
     });
     // Новый заблокированный тикет
     const newDate = new Date(base - 1 * 86400000).toISOString();
-    createTempTicket(path.join(proj, '.workflow/tickets/in-progress'), 'NEW-BLOCK', {
+    createTempTicket(path.join(proj, '.workflow/tickets/blocked'), 'NEW-BLOCK', {
       status: 'blocked',
       updated_at: newDate,
       blocked_reason: 'Свежий'
@@ -325,7 +325,7 @@ describe('aggregate analytics (edge cases)', () => {
 
   test('computeStats: обрабатывает тикеты без created_at и updated_at', () => {
     const proj = createTempProject('no-dates');
-    createTempTicket(path.join(proj, '.workflow/tickets/in-progress'), 'NO-DATES', {
+    createTempTicket(path.join(proj, '.workflow/tickets/blocked'), 'NO-DATES', {
       status: 'blocked',
       created_at: undefined,
       updated_at: undefined,
@@ -338,7 +338,7 @@ describe('aggregate analytics (edge cases)', () => {
 
   test('computeStats: читает blocked_reason из event последнего', () => {
     const proj = createTempProject('events-reason');
-    createTempTicket(path.join(proj, '.workflow/tickets/in-progress'), 'EVENT-BLOCK', {
+    createTempTicket(path.join(proj, '.workflow/tickets/blocked'), 'EVENT-BLOCK', {
       status: 'blocked',
       events: [
         { message: 'First event' },
@@ -367,7 +367,7 @@ describe('aggregate analytics (edge cases)', () => {
     const proj = createTempProject('many-blocked');
     // Создаём 15 заблокированных тикетов
     for (let i = 1; i <= 15; i++) {
-      createTempTicket(path.join(proj, '.workflow/tickets/in-progress'), `BLOCKED-${i}`, {
+      createTempTicket(path.join(proj, '.workflow/tickets/blocked'), `BLOCKED-${i}`, {
         status: 'blocked',
         blocked_reason: `Reason ${i}`
       });
