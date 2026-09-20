@@ -8,6 +8,8 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import * as resources from '../../src/resources/index.mjs';
+import * as stuck from '../../src/health/detectors/stuck.mjs';
+import { serverStateDir } from '../../src/paths/state-dir.mjs';
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -74,6 +76,9 @@ describe('Alerts MCP Resources', () => {
     });
 
     afterEach(() => {
+      vi.restoreAllMocks();
+      const stateDir = serverStateDir(workspace);
+      if (stateDir.dir) fs.rmSync(stateDir.dir, { recursive: true, force: true });
       if (prevMcpCwd === undefined) delete process.env.MCP_CWD;
       else process.env.MCP_CWD = prevMcpCwd;
       fs.rmSync(workspace, { recursive: true, force: true });
@@ -140,29 +145,28 @@ describe('Alerts MCP Resources', () => {
     });
 
     it('история публикаций на ответ не влияет', async () => {
-      // Файл истории лежит рядом и полон записей — ресурс на него не смотрит.
-      const root = makeProject();
-      const stateDir = createTestStateDir();
-      try {
-        createAlertsHistoryFile(stateDir, [
-          {
-            type: 'stuck',
-            project: 'proj',
-            severity: 'critical',
-            detected_at: new Date().toISOString(),
-            fingerprint: 'stuck:proj:execute-task:run-1',
-            _fingerprint: 'deadbeef',
-            _published_at: new Date().toISOString()
-          }
-        ]);
+      // История кладётся ровно туда, откуда её читала прежняя реализация, —
+      // в каталог состояния этой рабочей области. Иначе тест тавтологичен:
+      // до временного каталога у ресурса пути нет в любом случае.
+      makeProject();
+      const stateDir = serverStateDir(workspace);
+      fs.mkdirSync(stateDir.dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(stateDir.dir, 'alerts-history.jsonl'),
+        JSON.stringify({
+          type: 'stuck',
+          project: 'proj',
+          severity: 'critical',
+          detected_at: new Date().toISOString(),
+          fingerprint: 'stuck:proj:execute-task:run-1',
+          _fingerprint: 'deadbeef',
+          _published_at: new Date().toISOString()
+        }) + '\n',
+        'utf8'
+      );
 
-        expect(await readAlerts()).toEqual([]);
-
-        makeCrashedRun(root);
-        expect((await readAlerts()).map((alert) => alert.type)).toEqual(['crashed']);
-      } finally {
-        cleanupTestStateDir(stateDir);
-      }
+      // Записи свежие и прошли бы фильтр «за сутки» прежней реализации.
+      expect(await readAlerts()).toEqual([]);
     });
 
     it('алерты по нескольким проектам отсортированы по detected_at, свежие первыми', async () => {
@@ -178,15 +182,19 @@ describe('Alerts MCP Resources', () => {
       expect(times[0]).toBeGreaterThanOrEqual(times[1]);
     });
 
-    it('поломка одного детектора не отменяет остальные', async () => {
-      // Битый lock ломает чтение прогона, но остальные детекторы по проекту
-      // отрабатывают: ответ остаётся валидным JSON.
+    it('бросивший детектор не отменяет остальные и не роняет ответ', async () => {
+      // Битый lock детекторы разбирают сами и не бросают — поэтому детектор
+      // здесь ломается по-настоящему.
       const root = makeProject();
-      fs.writeFileSync(path.join(root, '.workflow', 'logs', '.pipeline.lock'), '{ это не json');
+      makeCrashedRun(root);
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(stuck, 'detectStuck').mockImplementation(() => {
+        throw new Error('детектор сломался');
+      });
 
       const alerts = await readAlerts();
 
-      expect(Array.isArray(alerts)).toBe(true);
+      expect(alerts.map((alert) => alert.type)).toEqual(['crashed']);
     });
 
     it('каталог без .workflow в обход не попадает', async () => {

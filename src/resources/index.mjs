@@ -10,6 +10,7 @@ import { discoverProjects, readConfig } from '../discovery.mjs';
 import { parseFrontmatter } from 'workflow-ai/lib/utils.mjs';
 import { workflowAiPath } from '../lib/workflow-ai.mjs';
 import { mcpCwd } from '../lib/project-root.mjs';
+import { sweepProjects } from '../health/sweep.mjs';
 import { isWorkflowDoc } from '../lib/workflow-docs.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -334,7 +335,6 @@ export async function get_workflow_template(templateType) {
 export async function get_workflow_alerts(cwd = mcpCwd()) {
   try {
     const absoluteCwd = path.resolve(cwd);
-    const { sweepProjects } = await import('../health/sweep.mjs');
     const alerts = sweepProjects(absoluteCwd, discoverProjects(absoluteCwd));
     return { uri: 'workflow://alerts', mimeType: 'application/json', text: JSON.stringify(alerts, null, 2) };
   } catch (error) { throw new Error(`Failed to get alerts: ${error.message}`); }
