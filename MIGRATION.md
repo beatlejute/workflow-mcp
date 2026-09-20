@@ -161,7 +161,7 @@ const pipelines = await client.callTool('list_running_pipelines', {});
 //   {
 //     project: "MyProject",
 //     pid: 12345,
-//     state: "running",  // running|paused|aborting|killed|completed
+//     state: "running",  // running|paused|aborting|killed|stale
 //     current_stage: "test",
 //     step_number: 42,
 //     awaiting_approval: { step_id: "step-142", since: "..." },

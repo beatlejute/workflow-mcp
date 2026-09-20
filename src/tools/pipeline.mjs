@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 import { removeMarker, writeMarker } from '../process/marker.mjs';
 import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
 import { writeAbortState, clearAbortState, isAbortInProgress } from '../process/abort-state.mjs';
+import { writeKillOutcome, clearKillOutcome } from '../process/kill-outcome.mjs';
 import { pidCouldBeFromRun } from '../process/process-start.mjs';
 import { kill, pause, resume, abort } from '../process/control.mjs';
 import { notify_workflow_pipeline_state } from '../resources/index.mjs';
@@ -233,6 +234,10 @@ export const start_pipeline = {
     // живёт одну сессию клиента, а detached-раннер — часами, поэтому привязка к
     // `process.pid` делала бы свой же пайплайн чужим после каждого рестарта.
     writeMarker(projectRoot, { pid: child.pid, run_id: null, started_at });
+
+    // Исход прошлой остановки к новому прогону отношения не имеет. Сверка по
+    // pid и `run_id` его и так отсекает, но файл иначе лежал бы вечно.
+    clearKillOutcome(projectRoot);
 
     const logName = await waitForNewLog(logsDir, before);
     if (!logName) {
@@ -619,6 +624,16 @@ export const resume_pipeline = {
       return killResult;
     }
 
+    // Кто убил — тот и знает исход. Раннер после `taskkill /F` ничего не
+    // пишет и lock за собой не снимает, поэтому без этой записи снимок
+    // показывал бы `stale`: «lock есть, процесса нет, чем кончилось —
+    // неизвестно».
+    writeKillOutcome(projectRoot, {
+      pid,
+      runId: runner.lock?.run_id ?? null,
+      by: 'stop_pipeline'
+    });
+
     // Remove marker after successful kill
     try {
       removeMarker(projectRoot);
@@ -723,7 +738,9 @@ export async function abortPipelineImpl(project, options = {}) {
   }
 
   // Execute graceful abort using process/control.abort
-  const abortResult = await abort(pid, {
+  let abortResult;
+  try {
+    abortResult = await abort(pid, {
       grace_sec: clampedGraceSec,
       // Перед жёстким сигналом снова смотрим на живое состояние, а не на
       // сохранённый lock: за grace-окно раннер мог выйти сам.
@@ -747,6 +764,13 @@ export async function abortPipelineImpl(project, options = {}) {
           : { escalate: false, reason: ownership.reason || 'OWNERSHIP_LOST' };
       }
     });
+  } catch (err) {
+    // Неожиданный отказ остановки не должен оставлять флаг: иначе проект
+    // числился бы `aborting` до конца TTL, а повторный abort отвечал бы
+    // `ALREADY_ABORTING` десять минут.
+    clearAbortState(projectRoot);
+    throw err;
+  }
 
   if (!abortResult.ok) {
     // Clear flag even on failure
@@ -758,6 +782,17 @@ export async function abortPipelineImpl(project, options = {}) {
       // ignore
     }
     return abortResult;
+  }
+
+  // Запись делается только при эскалации: раннер, вышедший по мягкому сигналу
+  // сам, успевает снять lock, и проект из снимка просто исчезает — писать про
+  // него `killed` было бы неправдой.
+  if (abortResult.escalated) {
+    writeKillOutcome(projectRoot, {
+      pid,
+      runId: runner.lock?.run_id ?? null,
+      by: 'abort_pipeline'
+    });
   }
 
   // Remove marker after grace period completes

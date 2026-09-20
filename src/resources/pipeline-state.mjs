@@ -4,6 +4,7 @@ import { discoverProjects } from '../discovery.mjs';
 import { mcpInstanceId as getMcpInstanceId } from '../lib/project-root.mjs';
 import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
 import { readAbortState } from '../process/abort-state.mjs';
+import { killedThisRun } from '../process/kill-outcome.mjs';
 import { parsePipelineLog } from '../parsers/pipeline-log.mjs';
 
 /**
@@ -44,7 +45,10 @@ function getPausedState(projectRoot, pid) {
 function isAbortingRun(projectRoot, lock) {
   const state = readAbortState(projectRoot);
   if (!state || !lock) return false;
-  if (state.runner_pid !== null && state.runner_pid !== lock.pid) return false;
+  // Флаг без pid раннера — формат до 1.5.0 либо испорченное поле. Такой
+  // подходит к любому прогону, поэтому не подходит ни к какому: иначе
+  // забытый файл десять минут держал бы следующий запуск в `aborting`.
+  if (state.runner_pid === null || state.runner_pid !== lock.pid) return false;
   if (state.run_id && lock.run_id && state.run_id !== lock.run_id) return false;
   return true;
 }
@@ -73,14 +77,17 @@ function getAwaitingApproval(projectRoot) {
 /**
  * Determine pipeline state.
  */
-function determinePipelineState({ pidAlive, paused, aborting, logAgeMs, logHasExitCode, logExitCode }) {
+function determinePipelineState({ pidAlive, paused, aborting, killed }) {
   // Остановка важнее паузы: приостановленный пайплайн, которому уже послали
   // сигнал, для клиента прежде всего останавливается.
   if (aborting) return 'aborting';
   if (paused) return 'paused';
   if (pidAlive) return 'running';
-  if (logHasExitCode) return logExitCode === 0 ? 'completed' : 'killed';
-  return logAgeMs < 30000 ? 'running' : 'completed';
+  // Дальше — только мёртвый pid при живом lock'е. Раннер снимает lock при
+  // любом упорядоченном выходе, так что сюда попадает лишь тот, кого убили
+  // без шанса прибраться. Если убивали мы — знаем, что это `killed`; если
+  // нет — честнее сказать `stale`, чем гадать.
+  return killed ? 'killed' : 'stale';
 }
 
 /**
@@ -135,34 +142,6 @@ function getRunInfo(projectRoot) {
   }
 }
 
-/**
- * Get log exit info from latest pipeline log.
- * @param {string} projectRoot
- * @returns {{ageMs: number, hasExitCode: boolean, exitCode: number|null}}
- */
-function getLogExitInfo(projectRoot) {
-  const logsDir = path.join(projectRoot, '.workflow', 'logs');
-  if (!fs.existsSync(logsDir)) return { ageMs: Infinity, hasExitCode: false, exitCode: null };
-  try {
-    const files = fs.readdirSync(logsDir)
-      .filter(f => f.startsWith('pipeline_') && f.endsWith('.log'))
-      .map(f => ({ name: f, mtime: fs.statSync(path.join(logsDir, f)).mtime.getTime() }))
-      .sort((a, b) => b.mtime - a.mtime);
-    if (files.length === 0) return { ageMs: Infinity, hasExitCode: false, exitCode: null };
-    const latest = files[0];
-    const logPath = path.join(logsDir, latest.name);
-    const content = fs.readFileSync(logPath, 'utf-8');
-    for (const line of content.split('\n').reverse()) {
-      if (line.includes('[exit]')) {
-        const m = line.match(/code=(\d+)/);
-        if (m) return { ageMs: Date.now() - latest.mtime, hasExitCode: true, exitCode: parseInt(m[1], 10) };
-      }
-    }
-    return { ageMs: Date.now() - latest.mtime, hasExitCode: false, exitCode: null };
-  } catch {
-    return { ageMs: Infinity, hasExitCode: false, exitCode: null };
-  }
-}
 
 /**
  * Build snapshot of running pipelines for all projects.
@@ -193,31 +172,18 @@ export function get_workflow_pipeline_state(absoluteCwd) {
     const pidAlive = isProcessAlive(pid);
     const paused = getPausedState(projectRoot, pid);
     const aborting = isAbortingRun(projectRoot, lock);
-    const { ageMs: logAgeMs, hasExitCode: logHasExitCode, exitCode: logExitCode } = getLogExitInfo(projectRoot);
+    const killed = !pidAlive && killedThisRun(projectRoot, lock);
     const awaiting = getAwaitingApproval(projectRoot);
     const { runId, currentStage, stepNumber } = getRunInfo(projectRoot);
 
-    let state = determinePipelineState({
-      pidAlive,
-      paused,
-      aborting,
-      logAgeMs,
-      logHasExitCode,
-      logExitCode
-    });
+    let state = determinePipelineState({ pidAlive, paused, aborting, killed });
 
     // Lock пережил процесс (kill -9, ребут, падение) — как минимум запуск не
     // идёт. Признак остаётся информационным: по нему видно, что файл надо
     // убирать руками.
     const staleLock = Boolean(lock) && !pidAlive;
 
-    // А вот состояние по нему ставится, только если о конце прогона больше
-    // сказать нечего. Раньше `stale` затирало всё подряд, включая разбор лога,
-    // и состояние `killed` не возникало никогда: мёртвый pid давал `stale`
-    // раньше, чем кто-либо смотрел на код выхода.
-    if (staleLock && !logHasExitCode) {
-      state = 'stale';
-    }
+
 
     // If there is a pending approval and pipeline is running, treat as paused
     if (awaiting && state === 'running') {

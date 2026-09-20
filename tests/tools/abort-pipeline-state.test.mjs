@@ -17,10 +17,11 @@ import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
 
-import { abortPipelineImpl, list_running_pipelines } from '../../src/tools/pipeline.mjs';
+import { abortPipelineImpl, stopPipelineImpl, list_running_pipelines } from '../../src/tools/pipeline.mjs';
 import * as control from '../../src/process/control.mjs';
 import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 import { isAbortInProgress } from '../../src/process/abort-state.mjs';
+import { readKillOutcome } from '../../src/process/kill-outcome.mjs';
 
 let workspace;
 let projectRoot;
@@ -91,6 +92,63 @@ afterEach(() => {
   if (prevMcpCwd === undefined) delete process.env.MCP_CWD;
   else process.env.MCP_CWD = prevMcpCwd;
   fs.rmSync(workspace, { recursive: true, force: true });
+});
+
+/** Дождаться, пока подопытный процесс действительно умрёт. */
+async function waitForVictimExit() {
+  await new Promise((resolve) => {
+    if (victim.exitCode !== null || victim.signalCode !== null) return resolve();
+    victim.once('exit', resolve);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+}
+
+describe('killed виден снаружи после насильственной остановки', () => {
+  it('stop_pipeline записывает исход, и снимок показывает killed', async () => {
+    // Раннер после `taskkill /F` ничего не пишет и lock за собой не снимает.
+    // Без записи того, кто убивал, снимок показывал `stale` — «lock есть,
+    // процесса нет, чем кончилось, неизвестно».
+    vi.spyOn(control, 'kill').mockImplementation(async () => {
+      victim.kill();
+      await waitForVictimExit();
+      return { ok: true };
+    });
+
+    const result = await stopPipelineImpl('proj');
+    expect(result.ok).toBe(true);
+
+    const outcome = readKillOutcome(projectRoot);
+    expect(outcome.pid).toBe(victim.pid);
+    expect(outcome.run_id).toBe(RUN_ID);
+    expect(outcome.by).toBe('stop_pipeline');
+
+    const entry = (await list_running_pipelines.execute({}))[0];
+    expect(entry.state).toBe('killed');
+    expect(entry.stale_lock).toBe(true);
+  });
+
+  it('abort с эскалацией записывает исход', async () => {
+    vi.spyOn(control, 'abort').mockImplementation(async () => {
+      victim.kill();
+      await waitForVictimExit();
+      return { ok: true, duration_ms: 10, escalated: true };
+    });
+
+    await abortPipelineImpl('proj', { grace_sec: 1 });
+
+    expect(readKillOutcome(projectRoot)?.by).toBe('abort_pipeline');
+    expect((await list_running_pipelines.execute({}))[0].state).toBe('killed');
+  });
+
+  it('abort без эскалации исхода не записывает', async () => {
+    // Раннер, вышедший по мягкому сигналу сам, успевает снять lock — проект
+    // из снимка просто исчезает. Писать про него `killed` было бы неправдой.
+    vi.spyOn(control, 'abort').mockResolvedValue({ ok: true, duration_ms: 10, escalated: false });
+
+    await abortPipelineImpl('proj', { grace_sec: 1 });
+
+    expect(readKillOutcome(projectRoot)).toBeNull();
+  });
 });
 
 describe('aborting виден снаружи, пока идёт abort_pipeline', () => {

@@ -21,6 +21,7 @@ import { spawn } from 'child_process';
 import { list_running_pipelines } from '../../src/tools/pipeline.mjs';
 import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 import { writeAbortState, abortStatePath, ABORT_STATE_TTL_MS } from '../../src/process/abort-state.mjs';
+import { writeKillOutcome } from '../../src/process/kill-outcome.mjs';
 
 let workspace;
 let prevMcpCwd;
@@ -36,6 +37,9 @@ async function spawnVictim() {
 
 /** Заведомо свободный номер процесса. */
 const DEAD_PID = 999999;
+
+/** `run_id` фикстур — совпадает с именем лога по умолчанию. */
+const RUN_ID = 'pipeline_2026-09-20_10-00-00';
 
 /** Лог в том формате, который действительно разбирает `parsers/pipeline-log.mjs`. */
 function pipelineLog({ step = 3, stage = 'execute-task' } = {}) {
@@ -210,6 +214,22 @@ describe('определение состояния', () => {
     expect((await snapshotOne()).state).toBe('running');
   });
 
+  it('флаг старого формата без runner_pid игнорируется', async () => {
+    // До 1.5.0 в файле лежал pid сервера, а не раннера. Такой флаг подходит к
+    // любому прогону, то есть ни к какому: иначе забытый файл держал бы
+    // следующий запуск в `aborting` до конца TTL.
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid);
+    writeLog(root);
+    fs.writeFileSync(
+      abortStatePath(root),
+      JSON.stringify({ started_at: new Date().toISOString(), pid: process.pid })
+    );
+
+    expect((await snapshotOne()).state).toBe('running');
+  });
+
   it('протухший флаг игнорируется', async () => {
     const victim = await spawnVictim();
     const root = makeProject('proj');
@@ -243,15 +263,50 @@ describe('определение состояния', () => {
     expect((await snapshotOne()).state).toBe('aborting');
   });
 
-  it('ненулевой код выхода в логе даёт killed', async () => {
-    // Состояние `killed` читалось ещё и из `.workflow/logs/.killed`, которого
-    // тоже никто не писал. Оно и без маркера выводится из лога — маркер был
-    // лишним чтением, а не источником.
+  it('убитый нами прогон даёт killed, а не stale', async () => {
+    // `killed` читалось из `.workflow/logs/.killed`, потом — из строки
+    // `[exit] code=N` в логе. Ни того, ни другого не пишет никто: раннер
+    // workflow-ai кода выхода в лог не выводит вовсе, и ни один из 2429
+    // настоящих логов такой строки не содержит. Источник, который
+    // действительно существует, — запись того, кто убивал.
     const root = makeProject('proj');
-    writeLock(root, DEAD_PID);
-    writeLog(root, '[2026-09-20 10:05:00] [exit] code=137\n');
+    writeLock(root, DEAD_PID, { run_id: RUN_ID });
+    writeLog(root);
+    writeKillOutcome(root, { pid: DEAD_PID, runId: RUN_ID, by: 'stop_pipeline' });
 
-    expect((await snapshotOne()).state).toBe('killed');
+    const entry = await snapshotOne();
+    expect(entry.state).toBe('killed');
+    // Lock всё равно пережил процесс — признак сохраняется.
+    expect(entry.stale_lock).toBe(true);
+  });
+
+  it('запись об убийстве другого pid не даёт killed', async () => {
+    const root = makeProject('proj');
+    writeLock(root, DEAD_PID, { run_id: RUN_ID });
+    writeLog(root);
+    writeKillOutcome(root, { pid: DEAD_PID + 1, runId: RUN_ID, by: 'stop_pipeline' });
+
+    expect((await snapshotOne()).state).toBe('stale');
+  });
+
+  it('запись об убийстве прошлого прогона не даёт killed', async () => {
+    const root = makeProject('proj');
+    writeLock(root, DEAD_PID, { run_id: RUN_ID });
+    writeLog(root);
+    writeKillOutcome(root, { pid: DEAD_PID, runId: 'pipeline_2026-09-19_08-00-00', by: 'stop_pipeline' });
+
+    expect((await snapshotOne()).state).toBe('stale');
+  });
+
+  it('живой прогон с записью об убийстве остаётся running', async () => {
+    // Запись от прошлой остановки не должна хоронить идущий прогон.
+    const victim = await spawnVictim();
+    const root = makeProject('proj');
+    writeLock(root, victim.pid, { run_id: RUN_ID });
+    writeLog(root);
+    writeKillOutcome(root, { pid: victim.pid, runId: RUN_ID, by: 'stop_pipeline' });
+
+    expect((await snapshotOne()).state).toBe('running');
   });
 });
 
