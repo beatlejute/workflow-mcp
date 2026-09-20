@@ -112,6 +112,26 @@ describe('src/process/marker.mjs', () => {
       expect(validation.reason).toBe('INSTANCE_MISMATCH');
     });
 
+    it('маркер прежнего формата не проходит по чужому списку', () => {
+      // Регрессия на дыру 2.0.0: та ветка сверяла маркер с
+      // `legacyMcpInstanceId()` от текущего `mcpCwd()` мимо переданного
+      // ожидания. Проверка с маркером текущего формата ловит её только на
+      // POSIX (там оба ключа равны); здесь маркер прежнего формата и заведомо
+      // чужой список — расхождение видно на обеих платформах.
+      const markerPath = path.join(projectPath, '.workflow', 'logs', '.mcp-started-by');
+      fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+      fs.writeFileSync(markerPath, JSON.stringify({
+        version: 1,
+        mcp_instance_id: legacyMcpInstanceId(projectPath),
+        started_at: new Date().toISOString(),
+        pid: 4242
+      }), 'utf8');
+
+      const validation = validateMarker(projectPath, 4242, ['workflow-mcp@aaaaaaaaaaaa']);
+      expect(validation.valid).toBe(false);
+      expect(validation.reason).toBe('INSTANCE_MISMATCH');
+    });
+
     it('список идентификаторов считается от переданного корня', () => {
       const ids = acceptedInstanceIds(projectPath);
       expect(ids[0]).toBe(mcpInstanceId(projectPath));

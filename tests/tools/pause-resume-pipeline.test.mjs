@@ -26,6 +26,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
   let stateDir;
   let logsDir;
   let originalCwd;
+  let originalMcpCwd;
   let notifyMock;
 
   beforeEach(() => {
@@ -45,6 +46,12 @@ describe('pause_pipeline and resume_pipeline tools', () => {
 
     // Change to test directory so resolveProjectRoot works correctly
     process.chdir(projectPath);
+    // Владение сверяется с идентификатором, посчитанным от `mcpCwd()`, а
+    // `MCP_CWD` старше рабочего каталога процесса: без фиксации набор
+    // зависит от того, что стоит в окружении запускающего, и позитивные
+    // сценарии получают FOREIGN_PIPELINE.
+    originalMcpCwd = process.env.MCP_CWD;
+    process.env.MCP_CWD = projectPath;
 
     // Mock the notification handler
     notifyMock = vi.fn();
@@ -54,6 +61,8 @@ describe('pause_pipeline and resume_pipeline tools', () => {
   afterEach(() => {
     // Restore original working directory
     process.chdir(originalCwd);
+    if (originalMcpCwd === undefined) delete process.env.MCP_CWD;
+    else process.env.MCP_CWD = originalMcpCwd;
 
     // Clean up test directory
     try {

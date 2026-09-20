@@ -141,7 +141,7 @@ export function readMarker(projectPath) {
  * Validate marker file against expected PID and instance ID.
  * @param {string} projectPath - Absolute path to project root
  * @param {number} expectedPid - Expected process ID
- * @param {string|string[]} expectedInstanceId - ожидаемый идентификатор или список принимаемых - Expected MCP instance ID
+ * @param {string|string[]} expectedInstanceId - Expected MCP instance ID, or the list of ids accepted for this workspace (`acceptedInstanceIds`)
  * @returns {{valid: boolean, reason?: string, override?: boolean}}
  */
 export function validateMarker(projectPath, expectedPid, expectedInstanceId) {

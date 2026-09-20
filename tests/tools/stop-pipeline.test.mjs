@@ -9,7 +9,6 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
-import { createHash } from 'crypto';
 import process from 'process';
 import { stopPipelineImpl } from '../../src/tools/pipeline.mjs';
 import { writeRunnerLock, writeBrokenLock } from '../helpers/pipeline-lock.mjs';
@@ -26,6 +25,7 @@ describe('stop_pipeline tool', () => {
   let stateDir;
   let logsDir;
   let originalCwd;
+  let originalMcpCwd;
 
   beforeEach(() => {
     // Save original working directory
@@ -44,11 +44,19 @@ describe('stop_pipeline tool', () => {
 
     // Change to test directory so resolveProjectRoot works correctly
     process.chdir(projectPath);
+    // Владение сверяется с идентификатором, посчитанным от `mcpCwd()`, а
+    // `MCP_CWD` старше рабочего каталога процесса: без фиксации набор
+    // зависит от того, что стоит в окружении запускающего, и позитивные
+    // сценарии получают FOREIGN_PIPELINE.
+    originalMcpCwd = process.env.MCP_CWD;
+    process.env.MCP_CWD = projectPath;
   });
 
   afterEach(() => {
     // Restore original working directory
     process.chdir(originalCwd);
+    if (originalMcpCwd === undefined) delete process.env.MCP_CWD;
+    else process.env.MCP_CWD = originalMcpCwd;
 
     // Clean up test directory
     try {
