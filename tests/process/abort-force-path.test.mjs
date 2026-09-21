@@ -18,7 +18,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'child_process';
 
-import { abort, kill, setExternalRunnerForTests } from '../../src/process/control.mjs';
+import { abort, kill, pause, resume, setExternalRunnerForTests } from '../../src/process/control.mjs';
 import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
 
 /** Живой номер: для него проверка живости отвечает `alive`. */
@@ -190,5 +190,80 @@ describe.runIf(process.platform === 'win32')('kill: отказ разбирае�
 
     expect(result.code).toBe('SPAWN_FAILED');
     expect(result.hint).toMatch(/ENOENT/);
+  });
+});
+
+describe.runIf(process.platform === 'win32')('Windows: форма отказа одна у всех операций', () => {
+  /**
+   * Запись 3.2.8 обещала `pid` в отказе каждой операции на обеих платформах.
+   * На Windows это было неверно: `PAUSE_UNSUPPORTED`, `RESUME_UNSUPPORTED` и
+   * сырой отказ утилиты уходили без номера — потребителю приходилось помнить,
+   * какой pid он отправлял.
+   */
+
+  it('pause без pssuspend.exe — PAUSE_UNSUPPORTED с pid', async () => {
+    fakeRunner({ ok: false, code: 'SPAWN_FAILED', hint: 'spawn pssuspend.exe ENOENT' });
+
+    const result = await pause(DEAD_PID);
+
+    expect(result).toMatchObject({ ok: false, code: 'PAUSE_UNSUPPORTED', pid: DEAD_PID });
+  });
+
+  it('resume без pssuspend.exe — RESUME_UNSUPPORTED с pid', async () => {
+    fakeRunner({ ok: false, code: 'SPAWN_FAILED', hint: 'spawn pssuspend.exe ENOENT' });
+
+    const result = await resume(DEAD_PID);
+
+    expect(result).toMatchObject({ ok: false, code: 'RESUME_UNSUPPORTED', pid: DEAD_PID });
+  });
+
+  it('kill: неразобранный отказ тоже несёт pid', async () => {
+    // `SPAWN_FAILED` классификатору не отдаётся (кода возврата нет), значит
+    // наружу идёт ответ утилиты как есть — но с номером процесса.
+    fakeRunner({ ok: false, code: 'SPAWN_FAILED', hint: 'spawn taskkill ENOENT' });
+
+    const result = await kill(DEAD_PID);
+
+    expect(result).toMatchObject({ ok: false, code: 'SPAWN_FAILED', pid: DEAD_PID });
+  });
+
+  it('abort: неразобранный отказ силового пути несёт pid', { timeout: 30000 }, async () => {
+    // Мягкая попытка непонятна — дело доходит до эскалации; силовая отвечает
+    // так, что разбирать нечего (кода возврата нет). Наружу идёт ответ утилиты
+    // как есть, но с номером процесса.
+    fakeRunner(
+      failure(1, 'ERROR: the process can only be terminated forcefully'),
+      { ok: false, code: 'SPAWN_FAILED', hint: 'spawn taskkill ENOENT' }
+    );
+
+    const result = await abort(DEAD_PID, { grace_sec: 0, can_escalate: () => true });
+
+    expect(calls).toEqual([
+      `taskkill /PID ${DEAD_PID}`,
+      `taskkill /F /PID ${DEAD_PID}`
+    ]);
+    expect(result).toMatchObject({ ok: false, code: 'SPAWN_FAILED', pid: DEAD_PID });
+  });
+
+  it('abort: нет taskkill в PATH — ответ сразу, без grace-окна', { timeout: 30000 }, async () => {
+    // Принудительная попытка позвала бы ту же утилиту и получила тот же
+    // отказ. Прежде между этим ответом и запросом проходило всё grace-окно:
+    // по умолчанию 10 с, до 60 с — ожидание ради ошибки окружения.
+    fakeRunner({ ok: false, code: 'SPAWN_FAILED', hint: 'spawn taskkill ENOENT' });
+
+    let escalationAsked = false;
+    const started = Date.now();
+    const result = await abort(DEAD_PID, {
+      grace_sec: 5,
+      can_escalate: () => {
+        escalationAsked = true;
+        return true;
+      }
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'SPAWN_FAILED', pid: DEAD_PID });
+    expect(escalationAsked).toBe(false);
+    expect(calls).toEqual([`taskkill /PID ${DEAD_PID}`]);
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 });

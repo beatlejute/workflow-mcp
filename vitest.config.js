@@ -10,10 +10,13 @@ export default defineConfig({
     // десятки spawn'ов. При полном прогоне они то и дело упирались в лимит —
     // падал каждый раз другой файл, то git-create-branch, то git-client.
     testTimeout: 20000,
-    // Run all test files in a single fork to prevent process.chdir() conflicts
-    // and parallel resource contention. Each test file still runs in isolation
-    // via vitest's module registry reset between files.
-    singleFork: true,
+    // `singleFork` здесь не стоит намеренно. Ключ с таким именем на верхнем
+    // уровне `test` vitest не читает вовсе (`grep singleFork` по dist 4.1.5 —
+    // пусто), а комментарий обещал последовательный прогон: три файла шли в
+    // трёх процессах одновременно. Настоящее место ключа —
+    // `poolOptions.forks.singleFork`; включать его незачем: полный прогон в
+    // параллельных форках зелёный, а изоляция состояния обеспечена
+    // `setupFiles` ниже.
     // Каталог состояния и машинный кеш `gh` уводятся во временный каталог:
     // иначе набор тестов пишет в настоящий профиль пользователя — оставлял
     // пустые каталоги на каждый прогон и подсовывал живому серверу путь к

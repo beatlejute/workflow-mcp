@@ -235,11 +235,25 @@ describe('POSIX: форма отказа одна с Windows-веткой', () =
     ['EPERM', 'PERMISSION_DENIED'],
     ['EINVAL', 'UNKNOWN_ERROR']
   ])('pause: отказ по %s несёт pid', async (errno, code) => {
-    // Прежде `pid` несли только разобранные отказы Windows-ветки, и
-    // потребителю приходилось помнить, откуда пришёл ответ.
+    // Прежде отказы POSIX-ветки шли без номера, и потребителю приходилось
+    // помнить, какой номер он отправлял.
     killSpy.mockImplementation(throwing(errno));
 
     const result = await pause(12345);
+
+    expect(result).toMatchObject({ ok: false, code, pid: 12345 });
+  });
+
+  it.each([
+    ['ESRCH', 'NO_SUCH_PROCESS'],
+    ['EPERM', 'PERMISSION_DENIED'],
+    ['EINVAL', 'UNKNOWN_ERROR']
+  ])('resume: отказ по %s несёт pid', async (errno, code) => {
+    // `resume` держался на честном слове: запись 3.2.8 обещала `pid` у всех
+    // четырёх операций, а проверялись три.
+    killSpy.mockImplementation(throwing(errno));
+
+    const result = await resume(12345);
 
     expect(result).toMatchObject({ ok: false, code, pid: 12345 });
   });

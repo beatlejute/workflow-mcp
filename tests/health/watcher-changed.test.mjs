@@ -38,7 +38,7 @@ afterEach(() => {
 /** Проект теста, а не случайный путь в %TEMP%: детекторы ходят по нему всерьёз. */
 const projects = () => [{ name: 'proj', path: path.join(workspace, 'proj') }];
 
-function alert(pid = 999999) {
+function alert(pid = 999999999) {
   return {
     fingerprint: `crashed:proj:${pid}`,
     type: 'crashed',

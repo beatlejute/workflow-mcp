@@ -12,12 +12,13 @@ import { probeProcess } from '../health/pid-check.mjs';
  * Sends a signal to a process (POSIX-only).
  * @param {number} pid - Process ID to signal
  * @param {string} signal - Signal to send (e.g., 'SIGSTOP', 'SIGCONT', 'SIGINT', 'SIGTERM', 'SIGKILL')
- * @returns {{ok: true}} | {{ok: false, code: string, hint?: string}}
+ * @returns {{ok: true}} | {{ok: false, code: string, pid: number, hint?: string}}
  */
 function sendSignal(pid, signal) {
   // `pid` есть и в отказе: форма ответа одна у всех операций и обеих платформ.
-  // Прежде его несли только разобранные отказы Windows-ветки, и потребителю
-  // приходилось помнить, откуда пришёл ответ.
+  // Прежде отказы POSIX-ветки шли без номера, и потребителю приходилось
+  // помнить, какой номер он отправлял. На Windows номер несли отказы `abort`
+  // (`STALE_PIPELINE_LOCK`, `OWNERSHIP_LOST`) и разобранные отказы утилиты.
   const target = Math.abs(pid);
   try {
     process.kill(pid, signal);
@@ -33,12 +34,6 @@ function sendSignal(pid, signal) {
   }
 }
 
-/**
- * Calls an external command via spawn (Windows helper).
- * @param {string} command - Command to execute
- * @param {string[]} args - Arguments
- * @returns {{ok: true, stdout?: string, stderr?: string} | {ok: false, code: string, hint?: string}}
- */
 /**
  * Подменяемый запуск внешней утилиты.
  *
@@ -65,6 +60,16 @@ function runExternal(command, args) {
   return externalRunner ? externalRunner(command, args) : callExternal(command, args);
 }
 
+/**
+ * Calls an external command via spawn (Windows helper).
+ *
+ * `pid` в отказ не кладётся: здесь известна только команда. Номер процесса
+ * добавляют вызывающие — `pause`, `resume`, `abort` и `kill`.
+ *
+ * @param {string} command - Command to execute
+ * @param {string[]} args - Arguments
+ * @returns {{ok: true, stdout?: string, stderr?: string} | {ok: false, code: string, hint?: string}}
+ */
 function callExternal(command, args) {
   try {
     const child = spawn(command, args, {
@@ -200,6 +205,7 @@ export async function pause(pid) {
     return {
       ok: false,
       code: 'PAUSE_UNSUPPORTED',
+      pid,
       hint:
         'pssuspend.exe not found. Install Sysinternals PsTools or set up node-windows-suspend. '
         + 'Alternatively, use abort_pipeline for graceful shutdown.',
@@ -227,6 +233,7 @@ export async function resume(pid) {
     return {
       ok: false,
       code: 'RESUME_UNSUPPORTED',
+      pid,
       hint:
         'pssuspend.exe not found. Install Sysinternals PsTools to resume processes.',
     };
@@ -296,6 +303,12 @@ export async function abort(pid, options = {}) {
       if (reason) {
         return { ok: false, code: reason, pid, hint: gracefulResult.hint };
       }
+      // Утилиты нет в `PATH` — принудительная попытка позовёт ту же утилиту
+      // и получит тот же отказ. Ждать ради этого grace-окно (по умолчанию
+      // 10 с, до 60 с) нечего: ответ уже известен.
+      if (gracefulResult.code === 'SPAWN_FAILED') {
+        return { ...gracefulResult, pid };
+      }
       // Причина неясна — идём дальше по обычному пути: grace-окно и, если
       // владение подтвердится, принудительная остановка.
     }
@@ -330,7 +343,7 @@ export async function abort(pid, options = {}) {
     const forceReason = classifyTaskkillFailure(forceResult, pid, { probeLiveness: true });
     return forceReason
       ? { ok: false, code: forceReason, pid, hint: forceResult.hint }
-      : forceResult;
+      : { ...forceResult, pid };
   }
 
   // POSIX: SIGINT first
@@ -388,7 +401,7 @@ export async function kill(pid) {
       return { ok: true, pid, state: 'killed' };
     }
     const reason = classifyTaskkillFailure(result, pid, { probeLiveness: true });
-    return reason ? { ok: false, code: reason, pid, hint: result.hint } : result;
+    return reason ? { ok: false, code: reason, pid, hint: result.hint } : { ...result, pid };
   }
 
    // POSIX: SIGKILL to process group

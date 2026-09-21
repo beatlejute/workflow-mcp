@@ -98,7 +98,7 @@ describe('detectStuck (tests/health/detectors/stuck.test.mjs)', () => {
       // Lock раннера с мёртвым pid: такой прогон разбирает detectCrashed.
       // Прежде здесь писался `.runner-pids`, которого не пишет никто, и ветка
       // «pid мёртв» не проверялась вовсе.
-      const deadPid = 999999;
+      const deadPid = 999999999;
       writeRunnerLock(projectPath, deadPid);
 
       // Mock isProcessAlive to return false

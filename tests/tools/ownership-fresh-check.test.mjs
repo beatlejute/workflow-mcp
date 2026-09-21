@@ -89,7 +89,7 @@ afterEach(() => {
 
 describe('пути с сигналом', () => {
   it('stop_pipeline спрашивает ОС заново', async () => {
-    writeLock(999999);
+    writeLock(999999999);
 
     await stopPipelineImpl('proj');
 
@@ -98,7 +98,7 @@ describe('пути с сигналом', () => {
   });
 
   it('pause_pipeline спрашивает ОС заново', async () => {
-    writeLock(999999);
+    writeLock(999999999);
 
     await pausePipelineImpl('proj');
 
@@ -107,7 +107,7 @@ describe('пути с сигналом', () => {
   });
 
   it('abort_pipeline спрашивает ОС заново', async () => {
-    writeLock(999999);
+    writeLock(999999999);
 
     await abortPipelineImpl('proj', { grace_sec: 0 });
 
@@ -119,7 +119,7 @@ describe('пути с сигналом', () => {
     // Между мягким сигналом и жёстким проходит до минуты: ответ, взятый из
     // памяти до grace-окна, к моменту эскалации устаревает ровно настолько,
     // чтобы пропустить переиспользованный номер.
-    writeLock(999999);
+    writeLock(999999999);
     calls.length = 0;
 
     await abortPipelineImpl('proj', { grace_sec: 0 });
@@ -130,10 +130,10 @@ describe('пути с сигналом', () => {
   });
 
   it('resume_pipeline спрашивает ОС заново', async () => {
-    writeLock(999999);
+    writeLock(999999999);
     fs.writeFileSync(
       path.join(projectRoot, '.workflow', 'state', 'pipeline-pause.json'),
-      JSON.stringify({ pid: 999999, paused_at: new Date().toISOString() })
+      JSON.stringify({ pid: 999999999, paused_at: new Date().toISOString() })
     );
 
     await resumePipelineImpl('proj');
@@ -147,7 +147,7 @@ describe('чтение состояния', () => {
   it('list_running_pipelines довольствуется памятью', async () => {
     // Здесь сигнал никому не уходит, а обход идёт по всем проектам на каждый
     // вызов: платить за опрос ОС каждый раз незачем.
-    writeLock(999999);
+    writeLock(999999999);
 
     await list_running_pipelines.execute({});
 
