@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.10] — 2026-09-21
+
+Правки по ревью 3.2.9. Ревью приняло все числа записи до единицы, но нашло в ней ложное утверждение о vitest — того же класса, что и в прошлых кругах.
+
+### Fixed
+
+- **`poolOptions.forks.singleFork` — совет в никуда.** Запись 3.2.9 и комментарий в `vitest.config.js` называли этот ключ «настоящим местом» для последовательного прогона. В Vitest 4 `poolOptions` удалён целиком: сам vitest отвечает на него `DEPRECATED \`test.poolOptions\` was removed in Vitest 4. All previous \`poolOptions\` are now top-level options.`, а идентификатора `singleFork` нет ни в `node_modules/vitest`, ни в `node_modules/@vitest` (`grep -rl` по обоим — пусто). Рабочий на 4.1.5 эквивалент измерен пробниками: при обычном прогоне три файла идут одновременно (pid 10224, 20836, 16728, старт в одну миллисекунду, 969 мс стены при 1.85 с суммы), с `fileParallelism: false` — строго друг за другом, 2.69 с. Включать не стали: полный прогон в параллельных форках зелёный.
+- **`pid` терялся на границе инструмента.** `control.mjs` кладёт номер в любой отказ, но `pause_pipeline` и `resume_pipeline` пересобирали ответ как `{ ok, code, hint }` (`git show f15baad:src/tools/pipeline.mjs`, строки 539-551 и 633-646) — то есть номер пропадал ровно у тех двух операций, ради которых его в 3.2.9 и добавляли. `abort` и `kill` отдают ответ как есть, у них он доходил и раньше.
+- **Ранний возврат `abort` был шире своего описания.** Он срабатывал на любой `SPAWN_FAILED`, а `callExternal` отдаёт этот код на любую ошибку `spawn` — не только `ENOENT` («нет утилиты в `PATH`»), но и `EAGAIN`, `EMFILE`. Последние говорят о нехватке ресурсов сейчас, и после grace-окна принудительная попытка могла бы пройти. Теперь в отказе есть `spawn_code` (errno из ошибки `spawn`), и без ожидания возвращается только `ENOENT`.
+- **JSDoc `pause` и `resume`** в ветке отказа не упоминали `pid`, хотя 3.2.9 его туда добавила.
+
+### Added
+
+- `callExternal` экспортирован — ради теста на `spawn_code`: имя команды внутри жёсткое, а подменённый раннер до настоящего `spawn` не доходит.
+
+### Tests
+
+- `tests/tools/refusal-pid-passthrough.test.mjs` (новый, 4 проверки): `PAUSE_UNSUPPORTED`, `RESUME_UNSUPPORTED` и прочие отказы `pause_pipeline` и `resume_pipeline` доходят до клиента с `pid`.
+- `abort-force-path` (+2 проверки, стало 14): сбой запуска не про `PATH` (`EAGAIN`) по-прежнему проходит grace-окно и силовую попытку; настоящий `spawn` несуществующей команды даёт `SPAWN_FAILED` со `spawn_code: 'ENOENT'`.
+
+Саботаж на названном наборе (`tests/process/{abort-force-path,abort-escalation-verdict,taskkill-classify,control,control-windows-mock,control-posix-mock,run-lock}`, `tests/health/pid-probe`, `tests/tools/refusal-pid-passthrough`; 142 проверки): `PAUSE_UNSUPPORTED` снова без `pid` — 1 падение, `RESUME_UNSUPPORTED` снова без `pid` — 1, сырой отказ `kill` снова без `pid` — 1, сырой отказ силового пути `abort` снова без `pid` — 1, `ENOENT` снова ждёт grace-окно — 1, ранний возврат снова на любом сбое запуска — 1, `spawn_code` больше не кладётся — 1, `pid` теряется на границе `pause_pipeline` — 1 и в прочем его отказе — 1, то же для `resume_pipeline` — 1 и 1, `pid` убран из всех трёх веток `sendSignal` — 8, только из `EPERM` — 4, только из `UNKNOWN_ERROR` — 2, только из `ESRCH` — 2.
+
+Полный прогон: 108 файлов, 1667 passed, 0 failed, 30 skipped, 4 todo.
+
 ## [3.2.9] — 2026-09-21
 
 Правки по ревью 3.2.8. Код и тесты того круга ревью приняло; не прошёл CHANGELOG — в том числе фраза, переписанная кругом раньше ради исправления другого выдуманного числа.
@@ -15,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`abort` ждал grace-окно ради ошибки окружения.** Нет `taskkill` в `PATH` — мягкая попытка возвращает `SPAWN_FAILED`, классификатор такой отказ не разбирает (кода возврата нет), и дальше шло полное ожидание: по умолчанию 10 с, до 60 с. После него принудительная попытка звала ту же отсутствующую утилиту. Теперь `SPAWN_FAILED` мягкой попытки возвращается сразу.
 - **`999999` оставался ещё в трёх наборах** — `health/detectors/stuck`, `health/watcher-changed`, `tools/ownership-fresh-check`, — хотя запись 3.2.8 называла «оставшимися» два других. Все подняты до `999999999`. В `ownership-fresh-check` это не косметика: `pid-check` там не подменён, и живость номера спрашивается у настоящей ОС, а на Linux `pid_max` бывает 4 194 304.
 - **Осиротевший JSDoc.** Блок «Calls an external command via spawn» после появления шва `setExternalRunnerForTests` оказался над объявлением `externalRunner`, а описывал `callExternal`. Возвращён на место. `@returns` у `sendSignal` не упоминал `pid` — теперь упоминает.
-- **Мёртвый ключ в `vitest.config.js`.** `singleFork: true` на верхнем уровне `test` vitest не читает (`grep singleFork node_modules/vitest/dist/*.js` при 4.1.5 — пусто), а комментарий рядом обещал прогон всех файлов в одном процессе. Настоящее место ключа — `poolOptions.forks.singleFork`. Ключ убран, на его месте — почему включать его не нужно.
+- **Мёртвый ключ в `vitest.config.js`.** `singleFork: true` на верхнем уровне `test` vitest не читает (`grep singleFork node_modules/vitest/dist/*.js` при 4.1.5 — пусто), а комментарий рядом обещал прогон всех файлов в одном процессе. Ключ убран, на его месте — почему включать его не нужно. (Исправлено в 3.2.10: здесь стояло «настоящее место ключа — `poolOptions.forks.singleFork`» — в Vitest 4 `poolOptions` удалён, а идентификатора `singleFork` в пакете нет вовсе.)
 
 ### Fixed — в самих записях CHANGELOG
 

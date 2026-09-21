@@ -18,7 +18,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'child_process';
 
-import { abort, kill, pause, resume, setExternalRunnerForTests } from '../../src/process/control.mjs';
+import { abort, kill, pause, resume, callExternal, setExternalRunnerForTests } from '../../src/process/control.mjs';
 import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
 
 /** Живой номер: для него проверка живости отвечает `alive`. */
@@ -227,6 +227,32 @@ describe.runIf(process.platform === 'win32')('Windows: форма отказа �
     expect(result).toMatchObject({ ok: false, code: 'SPAWN_FAILED', pid: DEAD_PID });
   });
 
+  it('abort: сбой запуска не про PATH — grace-окно и силовая попытка на месте', { timeout: 30000 }, async () => {
+    // `EAGAIN` и `EMFILE` говорят о нехватке ресурсов сейчас: через
+    // grace-окно попытка может пройти. Ранний возврат тут был бы отказом от
+    // единственного оставшегося шанса.
+    fakeRunner(
+      { ok: false, code: 'SPAWN_FAILED', spawn_code: 'EAGAIN', hint: 'spawn taskkill EAGAIN' },
+      { ok: true, stdout: 'SUCCESS' }
+    );
+
+    let escalationAsked = false;
+    const result = await abort(DEAD_PID, {
+      grace_sec: 0,
+      can_escalate: () => {
+        escalationAsked = true;
+        return true;
+      }
+    });
+
+    expect(escalationAsked).toBe(true);
+    expect(calls).toEqual([
+      `taskkill /PID ${DEAD_PID}`,
+      `taskkill /F /PID ${DEAD_PID}`
+    ]);
+    expect(result).toMatchObject({ ok: true, pid: DEAD_PID, state: 'aborted', escalated: true });
+  });
+
   it('abort: неразобранный отказ силового пути несёт pid', { timeout: 30000 }, async () => {
     // Мягкая попытка непонятна — дело доходит до эскалации; силовая отвечает
     // так, что разбирать нечего (кода возврата нет). Наружу идёт ответ утилиты
@@ -249,7 +275,7 @@ describe.runIf(process.platform === 'win32')('Windows: форма отказа �
     // Принудительная попытка позвала бы ту же утилиту и получила тот же
     // отказ. Прежде между этим ответом и запросом проходило всё grace-окно:
     // по умолчанию 10 с, до 60 с — ожидание ради ошибки окружения.
-    fakeRunner({ ok: false, code: 'SPAWN_FAILED', hint: 'spawn taskkill ENOENT' });
+    fakeRunner({ ok: false, code: 'SPAWN_FAILED', spawn_code: 'ENOENT', hint: 'spawn taskkill ENOENT' });
 
     let escalationAsked = false;
     const started = Date.now();
@@ -265,5 +291,24 @@ describe.runIf(process.platform === 'win32')('Windows: форма отказа �
     expect(escalationAsked).toBe(false);
     expect(calls).toEqual([`taskkill /PID ${DEAD_PID}`]);
     expect(Date.now() - started).toBeLessThan(5000);
+  });
+});
+
+describe('сбой запуска утилиты несёт errno', () => {
+  /**
+   * `abort` различает `ENOENT` и прочие сбои запуска по полю `spawn_code`.
+   * Кладёт его сюда настоящий `spawn`, а подменённый раннер до него не
+   * доходит — значит проверять надо на настоящем запуске.
+   */
+
+  it('несуществующая команда — SPAWN_FAILED со spawn_code ENOENT', async () => {
+    // Раннер здесь не подменён: зовётся настоящий `spawn`.
+    setExternalRunnerForTests(null);
+
+    const result = await callExternal('workflow-mcp-no-such-binary-9d3f', ['--version']);
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('SPAWN_FAILED');
+    expect(result.spawn_code).toBe('ENOENT');
   });
 });

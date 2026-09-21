@@ -536,10 +536,15 @@ export async function pausePipelineImpl(project) {
 
   if (!pauseResult.ok) {
     // Handle PAUSE_UNSUPPORTED specifically
+    // `pid` берётся из ответа `control.mjs`, а не собирается заново: там он
+    // есть в любом отказе. Прежде здесь ответ пересобирался как
+    // `{ ok, code, hint }`, и номер до клиента не доходил — у `abort` и `kill`
+    // доходил, потому что они отдают ответ как есть.
     if (pauseResult.code === 'PAUSE_UNSUPPORTED') {
       return {
         ok: false,
         code: 'PAUSE_UNSUPPORTED',
+        pid: pauseResult.pid ?? pid,
         hint: pauseResult.hint
       };
     }
@@ -548,6 +553,7 @@ export async function pausePipelineImpl(project) {
     return {
       ok: false,
       code: pauseResult.code || 'PAUSE_FAILED',
+      pid: pauseResult.pid ?? pid,
       hint: pauseResult.hint || 'Failed to pause pipeline'
     };
   }
@@ -630,10 +636,12 @@ export const pause_pipeline = {
 
     if (!resumeResult.ok) {
       // Handle RESUME_UNSUPPORTED specifically
+      // Номер берётся из ответа `control.mjs` — см. тот же разбор в `pause`.
       if (resumeResult.code === 'RESUME_UNSUPPORTED') {
         return {
           ok: false,
           code: 'RESUME_UNSUPPORTED',
+          pid: resumeResult.pid ?? pid,
           hint: resumeResult.hint
         };
       }
@@ -642,6 +650,7 @@ export const pause_pipeline = {
       return {
         ok: false,
         code: resumeResult.code || 'RESUME_FAILED',
+        pid: resumeResult.pid ?? pid,
         hint: resumeResult.hint || 'Failed to resume pipeline'
       };
     }

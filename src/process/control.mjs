@@ -66,11 +66,19 @@ function runExternal(command, args) {
  * `pid` в отказ не кладётся: здесь известна только команда. Номер процесса
  * добавляют вызывающие — `pause`, `resume`, `abort` и `kill`.
  *
+ * У `SPAWN_FAILED` рядом идёт `spawn_code` — errno из ошибки `spawn`.
+ * `ENOENT` («утилиты нет в `PATH`») повторять незачем, а `EAGAIN` или
+ * `EMFILE` — ресурсы кончились сейчас, через grace-окно попытка может пройти.
+ *
  * @param {string} command - Command to execute
  * @param {string[]} args - Arguments
  * @returns {{ok: true, stdout?: string, stderr?: string} | {ok: false, code: string, hint?: string}}
+ *
+ * Экспортируется ради тестов: сбой запуска утилиты иначе не получить — имя
+ * команды внутри жёсткое, а подменённый раннер до настоящего `spawn` не
+ * доходит.
  */
-function callExternal(command, args) {
+export function callExternal(command, args) {
   try {
     const child = spawn(command, args, {
       stdio: 'pipe',
@@ -105,11 +113,11 @@ function callExternal(command, args) {
       });
 
       child.on('error', (err) => {
-        resolve({ ok: false, code: 'SPAWN_FAILED', hint: err.message });
+        resolve({ ok: false, code: 'SPAWN_FAILED', spawn_code: err.code, hint: err.message });
       });
     });
   } catch (err) {
-    return { ok: false, code: 'SPAWN_FAILED', hint: err.message };
+    return { ok: false, code: 'SPAWN_FAILED', spawn_code: err.code, hint: err.message };
   }
 }
 
@@ -190,7 +198,7 @@ export function classifyTaskkillFailure(failure, pid, { probeLiveness = false } 
  * - POSIX: Sends SIGSTOP
  * - Windows: Uses pssuspend.exe (Sysinternals), falls back to PAUSE_UNSUPPORTED
  * @param {number} pid - Process ID to pause
- * @returns {Promise<{ok: true, pid: number, state: 'paused'} | {ok: false, code: string, hint?: string}>}
+ * @returns {Promise<{ok: true, pid: number, state: 'paused'} | {ok: false, code: string, pid: number, hint?: string}>}
  */
 export async function pause(pid) {
   if (process.platform === 'win32') {
@@ -221,7 +229,7 @@ export async function pause(pid) {
  * - POSIX: Sends SIGCONT
  * - Windows: Uses pssuspend.exe -r (resume flag)
  * @param {number} pid - Process ID to resume
- * @returns {Promise<{ok: true, pid: number, state: 'running'} | {ok: false, code: string, hint?: string}>}
+ * @returns {Promise<{ok: true, pid: number, state: 'running'} | {ok: false, code: string, pid: number, hint?: string}>}
  */
 export async function resume(pid) {
   if (process.platform === 'win32') {
@@ -305,8 +313,10 @@ export async function abort(pid, options = {}) {
       }
       // Утилиты нет в `PATH` — принудительная попытка позовёт ту же утилиту
       // и получит тот же отказ. Ждать ради этого grace-окно (по умолчанию
-      // 10 с, до 60 с) нечего: ответ уже известен.
-      if (gracefulResult.code === 'SPAWN_FAILED') {
+      // 10 с, до 60 с) нечего: ответ уже известен. Прочие сбои запуска
+      // (`EAGAIN`, `EMFILE`) говорят о нехватке ресурсов сейчас — там ожидание
+      // как раз может помочь, и путь остаётся прежним.
+      if (gracefulResult.code === 'SPAWN_FAILED' && gracefulResult.spawn_code === 'ENOENT') {
         return { ...gracefulResult, pid };
       }
       // Причина неясна — идём дальше по обычному пути: grace-окно и, если
