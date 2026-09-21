@@ -11,16 +11,15 @@
  * переживает: мягкий `taskkill` без `/F` консольному процессу ничего не делает,
  * `SIGINT` node-процессу без обработчика — тоже не мгновенная смерть, поэтому
  * проверяется только ответ).
+ *
+ * Разбор отказа самой утилиты — в `abort-force-path.test.mjs`: там подменяется
+ * запуск, потому что исход `taskkill` зависит от локали системы и прав.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawn } from 'child_process';
 
 import { abort } from '../../src/process/control.mjs';
-import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
-
-/** `System`: существует всегда, не убивается ничем — `taskkill` отвечает отказом. */
-const SYSTEM_PID = 4;
 
 let victim = null;
 
@@ -41,36 +40,6 @@ afterEach(() => {
     try { victim.kill('SIGKILL'); } catch { /* уже мёртв */ }
     victim = null;
   }
-});
-
-describe('отказ жёсткого сигнала разбирается по существу', () => {
-  it.runIf(process.platform === 'win32')(
-    'жёсткий сигнал не прошёл, процесс жив — PERMISSION_DENIED, а не сырой отказ утилиты',
-    { timeout: 30000 },
-    async () => {
-      // Процесс `System` (pid 4) не убить ни мягко, ни жёстко: `taskkill`
-      // отвечает отказом в доступе с кодом 1 на обеих попытках. Это даёт
-      // детерминированный проход до силового пути — без гонки «кто успеет».
-      //
-      // Прежде отсюда наружу уходил сырой `EXTERNAL_COMMAND_FAILED` с
-      // локализованным текстом, по которому клиенту нечего решать.
-      clearProcessAliveCache();
-      let escalationAsked = false;
-
-      const result = await abort(SYSTEM_PID, {
-        grace_sec: 0,
-        can_escalate: () => {
-          escalationAsked = true;
-          return true;
-        }
-      });
-
-      expect(escalationAsked, 'до силового пути не дошли — тест ничего не доказал').toBe(true);
-      expect(result.ok).toBe(false);
-      expect(result.code).toBe('PERMISSION_DENIED');
-      expect(result.pid).toBe(SYSTEM_PID);
-    }
-  );
 });
 
 describe('вердикт can_escalate превращается в ответ', () => {

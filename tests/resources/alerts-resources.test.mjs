@@ -99,7 +99,7 @@ describe('Alerts MCP Resources', () => {
     }
 
     /** Условие для detectCrashed: lock с мёртвым pid и свежий лог прогона. */
-    function makeCrashedRun(root, { pid = 999999, runId = 'pipeline_2026-09-20_10-00-00' } = {}) {
+    function makeCrashedRun(root, { pid = 999999999, runId = 'pipeline_2026-09-20_10-00-00' } = {}) {
       const logsDir = path.join(root, '.workflow', 'logs');
       const now = new Date().toISOString();
       fs.writeFileSync(

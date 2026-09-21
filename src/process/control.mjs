@@ -15,17 +15,21 @@ import { probeProcess } from '../health/pid-check.mjs';
  * @returns {{ok: true}} | {{ok: false, code: string, hint?: string}}
  */
 function sendSignal(pid, signal) {
+  // `pid` есть и в отказе: форма ответа одна у всех операций и обеих платформ.
+  // Прежде его несли только разобранные отказы Windows-ветки, и потребителю
+  // приходилось помнить, откуда пришёл ответ.
+  const target = Math.abs(pid);
   try {
     process.kill(pid, signal);
     return { ok: true };
   } catch (err) {
     if (err.code === 'ESRCH') {
-      return { ok: false, code: 'NO_SUCH_PROCESS', hint: `No process with PID ${pid}` };
+      return { ok: false, code: 'NO_SUCH_PROCESS', pid: target, hint: `No process with PID ${target}` };
     }
     if (err.code === 'EPERM') {
-      return { ok: false, code: 'PERMISSION_DENIED', hint: `Permission denied to signal PID ${pid}` };
+      return { ok: false, code: 'PERMISSION_DENIED', pid: target, hint: `Permission denied to signal PID ${target}` };
     }
-    return { ok: false, code: 'UNKNOWN_ERROR', hint: err.message };
+    return { ok: false, code: 'UNKNOWN_ERROR', pid: target, hint: err.message };
   }
 }
 
@@ -35,6 +39,32 @@ function sendSignal(pid, signal) {
  * @param {string[]} args - Arguments
  * @returns {{ok: true, stdout?: string, stderr?: string} | {ok: false, code: string, hint?: string}}
  */
+/**
+ * Подменяемый запуск внешней утилиты.
+ *
+ * Шов для тестов. Исход `taskkill` иначе не воспроизвести: его код возврата и
+ * текст зависят от локали системы, прав и того, есть ли у процесса окно.
+ * Прежние редакции теста силового пути опирались то на гонку, то на русский
+ * вывод утилиты — и были зелёными только на этой машине.
+ *
+ * @type {(command: string, args: string[]) => Promise<Object>}
+ */
+let externalRunner = null;
+
+/**
+ * Подменить запуск внешних утилит. Только для тестов; `null` возвращает
+ * настоящий запуск.
+ *
+ * @param {((command: string, args: string[]) => Promise<Object>)|null} runner
+ */
+export function setExternalRunnerForTests(runner) {
+  externalRunner = runner;
+}
+
+function runExternal(command, args) {
+  return externalRunner ? externalRunner(command, args) : callExternal(command, args);
+}
+
 function callExternal(command, args) {
   try {
     const child = spawn(command, args, {
@@ -162,7 +192,7 @@ export async function pause(pid) {
     // On Windows, we need pssuspend.exe from Sysinternals.
     // The result is cached in state-dir/process-tools.json by the caller (marker module).
     // Here we attempt to use pssuspend directly.
-    const result = await callExternal('pssuspend.exe', [pid.toString()]);
+    const result = await runExternal('pssuspend.exe', [pid.toString()]);
     if (result.ok) {
       return { ok: true, pid, state: 'paused' };
     }
@@ -190,7 +220,7 @@ export async function pause(pid) {
 export async function resume(pid) {
   if (process.platform === 'win32') {
     // pssuspend.exe -r <pid> resumes the process
-    const result = await callExternal('pssuspend.exe', ['-r', pid.toString()]);
+    const result = await runExternal('pssuspend.exe', ['-r', pid.toString()]);
     if (result.ok) {
       return { ok: true, pid, state: 'running' };
     }
@@ -260,7 +290,7 @@ export async function abort(pid, options = {}) {
 
   if (process.platform === 'win32') {
     // First attempt: graceful taskkill (without /F)
-    const gracefulResult = await callExternal('taskkill', ['/PID', pid.toString()]);
+    const gracefulResult = await runExternal('taskkill', ['/PID', pid.toString()]);
     if (!gracefulResult.ok) {
       const reason = classifyTaskkillFailure(gracefulResult, pid);
       if (reason) {
@@ -281,7 +311,7 @@ export async function abort(pid, options = {}) {
     }
 
     // Force termination
-    const forceResult = await callExternal('taskkill', ['/F', '/PID', pid.toString()]);
+    const forceResult = await runExternal('taskkill', ['/F', '/PID', pid.toString()]);
     const escalated = !gracefulResult.ok || (gracefulResult.ok && forceResult.ok);
 
     if (forceResult.ok || gracefulResult.ok) {
@@ -348,13 +378,12 @@ export async function abort(pid, options = {}) {
  * - Windows: taskkill /F /T /PID (kills process tree)
  * @param {number} pid - Process ID to kill
  * @returns {Promise<{ok: true, pid: number, state: 'killed'} | {ok: false, code: string, pid?: number, hint?: string}>}
- *   `pid` есть у разобранных отказов (`NO_SUCH_PROCESS`, `PERMISSION_DENIED`) —
- *   форма одна у всех операций.
+ *   `pid` есть и в отказе — форма одна у всех операций и обеих платформ.
  */
 export async function kill(pid) {
   if (process.platform === 'win32') {
     // Force kill with taskkill /F /T (includes child processes)
-    const result = await callExternal('taskkill', ['/F', '/T', '/PID', pid.toString()]);
+    const result = await runExternal('taskkill', ['/F', '/T', '/PID', pid.toString()]);
     if (result.ok) {
       return { ok: true, pid, state: 'killed' };
     }

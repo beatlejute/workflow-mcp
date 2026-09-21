@@ -156,7 +156,7 @@ describe('владение пайплайном, запущенным через
     const dir = makeProject(root, name);
     const logsDir = path.join(dir, '.workflow', 'logs');
     // Заведомо мёртвый pid: если защита сломается, убивать нечего.
-    const pid = 999999;
+    const pid = 999999999;
     const runId = 'pipeline_2026-01-01_00-00-00';
     const now = new Date().toISOString();
 

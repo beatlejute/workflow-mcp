@@ -206,3 +206,59 @@ describe('POSIX platform: vi.spyOn process.kill (POSIX branches)', () => {
     });
   });
 });
+
+describe('POSIX: форма отказа одна с Windows-веткой', () => {
+  let platformDescriptor;
+  let killSpy;
+
+  beforeEach(() => {
+    platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    killSpy = vi.spyOn(process, 'kill');
+  });
+
+  afterEach(() => {
+    killSpy.mockRestore();
+    Object.defineProperty(process, 'platform', platformDescriptor);
+  });
+
+  function throwing(code) {
+    return () => {
+      const err = new Error(code);
+      err.code = code;
+      throw err;
+    };
+  }
+
+  it.each([
+    ['ESRCH', 'NO_SUCH_PROCESS'],
+    ['EPERM', 'PERMISSION_DENIED'],
+    ['EINVAL', 'UNKNOWN_ERROR']
+  ])('pause: отказ по %s несёт pid', async (errno, code) => {
+    // Прежде `pid` несли только разобранные отказы Windows-ветки, и
+    // потребителю приходилось помнить, откуда пришёл ответ.
+    killSpy.mockImplementation(throwing(errno));
+
+    const result = await pause(12345);
+
+    expect(result).toMatchObject({ ok: false, code, pid: 12345 });
+  });
+
+  it('kill: отказ несёт положительный pid, а не номер группы', async () => {
+    // POSIX-ветка шлёт сигнал группе (`-pid`); наружу должен идти сам pid.
+    killSpy.mockImplementation(throwing('EPERM'));
+
+    const result = await kill(12345);
+
+    expect(result).toMatchObject({ ok: false, code: 'PERMISSION_DENIED', pid: 12345 });
+    expect(killSpy).toHaveBeenCalledWith(-12345, 'SIGKILL');
+  });
+
+  it('abort: ранний отказ SIGINT несёт pid', async () => {
+    killSpy.mockImplementation(throwing('EPERM'));
+
+    const result = await abort(12345, { grace_sec: 0 });
+
+    expect(result).toMatchObject({ ok: false, code: 'PERMISSION_DENIED', pid: 12345 });
+  });
+});
