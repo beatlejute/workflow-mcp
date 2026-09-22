@@ -39,15 +39,11 @@ function setupTestProject(projectRoot) {
 }
 
 /**
- * Helper: Create a test skill
+ * Helper: Create a test skill — skillExists смотрит только на каталог
  */
-function createTestSkill(projectRoot, skillName, mainContent) {
+function createTestSkill(projectRoot, skillName) {
   const skillDir = path.join(projectRoot, '.workflow', 'src', 'skills', skillName);
   fs.mkdirSync(skillDir, { recursive: true });
-
-  const mainPath = path.join(skillDir, 'main.js');
-  fs.writeFileSync(mainPath, mainContent);
-
   return skillDir;
 }
 
@@ -98,7 +94,7 @@ describe('skillExists', () => {
   });
 
   it('should return true when skill directory exists', () => {
-    createTestSkill(tempDir, 'test-skill', 'module.exports = () => {};');
+    createTestSkill(tempDir, 'test-skill');
     expect(skillExists(tempDir, 'test-skill')).toBe(true);
   });
 

@@ -110,9 +110,9 @@ const diff = await client.callTool('git_diff', { project: 'my-project', staged: 
 // Возвращает diff-снимок staged-изменений
 ```
 
-### Coach-инструменты (4 новых tools)
+### Coach-инструменты (3 tools)
 
-Запуск и управление скилами проекта и их тестовыми наборами через MCP.
+Тесты скилов и coach-тикеты через MCP.
 
 - `list_skill_tests(project, {skill_name?})` — тест-кейсы скила из `index.yaml`: `{tests, warnings}`, при отказе — `{error, message, tests: [], warnings: []}`. Ничего не запускает, поэтому конверта CLI (`exit_code`/`stdout`) у ответа нет
 - `run_skill_tests(project, {skill_name, test_ids?, parallel?, timeout_sec?})` — прогон тестов скила со структурированным результатом
