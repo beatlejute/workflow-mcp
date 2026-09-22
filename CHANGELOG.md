@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] — 2026-09-22
+
+### Removed
+
+- **Tool `run_skill`.** Он звал `<project>/.workflow/src/scripts/run-skill.js`, а такого скрипта нет ни в workflow-ai, ни в его истории (`git log --all -- src/scripts/run-skill.js` в workflowAi пуст), и `workflow init` его не создаёт. Поэтому в любом реальном проекте tool отвечал `SKILL_RUNNER_UNAVAILABLE` — README предупреждал об этом с 1.3.0. Скилы исполняются стадиями пайплайна (`start_pipeline`); для тестов скилов остаются `list_skill_tests` и `run_skill_tests`. Tool'ов стало 37. Удаление инструмента из `tools/list` меняет контракт — отсюда мажорная версия.
+- Вместе с ним — `runSkill`, `parseArtifacts` и `hasSkillRunner`: других пользователей у них не было. `src/skills/runner.mjs` переименован в `src/skills/validation.mjs` — в нём остались `isValidSkillName` и `skillExists`, общие для `list_skill_tests`, `run_skill_tests` и `create_coach_ticket`.
+
+### Tests
+
+- `src/skills/validation.test.mjs` (бывший `runner.test.mjs`): остались наборы `isValidSkillName` и `skillExists`; наборы `hasSkillRunner`, `parseArtifacts` и `runSkill` удалены вместе с кодом.
+- `tests/server.tools-list.snapshot.json`: без `run_skill`.
+
+Полный прогон: 108 файлов, 1648 passed, 0 failed, 30 skipped, 4 todo (в 3.2.10 было 1667 passed; минус 19: 18 проверок удалённых наборов — 3 + 5 + 10 — и одна в `tests/tools/all-schemas-serializable`, где проверка идёт на каждый tool).
+
 ## [3.2.10] — 2026-09-21
 
 Правки по ревью 3.2.9. Ревью приняло все числа записи до единицы, но нашло в ней ложное утверждение о vitest — того же класса, что и в прошлых кругах.

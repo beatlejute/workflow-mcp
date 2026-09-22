@@ -114,27 +114,18 @@ const diff = await client.callTool('git_diff', { project: 'my-project', staged: 
 
 Запуск и управление скилами проекта и их тестовыми наборами через MCP.
 
-- `run_skill(project, {skill_name, args?, context?, timeout_sec?})` — выполнить скил с опциональными аргументами и контекстом. Отвечает конвертом запуска (`exit_code`, `stdout`, `stderr`, `duration_ms`) — как и `run_skill_tests`: оба действительно запускают процесс
 - `list_skill_tests(project, {skill_name?})` — тест-кейсы скила из `index.yaml`: `{tests, warnings}`, при отказе — `{error, message, tests: [], warnings: []}`. Ничего не запускает, поэтому конверта CLI (`exit_code`/`stdout`) у ответа нет
 - `run_skill_tests(project, {skill_name, test_ids?, parallel?, timeout_sec?})` — прогон тестов скила со структурированным результатом
 - `create_coach_ticket(project, {target_skill, gap_description, evidence_path?, priority?})` — создание coach-gap тикета на улучшение скила
 
-> **`run_skill` требует раннера, которого нет.** Tool зовёт
-> `<project>/.workflow/src/scripts/run-skill.js`; этот скрипт не поставляется
-> ни пакетом `workflow-ai`, ни `workflow init`, поэтому в реальном проекте
-> вызов возвращает `SKILL_RUNNER_UNAVAILABLE`. `run_skill_tests` этим не
-> затронут — его скрипт `run-skill-tests.js` на месте.
+> Четвёртым в этом наборе был `run_skill`. Он звал
+> `<project>/.workflow/src/scripts/run-skill.js`, которого не поставляет ни
+> пакет `workflow-ai`, ни `workflow init`, и всегда отвечал
+> `SKILL_RUNNER_UNAVAILABLE`. В 4.0.0 удалён. Скилы исполняются стадиями
+> пайплайна (`start_pipeline`).
 
 **Пример:**
 ```javascript
-// Запуск скила
-const result = await client.callTool('run_skill', {
-  project: 'my-project',
-  skill_name: 'decompose-plan',
-  args: ['--plan-id', 'PLAN-001']
-});
-// Возвращает: { exit_code: 0, stdout: '...', duration_ms: 1234, artifacts: [...] }
-
 // Прогон тестов скила
 const testResult = await client.callTool('run_skill_tests', {
   project: 'my-project',

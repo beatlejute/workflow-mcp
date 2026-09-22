@@ -33,7 +33,6 @@
   "pick_next_ticket",
   "resolve_human_ticket",
   "resume_pipeline",
-  "run_skill",
   "run_skill_tests",
   "start_pipeline",
   "stop_pipeline"
