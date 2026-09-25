@@ -323,7 +323,7 @@ npx vitest run   # тесты один раз; npm test запускает vites
 
 | Каталог | Что там |
 |---------|---------|
-| `bin/server.mjs` | точка входа: `--root`, `--init-mcp-json` |
+| `bin/server.mjs` | точка входа: `--root`, `--init-mcp-json`, `--help` |
 | `src/server.mjs` | регистрация инструментов, ресурсов, подписок, проверка версии workflow-ai |
 | `src/tools/` | инструменты; каждый экспорт с `name`, `description`, `inputSchema`, `execute` регистрируется сам |
 | `src/resources/` | ресурсы |

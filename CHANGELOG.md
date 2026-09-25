@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`--help` и `-h` падали стеком Node.** Флаги стояли в справке, но не в `options` у `parseArgs` со `strict: true`, и оба давали `ERR_PARSE_ARGS_UNKNOWN_OPTION`. Теперь справка печатается с кодом 0. Неизвестный флаг — сообщение и справка в stderr, код 1, без стека.
+- **Справка обещала `.workflow-mcp.json`**, а `--init-mcp-json` пишет `.mcp.json` текущего каталога. Текст справки исправлен, у `--root` — описание по делу.
+
+### Changed
+
+- **workflow-ai — из реестра npm, `^1.7.4`.** `package-lock.json` держал его ссылкой на `../workflowAi`: сервер запускал раннер из рабочей копии соседнего репозитория, и любая правка там сразу попадала в работающие пайплайны.
+- **README переписан.** Связь с workflow-ai и проверка версии, установка из репозитория (имя `workflow-mcp` в npm занято чужим пакетом) и подключение, рабочая область, 37 инструментов таблицами, ресурсы, мониторинг здоровья, конфигурация. История версий — только здесь.
+
+### Tests
+
+- `tests/cli/help.test.mjs`: `--help`, `-h`, текст про `.mcp.json`, неизвестный флаг. Без исправления все четыре красные.
+- Удалён `tests/cli/init-mcp-json.test.mjs` — заглушка `expect(true).toBe(true)`; настоящие проверки `--init-mcp-json` — в `tests/init-mcp-json.test.mjs`.
+
+Полный прогон: 108 файлов, 1651 passed, 0 failed, 30 skipped, 4 todo.
+
 ## [4.0.0] — 2026-09-22
 
 ### Removed

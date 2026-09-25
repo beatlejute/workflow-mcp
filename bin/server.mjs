@@ -11,8 +11,8 @@ const usage = `
 Usage: workflow-mcp [options]
 
 Options:
-  --root <path>        Override current working directory
-  --init-mcp-json      Initialize .workflow-mcp.json (CLI mode)
+  --root <path>        Workspace root: projects are discovered in its subdirectories
+  --init-mcp-json      Add the "workflow" server to .mcp.json in the current directory
   -h, --help           Show this help message
 `;
 
@@ -20,18 +20,27 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const srcServerPath = resolve(__dirname, '..', 'src', 'server.mjs');
 
+// `help` обязан стоять в options: при strict: true parseArgs бросает на любом
+// флаге, которого там нет, и `--help`/`-h` падали стеком Node вместо справки.
 const options = {
   root: { type: 'string', default: process.cwd() },
   'init-mcp-json': { type: 'boolean', default: false },
+  help: { type: 'boolean', short: 'h', default: false },
 };
 
-const { values, positionals } = parseArgs({
-  options,
-  strict: true,
-  allowPositionals: true,
-});
+let values;
+try {
+  ({ values } = parseArgs({
+    options,
+    strict: true,
+    allowPositionals: true,
+  }));
+} catch (err) {
+  console.error(`${err.message}\n${usage}`);
+  process.exit(1);
+}
 
-if (values.help || positionals.includes('-h') || positionals.includes('--help')) {
+if (values.help) {
   console.log(usage);
   process.exit(0);
 }
