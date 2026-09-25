@@ -10,7 +10,7 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "js-yaml": "^4.1.1",
     "simple-git": "^3.27.0",
-    "workflow-ai": "^1.7.6",
+    "workflow-ai": "^1.8.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
