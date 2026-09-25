@@ -50,8 +50,8 @@ state:
 # `ghost_execution_log_marker`: его читает ещё и `list_ghost_executions`, но
 # из `<project>/.workflow-mcp.yaml`.
 #
-# Детектор `ghost_execution` пока не даст истинных срабатываний: маркер
-# `[GHOST-EXECUTION]` в лог не пишет ни раннер, ни сервер.
+# Маркер `[GHOST-EXECUTION]` печатает `verify-artifacts` из workflow-ai
+# (с 1.7.0) — на нём и срабатывает детектор `ghost_execution`.
 health:
   # Выключатель всей службы здоровья (src/health/service.mjs).
   enabled: true
