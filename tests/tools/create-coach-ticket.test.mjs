@@ -65,7 +65,8 @@ describe('create_coach_ticket', () => {
     const { frontmatter } = parseFrontmatter(content);
 
     expect(frontmatter.id).toBe(ticketId);
-    expect(frontmatter.type).toBe('COACH');
+    // Тип строчными — ключ agents_by_type раннера; с `COACH` тикет уходил не коучу.
+    expect(frontmatter.type).toBe('coach');
     expect(frontmatter.title).toContain('Coach gap: test-skill');
   });
 
@@ -165,5 +166,70 @@ describe('create_coach_ticket', () => {
     expect(frontmatter.context).toBeDefined();
     expect(Array.isArray(frontmatter.context.files)).toBe(true);
     expect(frontmatter.context.files).toContain(evidencePath);
+  });
+
+  // TC-007: описание пробела — в теле тикета целиком. До 2026-09-27 оно попадало
+  // только в заголовок (первые 60 символов), тело оставалось пустым шаблоном.
+  it('writes the full gap description, skill, evidence and DoD into the ticket body', async () => {
+    const gap = 'Ревью по evidence не находит агента: способности тикета уходят в выбор ревьюера, '
+      + 'а у безынструментного агента способности mcp не бывает.';
+    const result = await create_coach_ticket.execute({
+      project: projectPath,
+      target_skill: 'test-skill',
+      gap_description: gap,
+      evidence_path: 'reports/evidence.md'
+    });
+
+    expect(result.exit_code).toBe(0);
+    const { ticket_id } = JSON.parse(result.stdout);
+    const content = fs.readFileSync(path.join(projectPath, '.workflow', 'tickets', 'backlog', `${ticket_id}.md`), 'utf-8');
+    const { body } = parseFrontmatter(content);
+
+    const description = body.split('## Критерии готовности (Definition of Done)')[0];
+    expect(description).toContain('## Описание');
+    expect(description).toContain(gap);
+    expect(description).toContain('Скил: `test-skill`.');
+    expect(description).toContain('Evidence: `reports/evidence.md`.');
+    expect(body).toContain('- [ ] Правка скила `test-skill` устраняет пробел из описания');
+    expect(body).toContain('- [ ] Пробел зафиксирован тест-кейсом скила');
+    expect(body).not.toMatch(/^- \[ \] *$/m);
+  });
+
+  // TC-008: описание из пробелов не проходит проверку длины.
+  it('rejects a gap_description that is only whitespace around a short text', async () => {
+    const result = await create_coach_ticket.execute({
+      project: projectPath,
+      target_skill: 'test-skill',
+      gap_description: `          short desc          `
+    });
+
+    expect(result.exit_code).toBe(1);
+    expect(result.error_code).toBe('INVALID_PARAMETERS');
+    expect(result.stderr).toContain('at least 20 characters');
+    expect(result.stderr).toContain('(got 10)');
+  });
+
+  // TC-009: многострочное описание с пробелами по краям и без evidence — в теле
+  // обрезанный текст один раз, строки Evidence нет.
+  it('trims a multiline gap description and omits Evidence when no evidence_path is given', async () => {
+    const result = await create_coach_ticket.execute({
+      project: projectPath,
+      target_skill: 'test-skill',
+      gap_description: '\n   First line of the gap description\nsecond line  \n'
+    });
+
+    expect(result.exit_code).toBe(0);
+    const { ticket_id } = JSON.parse(result.stdout);
+    const { body } = parseFrontmatter(
+      fs.readFileSync(path.join(projectPath, '.workflow', 'tickets', 'backlog', `${ticket_id}.md`), 'utf-8')
+    );
+
+    expect(body).toContain('First line of the gap description\nsecond line\n');
+    expect(body.split('First line of the gap description').length).toBe(2);
+    // Отступ в начале строки — только пробелы и табы: `\s` захватил бы и
+    // перевод строки пустой строки перед текстом.
+    expect(body).not.toMatch(/^[ \t]+First line/m);
+    expect(body).not.toContain('Evidence:');
+    expect(body).not.toContain('undefined');
   });
 });

@@ -57,7 +57,12 @@ describe('валидация аргументов тикетных tools', () =>
     await expect(create_ticket({ project, type: '../../../evil', title: 'x' }))
       .rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
 
-    expect(fs.existsSync(path.join(root, 'evil-001.md'))).toBe(false);
+    // Обход записал бы файл на три уровня выше backlog/ — в каталог проекта, — а
+    // имя с workflow-ai 1.14.4 прописными (EVIL-001.md); проверяются оба
+    // каталога и оба регистра.
+    for (const dir of [project, root]) {
+      expect(fs.readdirSync(dir).filter((file) => /^evil-\d+\.md$/i.test(file))).toEqual([]);
+    }
   });
 
   it('обычные идентификаторы проходят', async () => {

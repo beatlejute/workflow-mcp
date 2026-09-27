@@ -372,6 +372,24 @@ export const run_skill_tests = {
 };
 
 /**
+ * Тело тикета-пробела для коуча: описание пробела полностью, скил и evidence,
+ * критерии готовности — то, чем коуч закрывает любую работу (правка скила и
+ * тест-кейс, SKILL.md коуча P0R2).
+ */
+function coachTicketBody({ target_skill, gap_description, evidence_path }) {
+  const lines = ['## Описание', '', gap_description.trim(), '', `Скил: \`${target_skill}\`.`];
+  if (evidence_path) lines.push(`Evidence: \`${evidence_path}\`.`);
+  lines.push(
+    '',
+    '## Критерии готовности (Definition of Done)',
+    '',
+    `- [ ] Правка скила \`${target_skill}\` устраняет пробел из описания`,
+    '- [ ] Пробел зафиксирован тест-кейсом скила (`tests/cases/`, запись в `tests/index.yaml`)'
+  );
+  return lines.join('\n');
+}
+
+/**
  * MCP Tool: create_coach_ticket
  *
  * Creates a coach-gap ticket in the project backlog via operations API.
@@ -426,11 +444,13 @@ export const create_coach_ticket = {
       };
     }
 
-    if (args.gap_description.length < 20) {
+    // Длина — без пробелов по краям: описание из одних пробелов дало бы тикет
+    // с пустым разделом «Описание».
+    if (args.gap_description.trim().length < 20) {
       return {
         exit_code: 1,
         stdout: '',
-        stderr: `gap_description must be at least 20 characters (got ${args.gap_description.length})`,
+        stderr: `gap_description must be at least 20 characters (got ${args.gap_description.trim().length})`,
         duration_ms: 0,
         error_code: 'INVALID_PARAMETERS'
       };
@@ -479,8 +499,13 @@ export const create_coach_ticket = {
     // Prepare ticket data
     const tags = ['coach-gap', `target_skill:${args.target_skill}`];
 
+    // Тип `coach` — строчными, как ключ `agents_by_type` раннера: с типом `COACH`
+    // тикет исполнялся не коучем, а общим списком агентов. Префикс ID `COACH`
+    // createTicket строит сам. Описание пробела — в теле тикета: прежде оно
+    // попадало только в заголовок, обрезанное до 60 символов, а тело оставалось
+    // пустым шаблоном — коучу нечего было исправлять.
     const data = {
-      type: 'COACH',
+      type: 'coach',
       title: `Coach gap: ${args.target_skill} - ${args.gap_description.substring(0, 60)}${args.gap_description.length > 60 ? '...' : ''}`,
       priority: priorityNum,
       tags,
@@ -488,7 +513,8 @@ export const create_coach_ticket = {
         files: args.evidence_path ? [args.evidence_path] : [],
         references: [],
         notes: `Coach gap identified for skill: ${args.target_skill}`
-      }
+      },
+      body: coachTicketBody(args)
     };
 
     if (args.evidence_path) {

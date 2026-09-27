@@ -347,8 +347,18 @@ describe('Ticket Tools', () => {
       });
 
       expect(ticket.frontmatter.title).toBe('New Implementation Task');
-      expect(ticket.frontmatter.type).toBe('IMPL');
+      // Тип во frontmatter — строчными (ключ agents_by_type раннера), префикс ID —
+      // прописными: так нормализует createTicket с workflow-ai 1.14.4.
+      expect(ticket.frontmatter.type).toBe('impl');
       expect(ticket.frontmatter.priority).toBe(2);
+    });
+
+    it('lowercase type gives an uppercase ID prefix and a lowercase type', async () => {
+      const result = await create_ticket({ project: projectPath, type: 'qa', title: 'Lowercase type' });
+
+      expect(result.id).toMatch(/^QA-\d+$/);
+      const ticket = await get_ticket({ project: projectPath, ticket_id: result.id });
+      expect(ticket.frontmatter.type).toBe('qa');
     });
 
     it('creates ticket in backlog directory', async () => {

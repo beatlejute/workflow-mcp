@@ -6,6 +6,7 @@ import { discoverProjects } from '../discovery.mjs';
 import { z } from 'zod';
 import { mcpCwd, tryResolveProjectRoot } from '../lib/project-root.mjs';
 import { isWorkflowDoc } from '../lib/workflow-docs.mjs';
+import yaml from 'workflow-ai/lib/js-yaml.mjs';
 
 /**
  * Get velocity metrics for a project grouped by time period
@@ -123,6 +124,26 @@ export async function get_velocity(project, { window_days = 14, group_by = 'day'
   };
 }
 
+// Типы тикетов без конфига проекта — типы шаблона config.yaml workflow-ai.
+const DEFAULT_TICKET_TYPES = ['IMPL', 'QA', 'DOCS', 'ARCH', 'FIX', 'REVIEW', 'ADMIN', 'COACH', 'HUMAN', 'RSH'];
+
+/**
+ * Известные типы тикетов проекта прописными: ключи `task_types` его
+ * `.workflow/config/config.yaml`. Прежний жёсткий список не знал `coach` и
+ * проектных типов (у documentaions — gml, pma, cro…): их тикеты уходили в OTHER.
+ * Нет конфига, он не разбирается или `task_types` пуст — список по умолчанию.
+ */
+function knownTicketTypes(projectRoot) {
+  try {
+    const config = yaml.load(fs.readFileSync(path.join(projectRoot, '.workflow', 'config', 'config.yaml'), 'utf8'));
+    const types = Object.keys(config?.task_types ?? {});
+    if (types.length > 0) return types.map((type) => type.toUpperCase());
+  } catch {
+    // нет конфига или он битый — ниже список по умолчанию
+  }
+  return DEFAULT_TICKET_TYPES;
+}
+
 /**
  * Get ticket statistics for a project
  * @param {string} project - Project path
@@ -179,7 +200,7 @@ export const get_ticket_stats = {
     // «16 тикетов неизвестного типа» на проекте, где шесть из них human,
     // восемь admin и два impl.
     const by_type = {};
-    const validTypes = ['IMPL', 'QA', 'DOCS', 'ARCH', 'FIX', 'REVIEW', 'ADMIN', 'HUMAN', 'RSH'];
+    const validTypes = knownTicketTypes(resolved.root);
     for (const [type, count] of Object.entries(result.by_type)) {
       const upper = typeof type === 'string' ? type.toUpperCase() : '';
       if (validTypes.includes(upper)) {

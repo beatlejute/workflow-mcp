@@ -29,7 +29,7 @@ workflow-ai — зависимость пакета (`dependencies` в `package.
 
 В проектах нужна структура `.workflow/`, которую создаёт `workflow init`. `run_skill_tests` вызывает скрипт проекта `.workflow/src/scripts/run-skill-tests.js`.
 
-**Версия.** При старте сервер сверяет установленный workflow-ai с диапазоном из `package.json` (сейчас `^1.14.3`):
+**Версия.** При старте сервер сверяет установленный workflow-ai с диапазоном из `package.json` (сейчас `^1.14.4`):
 
 - workflow-ai не найден — сервер не стартует: `FATAL: workflow-ai not found. Run npm install.`;
 - другая мажорная версия — не стартует;
@@ -196,7 +196,7 @@ const log = await client.callTool('get_pipeline_log', {
 | `get_project_status(project)` | Счётчики тикетов по статусам, активный план, последние шаги пайплайна, висящие human-задачи |
 | `get_velocity(project, window_days?, group_by?)` | Завершённые тикеты по дням или неделям |
 | `get_cycle_time(project, window_days?, percentiles?)` | Время от создания тикета до завершения: перцентили (по умолчанию p50, p90) и среднее, в секундах |
-| `get_ticket_stats(project, window_days?)` | Распределение по статусам и типам, 10 дольше всех заблокированных тикетов |
+| `get_ticket_stats(project, window_days?)` | Распределение по статусам и типам (типы — `task_types` конфига проекта, прочие — `OTHER`), 10 дольше всех заблокированных тикетов |
 | `aggregate_metrics(projects?, window_days?)` | Velocity, cycle time и статистика по нескольким проектам |
 
 ### Модели агентов (2)
@@ -226,7 +226,7 @@ const log = await client.callTool('get_pipeline_log', {
 |-----------|------------|
 | `list_skill_tests(project, skill_name?)` | Тест-кейсы скила из `index.yaml`, ничего не запускает |
 | `run_skill_tests(project, skill_name, test_ids?, parallel?, timeout_sec?)` | Прогон тестов скила скриптом проекта `.workflow/src/scripts/run-skill-tests.js`; нет скрипта — `SCRIPT_NOT_FOUND` |
-| `create_coach_ticket(project, target_skill, gap_description, evidence_path?, priority?)` | Тикет коуча на улучшение скила |
+| `create_coach_ticket(project, target_skill, gap_description, evidence_path?, priority?)` | Тикет коуча на улучшение скила: тип `coach`, описание пробела целиком в теле, DoD — правка скила и тест-кейс |
 
 ### Поиск (1)
 
