@@ -89,7 +89,7 @@ describe.runIf(process.platform === 'win32')('abort: отказ жёсткого
     expect(escalationAsked, 'до силового пути не дошли — тест ничего не доказал').toBe(true);
     expect(calls).toEqual([
       `taskkill /PID ${victim.pid}`,
-      `taskkill /F /PID ${victim.pid}`
+      `taskkill /F /T /PID ${victim.pid}`
     ]);
     expect(result.ok).toBe(false);
     expect(result.code).toBe('PERMISSION_DENIED');
@@ -248,7 +248,7 @@ describe.runIf(process.platform === 'win32')('Windows: форма отказа �
     expect(escalationAsked).toBe(true);
     expect(calls).toEqual([
       `taskkill /PID ${DEAD_PID}`,
-      `taskkill /F /PID ${DEAD_PID}`
+      `taskkill /F /T /PID ${DEAD_PID}`
     ]);
     expect(result).toMatchObject({ ok: true, pid: DEAD_PID, state: 'aborted', escalated: true });
   });
@@ -266,7 +266,7 @@ describe.runIf(process.platform === 'win32')('Windows: форма отказа �
 
     expect(calls).toEqual([
       `taskkill /PID ${DEAD_PID}`,
-      `taskkill /F /PID ${DEAD_PID}`
+      `taskkill /F /T /PID ${DEAD_PID}`
     ]);
     expect(result).toMatchObject({ ok: false, code: 'SPAWN_FAILED', pid: DEAD_PID });
   });

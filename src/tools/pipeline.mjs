@@ -791,7 +791,7 @@ export const list_running_pipelines = {
 /**
  * Implementation for abort_pipeline tool.
  * Graceful shutdown: SIGINT → wait grace_sec → SIGTERM (POSIX).
- * Windows: taskkill /PID → wait → taskkill /F.
+ * Windows: taskkill /PID → wait → taskkill /F /T.
  * Returns {pid, state: "aborted", duration_ms, escalated: bool}.
  * Parallel abort on same project → ALREADY_ABORTING.
  */

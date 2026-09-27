@@ -116,7 +116,7 @@ const log = await client.callTool('get_pipeline_log', {
 | `list_running_pipelines()` | Идущие пайплайны по всем проектам: состояние, стадия, шаг, `awaiting_approval`, владение |
 | `pause_pipeline(project)` | Приостанавливает раннер: `SIGSTOP` на POSIX, `pssuspend.exe` на Windows. Повторный вызов — `ALREADY_PAUSED` |
 | `resume_pipeline(project)` | Снимает паузу: `SIGCONT` / `pssuspend -r` |
-| `abort_pipeline(project, options: {grace_sec?})` | Мягкая остановка: `SIGINT`, ожидание, затем `SIGTERM`. `grace_sec` от 0 до 60, по умолчанию 10. Ответ `{ok, pid, state: 'aborted', duration_ms, escalated}` |
+| `abort_pipeline(project, options: {grace_sec?})` | Мягкая остановка: `SIGINT`, ожидание, затем `SIGTERM`; на Windows — `taskkill`, ожидание, затем `taskkill /F /T` по дереву раннера. `grace_sec` от 0 до 60, по умолчанию 10. Ответ `{ok, pid, state: 'aborted', duration_ms, escalated}` |
 | `stop_pipeline(project, options: {force?})` | Жёсткая остановка: `SIGKILL` / `taskkill /F /T` |
 
 **`start_pipeline`.** Единственный запуск на проект держит сам раннер через `.workflow/logs/.pipeline.lock`:

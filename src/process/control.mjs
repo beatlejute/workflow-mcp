@@ -254,7 +254,7 @@ export async function resume(pid) {
 /**
  * Gracefully abort a process with an optional grace period.
  * - POSIX: SIGINT → wait grace_sec → SIGTERM
- * - Windows: taskkill /PID <pid> (without /F) → wait → taskkill /F
+ * - Windows: taskkill /PID <pid> (without /F) → wait → taskkill /F /T
  * @param {number} pid - Process ID to abort
  * @param {{grace_sec?: number}} [options] - Options object
  * @param {number} [options.grace_sec=10] - Grace period in seconds before force termination
@@ -333,8 +333,12 @@ export async function abort(pid, options = {}) {
       return escalationRefused(winVerdict);
     }
 
-    // Force termination
-    const forceResult = await runExternal('taskkill', ['/F', '/PID', pid.toString()]);
+    // Force termination — деревом, как в `kill`: раннер на Windows запускает
+    // агента (кроме команды node) через оболочку, и без /T агент переживал
+    // снятие раннера и работал без присмотра
+    // (проверено запуском 2026-09-27: node → оболочка → node, после
+    // `taskkill /F` внук жив, после `taskkill /F /T` — нет).
+    const forceResult = await runExternal('taskkill', ['/F', '/T', '/PID', pid.toString()]);
     const escalated = !gracefulResult.ok || (gracefulResult.ok && forceResult.ok);
 
     if (forceResult.ok || gracefulResult.ok) {
