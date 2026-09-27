@@ -24,11 +24,12 @@ workflow-ai — зависимость пакета (`dependencies` в `package.
 |-----|------------------|
 | Раннер `bin/workflow.mjs` | `start_pipeline` запускает его отдельным процессом. Путь можно задать явно переменной `WORKFLOW_AI_BIN` |
 | Модули `workflow-ai/lib/operations/{tickets,plans,skills}.mjs` и `lib/utils.mjs` | Тикеты, планы и скилы (`move_ticket`, `create_ticket`, `list_plans`, `list_skills` и другие) — по тем же правилам, что у раннера |
+| Модуль `workflow-ai/lib/agent-runs.mjs` (с 1.14.0) | Таблица моделей агентов и снятие запрета (`get_model_stats`, `unban_model`) — по журналу запусков и правилам раннера |
 | `SKILL.md` скилов и шаблоны тикета, плана, отчёта | Ресурсы `workflow://skills/…` и `workflow://templates/…` |
 
 В проектах нужна структура `.workflow/`, которую создаёт `workflow init`. `run_skill_tests` вызывает скрипт проекта `.workflow/src/scripts/run-skill-tests.js`.
 
-**Версия.** При старте сервер сверяет установленный workflow-ai с диапазоном из `package.json` (сейчас `^1.7.4`):
+**Версия.** При старте сервер сверяет установленный workflow-ai с диапазоном из `package.json` (сейчас `^1.14.1`):
 
 - workflow-ai не найден — сервер не стартует: `FATAL: workflow-ai not found. Run npm install.`;
 - другая мажорная версия — не стартует;
@@ -93,7 +94,7 @@ npm install
 
 ## Инструменты
 
-37 инструментов. Сервер регистрирует всё, что экспортируют модули `src/tools/*.mjs` в форме инструмента (`name`, `description`, `inputSchema`, `execute`). Если модуль не загрузился (например, у слишком старого workflow-ai нет нужного модуля), сервер пишет в stderr, что список неполный, и перечисляет незагруженные файлы.
+39 инструментов. Сервер регистрирует всё, что экспортируют модули `src/tools/*.mjs` в форме инструмента (`name`, `description`, `inputSchema`, `execute`). Если модуль не загрузился (например, у слишком старого workflow-ai нет нужного модуля), сервер пишет в stderr, что список неполный, и перечисляет незагруженные файлы.
 
 Параметры ниже: `?` — необязательный. У `get_pipeline_log`, `abort_pipeline` и `stop_pipeline` дополнительные параметры лежат во вложенном объекте `options`, у остальных — рядом с `project`.
 
@@ -197,6 +198,15 @@ const log = await client.callTool('get_pipeline_log', {
 | `get_cycle_time(project, window_days?, percentiles?)` | Время от создания тикета до завершения: перцентили (по умолчанию p50, p90) и среднее, в секундах |
 | `get_ticket_stats(project, window_days?)` | Распределение по статусам и типам, 10 дольше всех заблокированных тикетов |
 | `aggregate_metrics(projects?, window_days?)` | Velocity, cycle time и статистика по нескольким проектам |
+
+### Модели агентов (2)
+
+Журнал запусков проекта `.workflow/metrics/agent-runs.jsonl` пишет раннер workflow-ai (с 1.14.0): запуск каждого агента с фактической моделью, результаты контроля артефактов и ревью, снятия запретов. Градации и запреты вычисляет модуль workflow-ai при чтении — у сервера своих правил нет. Градации, правила запрета и формат журнала — README workflow-ai, раздел «Журнал запусков и отсев моделей».
+
+| Инструмент | Что делает |
+|-----------|------------|
+| `get_model_stats(project, model?, ticket_type?)` | Запуски исполнителя по модели и типу тикета: число по градациям (`crashed`, `refused`, `stopped`, `empty`, `artifacts_failed`, `review_failed`, `accepted`, `pending`), доля пройденного контроля артефактов, доля принятых на ревью (только запуски с вердиктом ревью), запреты строки. Ответ `{journal, events, executor_runs, rows, bans: {permanent, crash}}`; у запрета — правило или срок и доказательства (запуски: время, тикет, агент, градация). Строка с `model: null` — запуски kilo с непрочитанной моделью, в правила они не идут. Временный запрет — на модель целиком, фильтром по типу не отсекается. Нечитаемый журнал — `JOURNAL_UNREADABLE` |
+| `unban_model(project, model, ticket_type?, reason)` | Снимает запрет событием `unban` в журнале: с `ticket_type` — постоянный запрет пары, без него — временный запрет модели. Запрета нет — `NO_BAN`, пустые `model` или `reason` — `BAD_INPUT`, журнал не меняется. Ответ `{ok, event, remaining}` — что ещё действует для модели; журнал не перечитался после записи — `remaining: null` и `remaining_error`. Запрет после записи остался (последняя строка журнала оборвана, событие склеилось с ней) — `UNBAN_NOT_APPLIED` |
 
 ### Git (5)
 

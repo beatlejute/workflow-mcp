@@ -7,6 +7,7 @@
   "cross_project_search",
   "get_cycle_time",
   "get_human_context",
+  "get_model_stats",
   "get_pipeline_log",
   "get_plan",
   "get_project_status",
@@ -35,5 +36,6 @@
   "resume_pipeline",
   "run_skill_tests",
   "start_pipeline",
-  "stop_pipeline"
+  "stop_pipeline",
+  "unban_model"
 ]
