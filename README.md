@@ -29,7 +29,7 @@ workflow-ai — зависимость пакета (`dependencies` в `package.
 
 В проектах нужна структура `.workflow/`, которую создаёт `workflow init`. `run_skill_tests` вызывает скрипт проекта `.workflow/src/scripts/run-skill-tests.js`.
 
-**Версия.** При старте сервер сверяет установленный workflow-ai с диапазоном из `package.json` (сейчас `^1.14.1`):
+**Версия.** При старте сервер сверяет установленный workflow-ai с диапазоном из `package.json` (сейчас `^1.14.2`):
 
 - workflow-ai не найден — сервер не стартует: `FATAL: workflow-ai not found. Run npm install.`;
 - другая мажорная версия — не стартует;
