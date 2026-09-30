@@ -177,6 +177,26 @@ describe('Plan Tools', () => {
       expect(Array.isArray(plan.human_tickets)).toBe(true);
     });
 
+    // Тикеты ссылаются на план полем parent_plan (путём или ID); фильтр только по полю
+    // plan_id, которого никто не пишет, отдавал план без тикетов.
+    it('lists tickets that reference the plan by parent_plan path or ID', async () => {
+      createPlanFile(projectPath, 'current', 'PLAN-001.md', { id: 'PLAN-001', title: 'Plan', status: 'active' });
+      const write = (stage, id, fm) => {
+        const dir = path.join(projectPath, '.workflow', 'tickets', stage);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, `${id}.md`), `---\nid: ${id}\ntitle: ${id}\n${fm}---\n\nbody\n`);
+      };
+      write('backlog', 'IMPL-001', 'type: impl\nparent_plan: plans/current/PLAN-001.md\n');
+      write('done', 'QA-001', 'type: qa\nparent_plan: PLAN-001\n');
+      write('ready', 'HUMAN-001', 'type: human\nparent_plan: plans/current/PLAN-001.md\n');
+      write('backlog', 'IMPL-002', 'type: impl\nparent_plan: plans/current/PLAN-002.md\n');
+
+      const plan = await get_plan({ project: projectPath, plan_id: 'PLAN-001' });
+
+      expect(plan.tickets.map((t) => t.id).sort()).toEqual(['IMPL-001', 'QA-001']);
+      expect(plan.human_tickets.map((t) => t.id)).toEqual(['HUMAN-001']);
+    });
+
     it('returns plan from archive directory', async () => {
       createPlanFile(projectPath, 'archive', 'PLAN-ARCHIVED.md', {
         id: 'PLAN-ARCHIVED',

@@ -177,7 +177,7 @@ const log = await client.callTool('get_pipeline_log', {
 |-----------|------------|
 | `list_tickets(project, status?, plan_id?, priority?, type?)` | Тикеты с фильтрами. `status` — каталог: `backlog`, `ready`, `in-progress`, `review`, `blocked`, `done`, `archive`; без него — все |
 | `get_ticket(project, ticket_id)` | `{frontmatter, body, status_from_dir, path}`; статус — по каталогу, а не по frontmatter |
-| `create_ticket(project, type, title, priority?, plan_id?, body?)` | Тикет в `backlog/`. `priority` — число, 1 — высший, по умолчанию 3. У `type: 'human'` в frontmatter добавляется `executor_type: human` |
+| `create_ticket(project, type, title, priority?, plan_id?, body?, dependencies?, context_files?)` | Тикет в `backlog/`. `priority` — число, 1 — высший, по умолчанию 3. `plan_id` плана с файлом пишется в `parent_plan` путём. Записи check, prose или visual под пунктами DoD `body` дают `dod_format: 2`; пункт без полной записи — `INVALID_DOD`. `dependencies` — ID существующих тикетов, `context_files` — пути от корня проекта. У `type: 'human'` в frontmatter добавляется `executor_type: human` |
 | `move_ticket(project, ticket_id, target)` | Перенос в другой статус с проверкой допустимости перехода |
 | `pick_next_ticket(project)` | Следующий тикет в работу по правилам проекта |
 | `list_plans(project, status?)` | Планы: `draft`, `approved`, `active`, `completed`, `archived` |

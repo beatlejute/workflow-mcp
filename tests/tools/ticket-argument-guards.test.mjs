@@ -65,6 +65,12 @@ describe('валидация аргументов тикетных tools', () =>
     }
   });
 
+  it('create_ticket не принимает зависимость с путём: ID зависимости — имя файла', async () => {
+    await expect(create_ticket({ project, type: 'fix', title: 'x', dependencies: ['../../secret'] }))
+      .rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+    expect(fs.readdirSync(path.join(project, '.workflow', 'tickets', 'backlog'))).toEqual(['IMPL-1.md']);
+  });
+
   it('обычные идентификаторы проходят', async () => {
     const ticket = await get_ticket({ project, ticket_id: 'IMPL-1' });
     expect(ticket.frontmatter.id).toBe('IMPL-1');

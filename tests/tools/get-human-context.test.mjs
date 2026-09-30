@@ -189,6 +189,23 @@ describe('get_human_context', () => {
       expect(context.pipeline_steps[1].timestamp).toBe('2026-04-26T10:01:00');
     });
 
+    // Декомпозиция и createTicket пишут parent_plan от каталога .workflow/
+    // (`plans/current/PLAN-001.md`); склейка с корнем проекта такой план не находила.
+    it('finds parent_plan written relative to .workflow/', async () => {
+      createPlanFile(projectPath, 'PLAN-001.md', { id: 'PLAN-001', title: 'Main Plan' });
+      createTicketFile(projectPath, 'ready', 'HUMAN-3.md', {
+        id: 'HUMAN-3',
+        title: 'Human Task With Plan Path',
+        type: 'human',
+        parent_plan: 'plans/PLAN-001.md'
+      }, 'body');
+
+      const context = await get_human_context({ project: projectPath, ticket_id: 'HUMAN-3' });
+
+      expect(context.parent_plan).not.toBeNull();
+      expect(context.parent_plan.id).toBe('PLAN-001');
+    });
+
     it('returns context for human ticket without parent_plan', async () => {
       createTicketFile(projectPath, 'ready', 'HUMAN-2.md', {
         id: 'HUMAN-2',

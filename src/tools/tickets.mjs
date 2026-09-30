@@ -1,4 +1,4 @@
-import { parseFrontmatter, serializeFrontmatter } from 'workflow-ai/lib/utils.mjs';
+import { parseFrontmatter, serializeFrontmatter, normalizePlanId } from 'workflow-ai/lib/utils.mjs';
 import { getFrontmatter, invalidate as invalidateCache } from '../caches/frontmatter-cache.mjs';
 import {
   moveTicket,
@@ -44,6 +44,61 @@ function assertPathSegment(value, field) {
   return value;
 }
 
+function invalidArgument(message) {
+  const err = new Error(message);
+  err.code = 'INVALID_ARGUMENT';
+  return err;
+}
+
+/**
+ * Тикет ссылается на план полем `parent_plan` — путём `plans/current/PLAN-001.md` (так
+ * пишут декомпозиция и createTicket) или ID. Поле `plan_id` во frontmatter не пишет никто,
+ * и фильтр только по нему не находил тикетов: `get_plan` отдавал план без тикетов.
+ */
+function belongsToPlan(frontmatter, planId) {
+  const ref = frontmatter.parent_plan || frontmatter.plan_id;
+  if (!ref) return false;
+  const ticketPlan = normalizePlanId(String(ref));
+  const wanted = normalizePlanId(String(planId));
+  if (ticketPlan && wanted) return ticketPlan === wanted;
+  return path.basename(String(ref).replace(/\\/g, '/'), '.md') === String(planId);
+}
+
+/**
+ * Зависимости create_ticket — ID существующих тикетов. ID — имя файла, которое раннер ищет
+ * в done/ и archive/ дословно: `IMPL-4` при файле `IMPL-004.md` не выполнилась бы никогда,
+ * и тикет навсегда остался бы в backlog/.
+ */
+function checkDependencies(ticketsDir, dependencies) {
+  const ids = [...new Set(dependencies ?? [])];
+  for (const dep of ids) {
+    assertPathSegment(dep, 'dependencies');
+    const found = TICKET_STATUSES.some((st) => {
+      const dir = path.join(ticketsDir, st);
+      return fs.existsSync(dir) && fs.readdirSync(dir).includes(`${dep}.md`);
+    });
+    if (!found) throw invalidArgument(`Unknown dependency: ${dep} — no ticket file ${dep}.md in ${TICKETS_DIR}`);
+  }
+  return ids;
+}
+
+/**
+ * Файлы контекста — пути от корня проекта: их читает и правит исполнитель. Абсолютный путь
+ * и `..` увели бы его за пределы проекта.
+ */
+function checkContextFiles(files) {
+  const result = [];
+  for (const raw of files ?? []) {
+    const file = typeof raw === 'string' ? raw.trim().replace(/\\/g, '/') : '';
+    if (!file || /[\r\n]/.test(file) || path.posix.isAbsolute(file) || path.win32.isAbsolute(file)
+      || file.split('/').includes('..')) {
+      throw invalidArgument(`Invalid context_files entry: ${JSON.stringify(raw)} — a project-relative path without ..`);
+    }
+    if (!result.includes(file)) result.push(file);
+  }
+  return result;
+}
+
 /**
  * list_tickets — фильтры + frontmatter-cache для списков
  */
@@ -72,7 +127,7 @@ export async function list_tickets({ project, status, plan_id, priority, type })
         const { frontmatter } = getFrontmatter(filePath);
 
         // Фильтр по plan_id
-        if (plan_id !== undefined && frontmatter.plan_id !== plan_id) {
+        if (plan_id !== undefined && !belongsToPlan(frontmatter, plan_id)) {
           continue;
         }
 
@@ -199,17 +254,24 @@ export async function move_ticket({ project, ticket_id, target }) {
 /**
  * create_ticket — обёртка operations/tickets::createTicket + executor_type для HUMAN
  */
-export async function create_ticket({ project, type, title, priority, plan_id, body }) {
+export async function create_ticket({ project, type, title, priority, plan_id, body, dependencies, context_files }) {
   assertPathSegment(type, 'type');
   const projectRoot = resolveProjectRoot(project);
+  const deps = checkDependencies(path.join(projectRoot, TICKETS_DIR), dependencies);
+  const files = checkContextFiles(context_files);
 
-  // Собираем данные для createTicket
+  // Собираем данные для createTicket. dod_format и путь плана createTicket ставит сам
+  // (workflow-ai 1.21.2): по записям проверки в DoD тела и по файлу плана; тело формата 2
+  // с пунктом без полной записи — ошибка INVALID_DOD. ListeningGlass 2026-09-30: тикет из
+  // этого tool вышел без dod_format, без файлов контекста и с `parent_plan: PLAN-001`.
   const data = {
     type,
     title,
     priority,
     plan_id,
-    body
+    body,
+    ...(deps.length ? { dependencies: deps } : {}),
+    ...(files.length ? { context: { files, references: [], notes: '' } } : {})
   };
 
   // Создание тикета через operations
@@ -291,14 +353,16 @@ export const move_ticket_tool = {
 
 export const create_ticket_tool = {
   name: 'create_ticket',
-  description: 'Create a ticket in the backlog; type "human" also gets executor_type: human in frontmatter',
+  description: 'Create a ticket in the backlog with optional dependencies and context files; DoD check/prose/visual records give dod_format: 2; type "human" also gets executor_type: human in frontmatter',
   inputSchema: z.object({
     project: z.string().describe('Project path or name'),
     type: z.string().describe('Ticket type (impl, qa, fix, human, ...)'),
     title: z.string().describe('Ticket title'),
     priority: z.number().optional().describe('Priority, 1 = highest (default: 3)'),
-    plan_id: z.string().optional().describe('Parent plan ID (e.g. PLAN-001)'),
-    body: z.string().optional().describe('Ticket body in Markdown')
+    plan_id: z.string().optional().describe('Parent plan ID (e.g. PLAN-001); written as the plan path when the plan file exists'),
+    body: z.string().optional().describe('Ticket body in Markdown; DoD items with check/prose/visual records give dod_format: 2'),
+    dependencies: z.array(z.string()).optional().describe('IDs of existing tickets that must be done first, exactly as their file names (e.g. ["IMPL-004"])'),
+    context_files: z.array(z.string()).optional().describe('Project-relative files the executor reads and may change (context.files)')
   }),
   async execute(args) {
     return create_ticket(args);

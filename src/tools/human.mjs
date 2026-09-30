@@ -185,7 +185,11 @@ export async function get_human_context({ project, ticket_id }) {
   // Get parent_plan from frontmatter
   if (ticketFrontmatter.parent_plan) {
     try {
-      const planPath = path.join(projectRoot, ticketFrontmatter.parent_plan);
+      // parent_plan — путь от каталога .workflow/ (`plans/current/PLAN-001.md`, так
+      // пишут декомпозиция и createTicket) или от корня проекта (`.workflow/plans/…`).
+      const ref = String(ticketFrontmatter.parent_plan);
+      const fromRoot = path.join(projectRoot, ref);
+      const planPath = fs.existsSync(fromRoot) ? fromRoot : path.join(projectRoot, '.workflow', ref);
       if (fs.existsSync(planPath)) {
         const planContent = fs.readFileSync(planPath, 'utf8');
         const { frontmatter: planFrontmatter } = parseFrontmatter(planContent);

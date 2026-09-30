@@ -394,6 +394,66 @@ describe('Ticket Tools', () => {
       expect(id2Num).toBeGreaterThan(id1Num);
     });
 
+    // ListeningGlass 2026-09-30: тикет из create_ticket вышел без dod_format, без файлов
+    // контекста и с parent_plan: PLAN-001 — соседние тикеты плана несут путь плана.
+    it('writes dependencies and context_files to frontmatter, deduplicated and with forward slashes', async () => {
+      createTicketFile(projectPath, 'done', 'IMPL-004.md', { id: 'IMPL-004', title: 'Dep', type: 'impl' });
+
+      const result = await create_ticket({
+        project: projectPath,
+        type: 'fix',
+        title: 'With context',
+        dependencies: ['IMPL-004', 'IMPL-004'],
+        context_files: ['package.json', 'src\\site-list.js', 'package.json']
+      });
+
+      const ticket = await get_ticket({ project: projectPath, ticket_id: result.id });
+      expect(ticket.frontmatter.dependencies).toEqual(['IMPL-004']);
+      expect(ticket.frontmatter.context.files).toEqual(['package.json', 'src/site-list.js']);
+    });
+
+    // ID зависимости — имя файла, которое раннер ищет дословно: `IMPL-4` при файле
+    // `IMPL-004.md` держал бы тикет в backlog/ навсегда.
+    it('rejects a dependency without a ticket file', async () => {
+      createTicketFile(projectPath, 'done', 'IMPL-004.md', { id: 'IMPL-004', title: 'Dep', type: 'impl' });
+
+      await expect(create_ticket({ project: projectPath, type: 'fix', title: 'x', dependencies: ['IMPL-4'] }))
+        .rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+    });
+
+    it('rejects context_files outside the project', async () => {
+      for (const bad of ['../secret.md', 'C:\\Windows\\win.ini', '/etc/passwd', '', 'a\nb', 'src/../../x']) {
+        await expect(create_ticket({ project: projectPath, type: 'fix', title: 'x', context_files: [bad] }))
+          .rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+      }
+    });
+
+    it('rejects a DoD with checks where an item has no full record', async () => {
+      await expect(create_ticket({
+        project: projectPath,
+        type: 'fix',
+        title: 'Mixed',
+        body: '## Критерии готовности (Definition of Done)\n\n- [ ] С проверкой\n  - check: `npm test`, expect: `exit 0`\n- [ ] Без записи\n'
+      })).rejects.toMatchObject({ code: 'INVALID_DOD' });
+    });
+
+    it('sets dod_format: 2 for DoD check records and writes an existing plan as its path', async () => {
+      fs.mkdirSync(path.join(projectPath, '.workflow', 'plans', 'current'), { recursive: true });
+      fs.writeFileSync(path.join(projectPath, '.workflow', 'plans', 'current', 'PLAN-001.md'), '---\nid: PLAN-001\n---\n');
+
+      const result = await create_ticket({
+        project: projectPath,
+        type: 'fix',
+        title: 'With checks',
+        plan_id: 'PLAN-001',
+        body: '## Критерии готовности (Definition of Done)\n\n- [ ] Скрипт запускает тесты\n  - check: `npm test`, expect: `exit 0`\n'
+      });
+
+      const ticket = await get_ticket({ project: projectPath, ticket_id: result.id });
+      expect(ticket.frontmatter.dod_format).toBe(2);
+      expect(ticket.frontmatter.parent_plan).toBe('plans/current/PLAN-001.md');
+    });
+
     it('sets executor_type to human for human type (case-insensitive)', async () => {
       const result = await create_ticket({
         project: projectPath,
