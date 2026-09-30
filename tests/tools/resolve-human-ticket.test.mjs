@@ -184,6 +184,130 @@ describe('resolve_human_ticket', () => {
     });
   });
 
+  // ListeningGlass HUMAN-001, 2026-09-30: результат дописывался секцией в конец, штатная
+  // «## Результат выполнения» оставалась пустой, DoD — без отметок, и verify-artifacts
+  // отклонял сданную работу (result_filled=false, dod_completion_pct=0).
+  describe('Ticket template', () => {
+    function createTemplateTicket(status, ticketId) {
+      const content = `---
+id: ${ticketId}
+type: human
+title: "Test ${ticketId}"
+priority: 1
+---
+## Описание
+
+Проверка на устройстве
+
+## Критерии готовности (Definition of Done)
+
+- [ ] В RESULT.md записан результат
+  - check: \`git grep -q --untracked "Результат:" -- RESULT.md\`, expect: \`exit 0\`
+- [ ] Записана версия браузера
+
+---
+
+## Результат выполнения
+
+### Summary
+
+### Изменённые файлы
+
+### Время выполнения
+
+- Started:
+- Completed:
+
+## История работы
+| Дата/время | Скил | Агент | Статус |
+|------------|------|-------|--------|
+`;
+      const ticketPath = path.join(projectPath, '.workflow', 'tickets', status, `${ticketId}.md`);
+      fs.writeFileSync(ticketPath, content);
+      return ticketPath;
+    }
+
+    function section(body, heading) {
+      const start = body.indexOf(heading) + heading.length;
+      const next = body.indexOf('\n## ', start);
+      return body.substring(start, next === -1 ? body.length : next);
+    }
+
+    it('fills the template result section instead of appending a second one', async () => {
+      createTemplateTicket('ready', 'HUMAN-T1');
+
+      const result = await resolve_human_ticket({
+        project: 'test-project',
+        ticket_id: 'HUMAN-T1',
+        decision: 'оба пути работают',
+        result_body: '### Summary\n\nПроверено на телефоне.\n\n### Изменённые файлы\n\n- `RESULT.md`',
+        next_status: 'review'
+      });
+
+      const reviewPath = path.join(projectPath, '.workflow', 'tickets', 'review', 'HUMAN-T1.md');
+      expect(result.path).toBe(reviewPath);
+      const { body } = parseFrontmatter(fs.readFileSync(reviewPath, 'utf8'));
+
+      expect(body.match(/^##[ \t]*(Результат выполнения|Результат|Result)[ \t]*$/gm)).toEqual(['## Результат выполнения']);
+      const resultSection = section(body, '## Результат выполнения');
+      expect(resultSection).toContain('**Решение:** оба пути работают');
+      expect(resultSection).toContain('Проверено на телефоне.');
+      expect(resultSection).not.toContain('- Started:');
+      expect(body).toContain('## История работы');
+    });
+
+    it('ticks DoD items when moving to review', async () => {
+      createTemplateTicket('ready', 'HUMAN-T2');
+
+      await resolve_human_ticket({
+        project: 'test-project',
+        ticket_id: 'HUMAN-T2',
+        decision: 'done',
+        result_body: 'Проверено.',
+        next_status: 'review'
+      });
+
+      const reviewPath = path.join(projectPath, '.workflow', 'tickets', 'review', 'HUMAN-T2.md');
+      const dod = section(fs.readFileSync(reviewPath, 'utf8'), '## Критерии готовности (Definition of Done)');
+      expect(dod.match(/\[x\]/g)).toHaveLength(2);
+      expect(dod).not.toContain('[ ]');
+      expect(dod).toContain('- check: `git grep');
+    });
+
+    it('leaves DoD items unticked when the ticket is blocked', async () => {
+      createTemplateTicket('in-progress', 'HUMAN-T3');
+
+      await resolve_human_ticket({
+        project: 'test-project',
+        ticket_id: 'HUMAN-T3',
+        decision: 'нет телефона',
+        result_body: 'Проверка не проведена.',
+        next_status: 'blocked'
+      });
+
+      const blockedPath = path.join(projectPath, '.workflow', 'tickets', 'blocked', 'HUMAN-T3.md');
+      const content = fs.readFileSync(blockedPath, 'utf8');
+      expect(section(content, '## Критерии готовности (Definition of Done)').match(/\[ \]/g)).toHaveLength(2);
+      expect(section(content, '## Результат выполнения')).toContain('Проверка не проведена.');
+    });
+
+    it('does not nest a result heading passed in result_body', async () => {
+      createTicket('review', 'HUMAN-T4', { type: 'human' });
+
+      await resolve_human_ticket({
+        project: 'test-project',
+        ticket_id: 'HUMAN-T4',
+        decision: 'approved',
+        result_body: '## Результат\n\nТест пройден.'
+      });
+
+      const donePath = path.join(projectPath, '.workflow', 'tickets', 'done', 'HUMAN-T4.md');
+      const { body } = parseFrontmatter(fs.readFileSync(donePath, 'utf8'));
+      expect(body.match(/^##[ \t]*(Результат выполнения|Результат|Result)[ \t]*$/gm)).toEqual(['## Результат выполнения']);
+      expect(body).toContain('Тест пройден.');
+    });
+  });
+
   describe('Ticket removal from queue', () => {
     it('should remove resolved ticket from list_human_queue result', async () => {
       // Setup: Create two HUMAN tickets in review/ (valid transition: review -> done)

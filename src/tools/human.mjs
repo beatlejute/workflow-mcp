@@ -292,8 +292,41 @@ export async function get_human_context({ project, ticket_id }) {
   return result;
 }
 
+// Те же заголовки, что у verify-artifacts workflow-ai: первая такая секция — результат тикета.
+// [ \t] вместо \s: иначе совпадение захватывает перевод строки, и секция начинается строкой ниже.
+const RESULT_HEADING = /^##[ \t]*(Результат выполнения|Результат|Result)[ \t]*$/m;
+const DOD_HEADING = /^##[ \t]*(?:Критерии готовности|Definition of Done)(?:[ \t]*\([^)]*\))?[ \t]*$/m;
+
+function sectionBounds(body, heading) {
+  const match = heading.exec(body);
+  if (!match) return null;
+  const start = match.index + match[0].length;
+  const nextH2 = body.indexOf('\n## ', start);
+  return { start, end: nextH2 === -1 ? body.length : nextH2 };
+}
+
+/** result_body с собственным заголовком результата — без него, иначе секция в секции. */
+function stripResultHeading(resultBody) {
+  return resultBody.trim().replace(/^##[ \t]*(Результат выполнения|Результат|Result)[ \t]*\n+/, '');
+}
+
+/** Заменяет содержимое секции результата; нет секции — добавляет её в конец. */
+function fillResultSection(body, content) {
+  const bounds = sectionBounds(body, RESULT_HEADING);
+  if (!bounds) return `${body.trimEnd()}\n\n## Результат выполнения\n\n${content}`;
+  return `${body.slice(0, bounds.start)}\n\n${content}${body.slice(bounds.end)}`;
+}
+
+/** Отмечает пункты DoD: человек сдаёт работу, их check-проверки дальше гоняет verify-artifacts. */
+function checkDoDItems(body) {
+  const bounds = sectionBounds(body, DOD_HEADING);
+  if (!bounds) return body;
+  const section = body.slice(bounds.start, bounds.end).replace(/^(\s*[-*]\s+)\[ \]/gm, '$1[x]');
+  return body.slice(0, bounds.start) + section + body.slice(bounds.end);
+}
+
 /**
- * Resolve a human ticket by adding result section and moving it to next status
+ * Resolve a human ticket by filling its result section and moving it to next status
  * @param {Object} params - Parameters
  * @param {string} params.project - Project path or name
  * @param {string} params.ticket_id - Ticket ID to resolve
@@ -419,12 +452,15 @@ export async function resolve_human_ticket({ project, ticket_id, decision, resul
       }
     }
 
-    // Prepare result section
+    // Результат — в штатную секцию шаблона, а не новой секцией в конце: verify-artifacts
+    // читает первую «## Результат выполнения», и пустой шаблон перед дописанной секцией
+    // давал result_filled=false и 0% DoD (ListeningGlass HUMAN-001, 2026-09-30).
     const isoDate = new Date().toISOString();
-    const resultSection = `\n\n## Результат\n**Решение:** ${decision}\n**Дата:** ${isoDate}\n**Исполнитель:** human\n${result_body}`;
-
-    // Add result section to body
-    const newBody = body + resultSection;
+    const resultContent = `**Решение:** ${decision}\n**Дата:** ${isoDate}\n**Исполнитель:** human\n\n${stripResultHeading(result_body)}\n`;
+    let newBody = fillResultSection(body, resultContent);
+    if (next_status === 'review' || next_status === 'done') {
+      newBody = checkDoDItems(newBody);
+    }
 
     // Update frontmatter with review_log entry
     if (!frontmatter.review_log) {
@@ -443,17 +479,17 @@ export async function resolve_human_ticket({ project, ticket_id, decision, resul
     fs.writeFileSync(ticketPath, newContent);
     
     // Move the ticket to next status
-    await move_ticket({ project, ticket_id, target: next_status });
-    
+    const moved = await move_ticket({ project, ticket_id, target: next_status });
+
     // Clean up lock file
     if (fs.existsSync(lockFilePath)) {
       fs.unlinkSync(lockFilePath);
     }
-    
+
     return {
       id: ticket_id,
       new_status: next_status,
-      path: ticketPath
+      path: moved?.path ?? ticketPath
     };
     
   } catch (e) {
@@ -500,12 +536,12 @@ export const get_human_context_tool = {
 
 export const resolve_human_ticket_tool = {
   name: 'resolve_human_ticket',
-  description: 'Resolve a HUMAN ticket: append the result section and move the ticket to the next status',
+  description: 'Resolve a HUMAN ticket: fill its result section, tick its DoD items when moving to review or done, and move the ticket to the next status',
   inputSchema: z.object({
     project: z.string().describe('Project path or name'),
     ticket_id: z.string().describe('Ticket ID (e.g. HUMAN-12)'),
     decision: z.string().describe('Decision recorded in the result section'),
-    result_body: z.string().describe('Result body appended to the ticket'),
+    result_body: z.string().describe('Result body written into the ticket result section'),
     next_status: z.enum(STATUS_DIRS).optional().describe('Target status (default: done)'),
     strict: z.boolean().optional().describe('Enable strict validation of the result, overriding human_ticket config')
   }),

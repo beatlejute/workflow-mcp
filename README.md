@@ -185,7 +185,7 @@ const log = await client.callTool('get_pipeline_log', {
 | `list_skills(project?)` | Скилы проекта: общие из установки workflow-ai (`shared`) и скопированные в проект (`ejected`); без `project` — только общие |
 | `list_human_queue(project?, status?)` | HUMAN-тикеты по всем проектам или по одному, по приоритету и возрасту |
 | `get_human_context(project, ticket_id)` | HUMAN-тикет с планом, зависимостями, связанными отчётами и шагами пайплайна |
-| `resolve_human_ticket(project, ticket_id, decision, result_body, next_status?, strict?)` | Дописывает результат и переводит тикет в следующий статус (по умолчанию `done`). `strict` включает строгую проверку результата на этот вызов (см. [Проверка результата human-тикета](#проверка-результата-human-тикета)) |
+| `resolve_human_ticket(project, ticket_id, decision, result_body, next_status?, strict?)` | Пишет решение и результат в секцию результата тикета, при переводе в `review` или `done` отмечает пункты DoD и переводит тикет в следующий статус (по умолчанию `done`). `strict` включает строгую проверку результата на этот вызов (см. [Проверка результата human-тикета](#проверка-результата-human-тикета)) |
 
 ### Проект и аналитика (5)
 
