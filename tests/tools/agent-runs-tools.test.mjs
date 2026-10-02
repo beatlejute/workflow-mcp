@@ -26,6 +26,12 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { get_model_stats, unban_model, get_model_stats_tool, unban_model_tool } from '../../src/tools/agent-runs.mjs';
+import * as agentRunsLib from 'workflow-ai/lib/agent-runs.mjs';
+
+// Запрет «модель недоступна» считает workflow-ai (unavailableBans), которого нет в пакете
+// 1.23.1. Описание unban_model обещает его снятие, поэтому поведенческий тест ниже ждёт
+// зависимости с unavailableBans: до неё он пропущен, после — охраняет обещание.
+const HAS_UNAVAILABLE_BAN = typeof agentRunsLib.unavailableBans === 'function';
 
 let root;
 let seq = 0;
@@ -198,6 +204,27 @@ describe('unban_model', () => {
     expect(stats.bans.crash).toEqual([]);
   });
 
+  // Сбои `error` подряд: три — запрет «модель недоступна» на час (rule: 'unavailable'). Запрет за
+  // сбой при этом короткий (crash_ttl_ms минута) и давно истёк, так что действует только первый.
+  it.skipIf(!HAS_UNAVAILABLE_BAN)('без типа тикета снимается и запрет «модель недоступна», серия считается заново', async () => {
+    const failure = (ts) => run('model-c', 'impl', { ts, status: 'error', changed_files: 0, crash_ttl_ms: 60000 });
+    writeJournal([20, 15, 10].map((m) => failure(minutesAgo(m))));
+    const unavailable = async () => (await get_model_stats({ project: root })).bans.crash.filter((b) => b.rule === 'unavailable');
+    expect((await unavailable()).map((b) => b.model)).toEqual(['model-c']);
+
+    const result = await unban_model({ project: root, model: 'model-c', reason: 'провайдер починили' });
+
+    expect(result.event).toMatchObject({ type: 'unban', model: 'model-c', reason: 'провайдер починили' });
+    expect(result.remaining.crash).toEqual([]);
+    expect(await unavailable()).toEqual([]);
+
+    // Серия считается заново: два новых сбоя запрета не дают, третий — запрет с failures: 3.
+    fs.appendFileSync(journalPath(), [1, 2].map(() => JSON.stringify(failure(new Date().toISOString()))).join('\n') + '\n');
+    expect(await unavailable()).toEqual([]);
+    fs.appendFileSync(journalPath(), JSON.stringify(failure(new Date().toISOString())) + '\n');
+    expect((await unavailable()).map((b) => [b.model, b.failures])).toEqual([['model-c', 3]]);
+  });
+
   it('ответ показывает, что для модели ещё действует', async () => {
     writeJournal([...fixture(), ...crash('model-a', 'docs')]);
     const result = await unban_model({ project: root, model: 'model-a', ticket_type: 'impl', reason: 'снято' });
@@ -261,5 +288,15 @@ describe('схемы инструментов', () => {
     expect(unban_model_tool.inputSchema.safeParse({ project: 'p', model: 'm' }).success).toBe(false);
     expect(unban_model_tool.inputSchema.safeParse({ project: 'p', reason: 'r' }).success).toBe(false);
     expect(get_model_stats_tool.inputSchema.safeParse({ project: 'p' }).success).toBe(true);
+  });
+
+  // Без ticket_type снятие относится ко всем временным запретам модели: за сбой и за серию
+  // «модель недоступна» (workflow-ai, recordUnban и unavailableBans: серия считается
+  // заново с этого unban). Агент узнаёт это только из описания.
+  it('unban_model в описании называет оба временных запрета и пересчёт серии', () => {
+    expect(unban_model_tool.description).toMatch(
+      /without it — the temporary bans of the model: for a crash and for a series of "model unavailable" failures \(the series is counted anew from this unban\)/
+    );
+    expect(unban_model_tool.inputSchema.shape.ticket_type.description).toMatch(/omit for the temporary bans of the model \(crash, "model unavailable"\)/);
   });
 });

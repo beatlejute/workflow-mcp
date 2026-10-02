@@ -65,7 +65,8 @@ export async function get_model_stats({ project, model, ticket_type }) {
 
 /**
  * unban_model — снятие запрета человеком: событие `unban` в журнале. С `ticket_type` —
- * постоянный запрет пары «модель + тип тикета», без него — временный запрет модели.
+ * постоянный запрет пары «модель + тип тикета», без него — временные запреты модели: за
+ * сбой и за серию «модель недоступна» (серия считается заново с этого unban).
  * Запрета нет — NO_BAN, строка не пишется.
  *
  * После записи журнал перечитывается: запрет, который остался действовать, — отказ
@@ -76,7 +77,7 @@ export async function get_model_stats({ project, model, ticket_type }) {
  * @param {Object} params
  * @param {string} params.project - Путь к проекту или имя
  * @param {string} params.model - Модель, как в таблице get_model_stats
- * @param {string} [params.ticket_type] - Тип тикета постоянного запрета
+ * @param {string} [params.ticket_type] - Тип тикета постоянного запрета; без него — временные запреты модели
  * @param {string} params.reason - Почему снят запрет
  * @returns {Promise<{ok: true, event: Object, remaining: {permanent: Array, crash: Array}|null, remaining_error?: string}>}
  */
@@ -125,11 +126,11 @@ export const get_model_stats_tool = {
 
 export const unban_model_tool = {
   name: 'unban_model',
-  description: 'Lift a model ban by appending an unban event to the agent runs journal: with ticket_type — the permanent ban of the model for that ticket type, without it — the temporary crash ban of the model. No such ban — NO_BAN, nothing is written',
+  description: 'Lift a model ban by appending an unban event to the agent runs journal: with ticket_type — the permanent ban of the model for that ticket type, without it — the temporary bans of the model: for a crash and for a series of "model unavailable" failures (the series is counted anew from this unban). No such ban — NO_BAN, nothing is written',
   inputSchema: z.object({
     project: z.string().describe('Project path or name'),
     model: z.string().describe('Banned model, as in get_model_stats'),
-    ticket_type: z.string().min(1).optional().describe('Ticket type of the permanent ban; omit for the temporary crash ban'),
+    ticket_type: z.string().min(1).optional().describe('Ticket type of the permanent ban; omit for the temporary bans of the model (crash, "model unavailable")'),
     reason: z.string().describe('Why the ban is lifted (kept in the journal); empty — BAD_INPUT'),
   }),
   async execute(args) {

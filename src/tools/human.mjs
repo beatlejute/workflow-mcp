@@ -321,12 +321,213 @@ function fillResultSection(body, content) {
   return `${body.slice(0, bounds.start)}\n\n${content}${body.slice(bounds.end)}`;
 }
 
-/** Отмечает пункты DoD: человек сдаёт работу, их check-проверки дальше гоняет verify-artifacts. */
-function checkDoDItems(body) {
+// Пункт DoD — строка списка с чекбоксом: «- [ ]», «* [ ]», «+ [ ]», «1. [ ]», «1) [ ]».
+// verify-artifacts считает любой «[ ]» и «[x]» секции; `[ ]` в середине текста пункта
+// (например, пример разметки в обратных кавычках) пунктом здесь не считается.
+const DOD_ITEM = /^([ \t]*(?:[-*+]|\d+[.)])[ \t]+)\[([ xX])\]/gm;
+// Строки-заголовки DoD внутри текста результата: см. demoteDoDHeading.
+const DOD_HEADING_LINES = new RegExp(DOD_HEADING.source, 'gm');
+
+/**
+ * Допустимые переходы между колонками — копия VALID_TRANSITIONS из workflow-ai
+ * (src/lib/operations/tickets.mjs): оттуда она не экспортируется. Расхождение ловит тест
+ * «transition table»: он прогоняет все пары через настоящий moveTicket.
+ */
+export const TICKET_TRANSITIONS = {
+  backlog: ['ready', 'blocked', 'done'],
+  ready: ['in-progress', 'review', 'backlog'],
+  'in-progress': ['done', 'blocked', 'review'],
+  blocked: ['ready'],
+  review: ['done', 'ready', 'in-progress', 'blocked'],
+  done: ['ready', 'blocked', 'archive'],
+  archive: ['backlog']
+};
+
+/**
+ * Статус для тикета человека, сданного не до конца, вместо review/done: достижимый из
+ * текущего. in-progress не предлагаем: pick-next-task не различает типы, и человеческий
+ * тикет там пайплайн отдаёт исполнителю-агенту (или в move-to-review, минуя DoD).
+ */
+function parkingStatuses(currentStatus) {
+  return (TICKET_TRANSITIONS[currentStatus] ?? []).filter(status => status !== 'review' && status !== 'done' && status !== 'in-progress');
+}
+
+/**
+ * Переход проверяем до lock'а: недопустимый move_ticket отказал бы уже после захвата
+ * и отката файла. Сообщение начинается так же, как у move_ticket.
+ */
+function assertTransition(ticketId, from, to) {
+  const allowed = TICKET_TRANSITIONS[from] ?? [];
+  if (allowed.includes(to)) return;
+  const err = new Error(
+    `Invalid transition for ${ticketId}: ${from} → ${to}. From ${from} the ticket can move to: ${allowed.join(', ')}`
+    + (allowed.includes('in-progress') ? ' (not in-progress: the pipeline takes a human ticket there for agent work)' : '')
+  );
+  err.code = 'INVALID_TRANSITION';
+  throw err;
+}
+
+/**
+ * Заголовок DoD внутри текста результата (decision или result_body) — в H3. verify-artifacts и
+ * confirmDoDItems берут первую секцию DoD тикета; секция результата стоит в шаблоне ниже DoD,
+ * но не во всех тикетах, и вставленный выше настоящего заголовок перехватывал бы и отметки, и
+ * проверку: пункты из результата вместо пунктов DoD.
+ */
+function demoteDoDHeading(text) {
+  return text.replace(DOD_HEADING_LINES, line => `#${line}`);
+}
+
+/** Сжать текст для сравнения пункта DoD со ссылкой: регистр и пробелы не различаем. */
+function normalizeDoDText(text) {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/** Пункты-чекбоксы секции DoD в порядке появления; null — в тикете нет секции DoD. */
+function listDoDItems(body) {
   const bounds = sectionBounds(body, DOD_HEADING);
-  if (!bounds) return body;
-  const section = body.slice(bounds.start, bounds.end).replace(/^(\s*[-*]\s+)\[ \]/gm, '$1[x]');
-  return body.slice(0, bounds.start) + section + body.slice(bounds.end);
+  if (!bounds) return null;
+  const section = body.slice(bounds.start, bounds.end);
+  const items = [];
+  for (const match of section.matchAll(DOD_ITEM)) {
+    const textStart = match.index + match[0].length;
+    const lineEnd = section.indexOf('\n', textStart);
+    items.push({
+      // позиция символа внутри скобок — туда ставится «x»
+      markAt: bounds.start + match.index + match[1].length + 1,
+      checked: match[2] !== ' ',
+      text: section.slice(textStart, lineEnd === -1 ? undefined : lineEnd).trim()
+    });
+  }
+  return items;
+}
+
+function describeDoDItems(items) {
+  return items
+    .map((item, i) => `${i + 1}) ${summarizeDecision(item.text, 80)}`)
+    .join('; ');
+}
+
+/**
+ * Пункт DoD по ссылке: число (или строка из цифр) — номер пункта от 1, иначе текст —
+ * точный либо единственное вхождение подстроки. Не нашёл или не единственный — ошибка:
+ * молча пропущенная ссылка оставила бы пункт неотмеченным, а человека — в уверенности,
+ * что он отмечен.
+ */
+function findDoDItem(ref, items, ticketId) {
+  const list = `DoD items of ${ticketId}: ${describeDoDItems(items)}`;
+  const asNumber = typeof ref === 'number' ? ref : (/^\s*\d+\s*$/.test(ref) ? Number(ref) : null);
+  if (asNumber !== null) {
+    if (!Number.isInteger(asNumber) || asNumber < 1 || asNumber > items.length) {
+      throw new Error(`DOD_ITEM_NOT_FOUND: no DoD item number ${ref}. ${items.length ? list : `${ticketId} has no DoD items`}`);
+    }
+    return asNumber - 1;
+  }
+  const wanted = normalizeDoDText(String(ref));
+  const exact = items.flatMap((item, i) => (normalizeDoDText(item.text) === wanted ? [i] : []));
+  const found = exact.length > 0 ? exact : items.flatMap((item, i) => (normalizeDoDText(item.text).includes(wanted) ? [i] : []));
+  if (found.length === 0) {
+    throw new Error(`DOD_ITEM_NOT_FOUND: no DoD item matches "${ref}". ${items.length ? list : `${ticketId} has no DoD items`}`);
+  }
+  if (found.length > 1) {
+    throw new Error(`DOD_ITEM_AMBIGUOUS: "${ref}" matches ${found.length} DoD items (${found.map(i => i + 1).join(', ')}) — pass item numbers. ${list}`);
+  }
+  return found[0];
+}
+
+/**
+ * Отмечает пункты DoD при сдаче тикета человека.
+ *
+ * Без `dod_confirmed` — прежнее поведение: при review/done отмечаются все пункты, при
+ * остальных статусах ничего. Так продолжают работать вызовы, не знающие о параметре.
+ *
+ * С `dod_confirmed` отмечаются только перечисленные пункты, в любом статусе. Безусловная
+ * отметка закрыла ListeningGlass HUMAN-002 (2026-09-30) с обоими пунктами «записан результат
+ * по каждому сайту и сценарию» отмеченными, хотя в решении сказано «youtube-nocookie и
+ * 70-минутный сценарий не проверены» (кто поставил те отметки, код или вручную до вызова,
+ * не установлено). При review/done каждый пункт должен быть отмечен или подтверждён:
+ * иначе — `DOD_NOT_CONFIRMED`, тикет остаётся на месте. Недоделанное сдают другим статусом
+ * из достижимых (parkingStatuses: из ready — backlog, blocked оттуда недоступен):
+ * подтверждённые пункты отмечаются и там, остальные остаются
+ * неотмеченными. `[]` — «ничего не подтверждено»: для review/done это тоже отказ.
+ *
+ * @param {string} body
+ * @param {Array<number|string>|undefined} confirmed
+ * @param {string} nextStatus
+ * @param {string} ticketId
+ * @param {string} currentStatus - колонка тикета сейчас: из неё выбираются статусы для подсказки
+ * @returns {{body: string, unticked: string[]} | null} null — в тикете нет DoD;
+ *   `unticked` — неотмеченные пункты после вызова, только при заданном `dod_confirmed`
+ */
+function confirmDoDItems(body, confirmed, nextStatus, ticketId, currentStatus) {
+  if (confirmed === null) confirmed = undefined;
+  if (confirmed !== undefined && !Array.isArray(confirmed)) {
+    throw new Error('DOD_CONFIRMED_INVALID: dod_confirmed must be an array of DoD item numbers or texts');
+  }
+  // Пустая ссылка после нормализации — подстрока любого пункта: подтвердила бы единственный
+  // пункт DoD, ничего не назвав.
+  if (confirmed !== undefined && confirmed.some(ref => !(typeof ref === 'number' || (typeof ref === 'string' && normalizeDoDText(ref) !== '')))) {
+    throw new Error('DOD_CONFIRMED_INVALID: every dod_confirmed entry must be a DoD item number or non-empty item text');
+  }
+  const items = listDoDItems(body);
+  if (!items) {
+    if (confirmed && confirmed.length > 0) {
+      throw new Error(`DOD_ITEM_NOT_FOUND: ${ticketId} has no DoD section, but dod_confirmed lists ${confirmed.length} item(s)`);
+    }
+    return null;
+  }
+
+  const finishing = nextStatus === 'review' || nextStatus === 'done';
+  let toTick;
+  if (confirmed === undefined) {
+    toTick = new Set(finishing ? items.keys() : []);
+  } else {
+    toTick = new Set(confirmed.map(ref => findDoDItem(ref, items, ticketId)));
+    const left = items.filter((item, i) => !item.checked && !toTick.has(i));
+    if (finishing && left.length > 0) {
+      throw new Error(
+        `DOD_NOT_CONFIRMED: moving ${ticketId} to ${nextStatus} needs every DoD item ticked, but ${left.length} item(s) are neither ticked nor in dod_confirmed. `
+        + 'Pass them in dod_confirmed if the human confirmed them (numbers from 1 or item text); '
+        + `if the work is not finished, use another next_status reachable from ${currentStatus} (${parkingStatuses(currentStatus).join(', ')}) and say what is left in result_body. `
+        + `Unconfirmed: ${left.map(item => `"${summarizeDecision(item.text, 80)}"`).join('; ')}. `
+        + `DoD items: ${describeDoDItems(items)}`
+      );
+    }
+  }
+
+  let newBody = body;
+  for (const i of [...toTick].filter(i => !items[i].checked).sort((a, b) => b - a)) {
+    newBody = `${newBody.slice(0, items[i].markAt)}x${newBody.slice(items[i].markAt + 1)}`;
+  }
+  return {
+    body: newBody,
+    unticked: confirmed === undefined
+      ? []
+      : items.filter((item, i) => !item.checked && !toTick.has(i)).map(item => item.text)
+  };
+}
+
+const DECISION_SUMMARY_MAX = 100;
+
+/**
+ * Краткая запись решения для review_log: не длиннее `max` символов вместе с «…», обрыв —
+ * на границе слова и по кодовым точкам, не по единицам UTF-16. `substring(0, 100)` резал
+ * «динамически» и «останав» посреди слова (ListeningGlass HUMAN-001 и HUMAN-002, 2026-09-30),
+ * а на эмодзи на границе оставил бы половину суррогатной пары. Полный текст лежит в секции
+ * результата тикета.
+ */
+function summarizeDecision(decision, max = DECISION_SUMMARY_MAX) {
+  const chars = Array.from(decision.trim());
+  if (chars.length <= max) return chars.join('');
+  const room = max - 1; // место под «…»
+  let cut = room;
+  // Окно кончается на границе слова, если следом пробел; иначе отступаем к последнему
+  // пробелу. Одно слово длиннее окна режем по кодовой точке.
+  if (!/\s/.test(chars[room])) {
+    let space = room - 1;
+    while (space > 0 && !/\s/.test(chars[space])) space--;
+    if (space > 0) cut = space;
+  }
+  return `${chars.slice(0, cut).join('').trimEnd()}…`;
 }
 
 /**
@@ -338,9 +539,12 @@ function checkDoDItems(body) {
  * @param {string} params.result_body - Result body content
  * @param {string} [params.next_status] - Next status (defaults to 'done')
  * @param {boolean} [params.strict] - Enable strict validation (overrides config)
- * @returns {Promise<{id: string, new_status: string, path: string}>}
+ * @param {Array<number|string>} [params.dod_confirmed] - DoD items the human confirmed (numbers from 1 or item text).
+ *   Omitted — previous behavior: review/done ticks all items. Given — only they are ticked, and review/done
+ *   with an item left neither ticked nor listed is refused (DOD_NOT_CONFIRMED)
+ * @returns {Promise<{id: string, new_status: string, path: string, dod_unticked?: string[]}>} `dod_unticked` — only with dod_confirmed
  */
-export async function resolve_human_ticket({ project, ticket_id, decision, result_body, next_status = 'done', strict }) {
+export async function resolve_human_ticket({ project, ticket_id, decision, result_body, next_status = 'done', strict, dod_confirmed }) {
   const cwd = mcpCwd();
   const projectRoot = resolveProjectRoot(project);
   const ticketsDir = path.join(projectRoot, TICKETS_DIR);
@@ -398,6 +602,9 @@ export async function resolve_human_ticket({ project, ticket_id, decision, resul
     throw new Error(`INCOMPLETE_RESULT: Result body is empty: ${ticket_id}`);
   }
 
+  // Подтверждение DoD проверяем до захвата lock'а: отказ не должен выдёргивать тикет из каталога.
+  confirmDoDItems(ticketBody, dod_confirmed, next_status, ticket_id, currentStatus);
+
   // Load config and determine strict mode
   const config = loadConfig(projectRoot);
   const isStrict = strict !== undefined ? strict : config.strict_validation;
@@ -414,6 +621,9 @@ export async function resolve_human_ticket({ project, ticket_id, decision, resul
     }
   }
   
+  // Недопустимый переход — отказ до lock'а, а не откат после него.
+  assertTransition(ticket_id, currentStatus, next_status);
+
   // Create atomic lock file path
   const lockFilePath = ticketPath + '.lock';
   
@@ -460,11 +670,12 @@ export async function resolve_human_ticket({ project, ticket_id, decision, resul
     // читает первую «## Результат выполнения», и пустой шаблон перед дописанной секцией
     // давал result_filled=false и 0% DoD (ListeningGlass HUMAN-001, 2026-09-30).
     const isoDate = new Date().toISOString();
-    const resultContent = `**Решение:** ${decision}\n**Дата:** ${isoDate}\n**Исполнитель:** human\n\n${stripResultHeading(result_body)}\n`;
-    let newBody = fillResultSection(body, resultContent);
-    if (next_status === 'review' || next_status === 'done') {
-      newBody = checkDoDItems(newBody);
-    }
+    const resultContent = demoteDoDHeading(`**Решение:** ${decision}\n**Дата:** ${isoDate}\n**Исполнитель:** human\n\n${stripResultHeading(result_body)}\n`);
+    // DoD — по телу под lock'ом: оно могло измениться между поиском тикета и захватом. Пункты
+    // ищем до вставки результата, как и проверка выше, — в одном и том же теле тикета.
+    // Отмечаются только подтверждённые пункты (см. confirmDoDItems).
+    const dod = confirmDoDItems(body, dod_confirmed, next_status, ticket_id, currentStatus);
+    const newBody = fillResultSection(dod ? dod.body : body, resultContent);
 
     // Update frontmatter with review_log entry
     if (!frontmatter.review_log) {
@@ -473,7 +684,7 @@ export async function resolve_human_ticket({ project, ticket_id, decision, resul
     frontmatter.review_log.push({
       date: isoDate,
       action: 'resolved',
-      decision: decision.substring(0, 100) // Store summary of decision
+      decision: summarizeDecision(decision) // краткая запись; полный текст — в секции результата
     });
 
     // Serialize the updated content
@@ -493,7 +704,9 @@ export async function resolve_human_ticket({ project, ticket_id, decision, resul
     return {
       id: ticket_id,
       new_status: next_status,
-      path: moved?.path ?? ticketPath
+      path: moved?.path ?? ticketPath,
+      // Неотмеченные пункты видны в ответе: человек не должен узнавать о них из verify-artifacts.
+      ...(dod && dod.unticked.length > 0 && { dod_unticked: dod.unticked })
     };
     
   } catch (e) {
@@ -528,7 +741,8 @@ export const list_human_queue_tool = {
 
 export const get_human_context_tool = {
   name: 'get_human_context',
-  description: 'Get extended context for a HUMAN ticket: the ticket itself, its parent plan, dependencies, related reports and pipeline steps',
+  description: 'Get extended context for a HUMAN ticket: the ticket itself, its parent plan, dependencies, related reports and pipeline steps. '
+    + 'A product-code change found while working a human ticket goes into a separate agent ticket (create_ticket), not into the human one: the human ticket keeps only the human result',
   inputSchema: z.object({
     project: z.string().describe('Project path or name'),
     ticket_id: z.string().describe('Ticket ID (e.g. HUMAN-12)')
@@ -540,12 +754,21 @@ export const get_human_context_tool = {
 
 export const resolve_human_ticket_tool = {
   name: 'resolve_human_ticket',
-  description: 'Resolve a HUMAN ticket: fill its result section, tick its DoD items when moving to review or done, and move the ticket to the next status',
+  description: 'Resolve a HUMAN ticket: fill its result section, tick its DoD items, and move the ticket to the next status. '
+    + 'Without dod_confirmed, moving to review or done ticks every DoD item. '
+    + 'Pass dod_confirmed to tick only what the human actually confirmed: then review or done is refused (DOD_NOT_CONFIRMED) while an item is neither ticked nor listed, so for work not finished or not checked use another next_status that the current status allows (the error lists them: from ready only backlog, blocked is not reachable) and say what is left in result_body. '
+    + 'A product-code change found while working a human ticket goes into a separate agent ticket (create_ticket), not into this one: keep only the human result here.',
   inputSchema: z.object({
     project: z.string().describe('Project path or name'),
     ticket_id: z.string().describe('Ticket ID (e.g. HUMAN-12)'),
     decision: z.string().describe('Decision recorded in the result section'),
     result_body: z.string().describe('Result body written into the ticket result section'),
+    dod_confirmed: z.array(z.union([z.number().int().positive(), z.string().trim().min(1)])).optional().describe(
+      'DoD items the human confirmed as done: 1-based item numbers in the ticket DoD section and/or item text (exact, or a substring matching one item). '
+      + 'Items are the checkbox lines of that section ("- [ ]", "* [ ]", "+ [ ]", "1. [ ]"); a [ ] inside an item\'s text is not an item. '
+      + 'Omit to keep the previous behavior: moving to review or done ticks all items. '
+      + 'When passed, only these are ticked (in any next_status), and moving to review or done while an item is neither ticked nor listed fails with DOD_NOT_CONFIRMED; [] ticks none'
+    ),
     next_status: z.enum(STATUS_DIRS).optional().describe('Target status (default: done)'),
     strict: z.boolean().optional().describe('Enable strict validation of the result, overriding human_ticket config')
   }),

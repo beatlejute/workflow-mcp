@@ -178,6 +178,67 @@ async function waitForNewLog(logsDir, before, timeoutMs = 10000) {
 }
 
 /**
+ * Суффикс файла stderr раннера. Намеренно не `.log`: всё, что ищет логи запусков
+ * (`pipeline-state`, детекторы health, `get_pipeline_log`, дерево расширения VS Code),
+ * отбирает файлы по `pipeline_*.log`, а расширение при отсутствии таких берёт любой
+ * `*.log`. Файл `pipeline_<ts>.stderr.log` — последний по mtime у упавшего раннера —
+ * стал бы «последним логом» и исказил `last_log_at` (проверено grep по src, 2026-10-01).
+ */
+const STDERR_SUFFIX = '.stderr';
+
+/** Сколько хвоста stderr отдавать в ответ, когда раннер не создал лог. */
+const STDERR_TAIL_BYTES = 2000;
+
+/**
+ * Убрать пустые файлы stderr прошлых запусков.
+ *
+ * Зовётся после проверки lock'а: живого раннера у проекта нет, значит все такие
+ * файлы остались от завершённых запусков. Непустые не трогаем — в них причина
+ * смерти, ради которой файл и заведён.
+ *
+ * @param {string} logsDir
+ */
+function pruneEmptyStderrFiles(logsDir) {
+  let names;
+  try {
+    names = fs.readdirSync(logsDir).filter(n => n.endsWith(STDERR_SUFFIX));
+  } catch {
+    return;
+  }
+  for (const n of names) {
+    const file = path.join(logsDir, n);
+    try {
+      if (fs.statSync(file).size === 0) fs.unlinkSync(file);
+    } catch {
+      // файл успел исчезнуть или занят — не мешает запуску
+    }
+  }
+}
+
+/**
+ * Хвост файла stderr; пустая строка — файла нет или он пуст.
+ * @param {string} file
+ * @returns {string}
+ */
+function readStderrTail(file) {
+  try {
+    const size = fs.statSync(file).size;
+    if (size === 0) return '';
+    const fd = fs.openSync(file, 'r');
+    try {
+      const len = Math.min(size, STDERR_TAIL_BYTES);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, size - len);
+      return buf.toString('utf8').trim();
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Start a pipeline for a project.
  *
  * Запускает настоящий раннер workflow-ai (`workflow run`) detached-процессом.
@@ -186,7 +247,7 @@ async function waitForNewLog(logsDir, before, timeoutMs = 10000) {
  */
 export const start_pipeline = {
   name: 'start_pipeline',
-  description: 'Start a pipeline for a project by spawning the workflow-ai runner detached. Returns {run_id, pid, started_at, log_path}',
+  description: 'Start a pipeline for a project by spawning the workflow-ai runner detached. Returns {run_id, pid, started_at, log_path, stderr_path}; the runner stderr goes to stderr_path (<run_id>.stderr next to the log)',
   inputSchema: z.object({
     project: z.string().describe('Project path or name'),
     plan: z.string().optional().describe('Plan ID to execute (e.g. PLAN-017); omit to let the pipeline pick work itself'),
@@ -260,12 +321,31 @@ export const start_pipeline = {
     if (plan) argv.push('--plan', plan);
     if (config) argv.push('--config', config);
 
+    // stderr раннера — в файл рядом с логом прогона. Раньше шёл в 'ignore', и падение
+    // раннера (необработанное исключение, ошибка конфига) не оставляло следа: по
+    // трём оборванным прогонам 2026-09-30 причину смерти установить было нельзя.
+    // Имя лога раннер выбирает сам уже после старта, поэтому файл заводится под
+    // временным именем и переименовывается в `<run_id>.stderr`, когда лог появился
+    // (переименование открытого файла проверено запуском на Windows: дочерний процесс
+    // продолжает писать в тот же файл; на POSIX не проверялось).
+    fs.mkdirSync(logsDir, { recursive: true });
+    pruneEmptyStderrFiles(logsDir);
+    const spawnStamp = new Date().toISOString().replace(/[:.]/g, '-');
+    let stderrPath = path.join(logsDir, `runner_${spawnStamp}${STDERR_SUFFIX}`);
+    let stderrFd = null;
+    try {
+      stderrFd = fs.openSync(stderrPath, 'a');
+    } catch {
+      // Нет места для файла не повод отказывать в запуске — раннер стартует, как раньше.
+      stderrPath = null;
+    }
+
     let child;
     try {
       child = spawn(process.execPath, argv, {
         cwd: projectRoot,
         detached: true,
-        stdio: 'ignore',
+        stdio: ['ignore', 'ignore', stderrFd ?? 'ignore'],
         windowsHide: true,
         // Раннер кладёт обе переменные в .pipeline.lock. По `started_by`
         // внешние наблюдатели (расширение VS Code) отличают MCP-запуск от CLI,
@@ -280,6 +360,11 @@ export const start_pipeline = {
       child.unref();
     } catch (err) {
       return { ok: false, code: 'SPAWN_FAILED', hint: err.message };
+    } finally {
+      // Дочерний процесс унаследовал свою копию дескриптора; нашу закрываем в любом исходе.
+      if (stderrFd !== null) {
+        try { fs.closeSync(stderrFd); } catch { /* уже закрыт */ }
+      }
     }
 
     if (!child.pid) {
@@ -303,16 +388,33 @@ export const start_pipeline = {
 
     const logName = await waitForNewLog(logsDir, before);
     if (!logName) {
+      // Раннер, упавший на старте (битый конфиг, не тот Node), пишет причину в
+      // stderr: отдаём её сразу, а не заставляем искать файл.
+      const stderrTail = stderrPath ? readStderrTail(stderrPath) : '';
       return {
         ok: false,
         code: 'RUNNER_NO_LOG',
         pid: child.pid,
         started_at,
+        ...(stderrPath && { stderr_path: stderrPath }),
+        ...(stderrTail && { stderr_tail: stderrTail }),
         hint: 'Runner was spawned but produced no pipeline log within 10s — check that workflow-ai is installed and the config is valid'
+          + (stderrTail ? '; the runner wrote to stderr (see stderr_tail)' : '')
       };
     }
 
     const run_id = logName.replace(/\.log$/, '');
+
+    // Файл stderr — рядом с логом и с его именем: по логу сразу ясно, где искать причину.
+    if (stderrPath) {
+      const named = path.join(logsDir, `${run_id}${STDERR_SUFFIX}`);
+      try {
+        fs.renameSync(stderrPath, named);
+        stderrPath = named;
+      } catch {
+        // Остаётся под временным именем — файл по-прежнему получает stderr, путь в ответе верный.
+      }
+    }
 
     // Раннер workflow-ai 1.6.x метку `started_by_id` не пишет, и такой прогон
     // виден как `INSTANCE_UNKNOWN`: `stop_pipeline` потребует `force`, а
@@ -333,7 +435,8 @@ export const start_pipeline = {
           + 'This pipeline reads as foreign: stop_pipeline will need force=true, and abort_pipeline — which has no force '
           + 'option — will refuse it outright. Update workflow-ai.'
       }),
-      log_path: path.join(logsDir, logName)
+      log_path: path.join(logsDir, logName),
+      ...(stderrPath && { stderr_path: stderrPath })
     };
   }
 };

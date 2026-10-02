@@ -50,14 +50,21 @@ function writeLock(projectPath, pid, startedAt = new Date().toISOString()) {
  * @param {Object} [options]
  * @param {boolean} [options.recordInstanceId] писать ли метку экземпляра
  *   (false — раннер до workflow-ai 1.7.0)
+ * @param {string} [options.stderrEarly] строка в stderr сразу после старта, до лога
+ * @param {string} [options.stderrLate] строка в stderr через 1.2 с — когда start_pipeline
+ *   уже вернул управление и переименовал файл stderr
+ * @param {string} [options.crashWith] упасть на старте: текст в stderr, код 1, лога нет
  */
-function writeFakeRunner(dir, { recordInstanceId = true } = {}) {
+function writeFakeRunner(dir, { recordInstanceId = true, stderrEarly = null, stderrLate = null, crashWith = null } = {}) {
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
   const bin = path.join(binDir, 'workflow.mjs');
   fs.writeFileSync(bin, [
     "import fs from 'fs';",
     "import path from 'path';",
+    crashWith
+      ? `process.stderr.write(${JSON.stringify(crashWith + '\n')}); process.exit(1);`
+      : "// штатный запуск",
     "const argv = process.argv.slice(2);",
     "const projectRoot = argv[argv.indexOf('--project') + 1];",
     "const ts = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').substring(0, 19);",
@@ -75,7 +82,11 @@ function writeFakeRunner(dir, { recordInstanceId = true } = {}) {
       ? "if (process.env.WORKFLOW_STARTED_BY_ID) { lock.started_by_id = process.env.WORKFLOW_STARTED_BY_ID; }"
       : "// раннер до 1.7.0 метку экземпляра не пишет",
     "fs.writeFileSync(path.join(logsDir, '.pipeline.lock'), JSON.stringify(lock, null, 2));",
+    stderrEarly ? `process.stderr.write(${JSON.stringify(stderrEarly + '\n')});` : "// stderr молчит",
     "fs.writeFileSync(path.join(logsDir, `pipeline_${ts}.log`), '[start] pipeline\\n');",
+    stderrLate
+      ? `setTimeout(() => process.stderr.write(${JSON.stringify(stderrLate + '\n')}), 1200);`
+      : "// позже тоже молчит",
     // Настоящий раннер живёт часами; подставной держится, пока вызывающий
     // читает lock, иначе pid успевает освободиться.
     "setTimeout(() => {}, 5000);",
@@ -251,6 +262,94 @@ describe('start_pipeline', () => {
     } finally {
       try { victim.kill(); } catch { /* мог завершиться */ }
     }
+  });
+
+  // Раннер, оборвавшийся 2026-09-30 (PulseProxy 18-55-50, ListeningGlass 18-53-24 и
+  // 08-25-19), не оставил в логе ни строки о смерти, а его stderr уходил в 'ignore':
+  // упавший раннер и жёстко снятый выглядели одинаково.
+  describe('stderr раннера', () => {
+    const logsOf = (dir) => fs.readdirSync(dir).filter((n) => n.startsWith('pipeline_') && n.endsWith('.log'));
+
+    async function waitFor(predicate, timeoutMs = 8000) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (predicate()) return true;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return predicate();
+    }
+
+    it('пишется в <run_id>.stderr рядом с логом, в том числе после возврата start_pipeline', { timeout: 30000 }, async () => {
+      process.env.WORKFLOW_AI_BIN = writeFakeRunner(workspaceDir, {
+        stderrEarly: 'early: runner started',
+        stderrLate: 'late: something went wrong'
+      });
+
+      const result = await start_pipeline.execute({ project: 'start-project' });
+
+      expect(result.ok).toBe(true);
+      const logsDir = path.join(projectPath, '.workflow', 'logs');
+      const expected = path.join(logsDir, `${result.run_id}.stderr`);
+      expect(result.stderr_path).toBe(expected);
+
+      // Поздняя запись идёт уже после переименования — в тот же файл.
+      await waitFor(() => fs.existsSync(expected) && fs.readFileSync(expected, 'utf8').includes('late:'));
+      const text = fs.readFileSync(expected, 'utf8');
+      expect(text).toContain('early: runner started');
+      expect(text).toContain('late: something went wrong');
+
+      // Файл не должен сойти за лог запуска: по \`pipeline_*.log\` последний лог ищут
+      // pipeline-state, детекторы health, get_pipeline_log и расширение VS Code.
+      expect(logsOf(logsDir)).toEqual([`${result.run_id}.log`]);
+      expect(fs.readdirSync(logsDir).filter((n) => n.startsWith('runner_'))).toEqual([]);
+    });
+
+    it('при падении раннера на старте отдаёт хвост stderr в ответе', { timeout: 30000 }, async () => {
+      process.env.WORKFLOW_AI_BIN = writeFakeRunner(workspaceDir, { crashWith: 'Error: bad pipeline.yaml at line 3' });
+
+      const result = await start_pipeline.execute({ project: 'start-project' });
+
+      expect(result.ok).toBe(false);
+      expect(result.code).toBe('RUNNER_NO_LOG');
+      expect(result.stderr_tail).toContain('Error: bad pipeline.yaml at line 3');
+      expect(result.hint).toMatch(/stderr_tail/);
+      expect(fs.readFileSync(result.stderr_path, 'utf8')).toContain('bad pipeline.yaml');
+      expect(path.dirname(result.stderr_path)).toBe(path.join(projectPath, '.workflow', 'logs'));
+    });
+
+    it('перед новым запуском убирает пустые файлы stderr прошлых запусков, непустые оставляет', { timeout: 30000 }, async () => {
+      const logsDir = path.join(projectPath, '.workflow', 'logs');
+      fs.writeFileSync(path.join(logsDir, 'pipeline_2020-01-01_00-00-00.stderr'), '');
+      fs.writeFileSync(path.join(logsDir, 'pipeline_2020-01-02_00-00-00.stderr'), 'Error: crashed\n');
+      fs.writeFileSync(path.join(logsDir, 'pipeline_2020-01-01_00-00-00.log'), 'старый лог, пустой stderr не про него\n');
+      process.env.WORKFLOW_AI_BIN = writeFakeRunner(workspaceDir);
+
+      const result = await start_pipeline.execute({ project: 'start-project' });
+
+      expect(result.ok).toBe(true);
+      const names = fs.readdirSync(logsDir);
+      expect(names).not.toContain('pipeline_2020-01-01_00-00-00.stderr');
+      expect(names).toContain('pipeline_2020-01-02_00-00-00.stderr');
+      // Пустой stderr прошлого запуска убирают, а логи не трогают.
+      expect(names).toContain('pipeline_2020-01-01_00-00-00.log');
+    });
+
+    it('не отказывает в запуске, если файл stderr завести нельзя', { timeout: 30000 }, async () => {
+      process.env.WORKFLOW_AI_BIN = writeFakeRunner(workspaceDir);
+      // Первый openSync в start_pipeline — файл stderr; пусть он откажет.
+      vi.spyOn(fs, 'openSync').mockImplementationOnce(() => {
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      });
+
+      try {
+        const result = await start_pipeline.execute({ project: 'start-project' });
+
+        expect(result.ok).toBe(true);
+        expect(result.stderr_path).toBeUndefined();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
   });
 
   it('сообщает RUNNER_NOT_FOUND, если CLI не найден', async () => {
