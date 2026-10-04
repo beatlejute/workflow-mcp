@@ -17,6 +17,12 @@ import { readPipelineLock } from '../../src/process/run-lock.mjs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Долгоживущий процесс-заглушка вместо `sleep 30`: на Windows sleep есть только
+// в Git-Bash bin, которого после смены PATH нет (2026-10-04: spawn sleep ENOENT,
+// pid undefined). Нода есть всегда, процесс живёт на таймере 30 секунд.
+const spawnSleeper = (options) =>
+  spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], options);
+
 describe('E2E: foreign-pipeline protection', () => {
   let testDir;
   let projectPath;
@@ -87,7 +93,7 @@ describe('E2E: foreign-pipeline protection', () => {
     it('should return FOREIGN_PIPELINE error when stopping pipeline started via CLI', async () => {
       // Simulate a pipeline started via CLI
       // Create a long-running test process
-      const proc = spawn('sleep', ['30'], {
+      const proc = spawnSleeper({
         detached: true,
         stdio: 'ignore'
       });
@@ -140,7 +146,7 @@ describe('E2E: foreign-pipeline protection', () => {
       'should allow stopping foreign pipeline when WORKFLOW_MCP_FORCE_FOREIGN=1',
       async () => {
         // Create another test process (foreign)
-        const proc = spawn('sleep', ['30'], {
+        const proc = spawnSleeper({
           detached: true,
           stdio: 'ignore'
         });
@@ -186,7 +192,7 @@ describe('E2E: foreign-pipeline protection', () => {
       'should allow stopping an owned pipeline (lock carries our mark) without force',
       async () => {
         // Create test process
-        const proc = spawn('sleep', ['30'], {
+        const proc = spawnSleeper({
           detached: true,
           stdio: 'ignore'
         });
@@ -223,7 +229,7 @@ describe('E2E: foreign-pipeline protection', () => {
   describe('TC-004: Foreign vs owned distinction in the lock', () => {
     it('should correctly identify foreign pipelines by the instance mark', async () => {
       // Create test process
-      const proc = spawn('sleep', ['30'], {
+      const proc = spawnSleeper({
         detached: true,
         stdio: 'ignore'
       });
@@ -256,7 +262,7 @@ describe('E2E: foreign-pipeline protection', () => {
       'should emit warning when WORKFLOW_MCP_FORCE_FOREIGN=1 is used',
       async () => {
         // Setup foreign pipeline
-        const proc = spawn('sleep', ['30'], {
+        const proc = spawnSleeper({
           detached: true,
           stdio: 'ignore'
         });
@@ -300,11 +306,11 @@ describe('E2E: foreign-pipeline protection', () => {
       'should distinguish between owned and foreign pipelines',
       async () => {
         // Create two processes
-        const proc1 = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+        const proc1 = spawnSleeper({ detached: true, stdio: 'ignore' });
         proc1.unref();
         const pid1 = proc1.pid;
 
-        const proc2 = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+        const proc2 = spawnSleeper({ detached: true, stdio: 'ignore' });
         proc2.unref();
         const pid2 = proc2.pid;
 
