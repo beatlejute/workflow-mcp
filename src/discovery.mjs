@@ -8,17 +8,22 @@ import yaml from 'js-yaml';
  * @param {string} cwd
  * @returns {Object} Parsed config or empty object
  */
-export function readConfig(cwd) {
+export function readConfig(cwd, { onError = null } = {}) {
   const configPath = path.join(cwd, '.workflow-mcp.yaml');
+  let content;
   try {
-    if (fs.existsSync(configPath)) {
-      const content = fs.readFileSync(configPath, 'utf-8');
-      return yaml.load(content) || {};
-    }
+    content = fs.readFileSync(configPath, 'utf-8');
   } catch (err) {
-    // If config can't be read or parsed, treat as empty config
+    if (err.code === 'ENOENT') return {};
+    onError?.({ scope: 'workspace', kind: 'config', path: configPath, error: err });
+    return {};
   }
-  return {};
+  try {
+    return yaml.load(content) || {};
+  } catch (err) {
+    onError?.({ scope: 'workspace', kind: 'config', path: configPath, error: err });
+    return {};
+  }
 }
 
 /**
@@ -52,10 +57,16 @@ function getDiscoveryConfig(config) {
  * @param {string} dirPath
  * @returns {boolean}
  */
-function isWorkflowDirectory(dirPath) {
+function isWorkflowDirectory(dirPath, onError = null, context = {}) {
   try {
-    return fs.statSync(dirPath).isDirectory();
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) {
+      onError?.({ ...context, path: dirPath, error: new Error('.workflow is not a directory') });
+      return false;
+    }
+    return true;
   } catch (err) {
+    if (err.code !== 'ENOENT') onError?.({ ...context, path: dirPath, error: err });
     return false;
   }
 }
@@ -65,15 +76,15 @@ function isWorkflowDirectory(dirPath) {
  * @param {string} cwd - Current working directory
  * @returns {{name: string, path: string}[]} Array of project objects
  */
-export function discoverProjects(cwd) {
+export function discoverProjects(cwd, { onError = null } = {}) {
   const absoluteCwd = path.resolve(cwd);
-  const config = readConfig(absoluteCwd);
+  const config = readConfig(absoluteCwd, { onError });
   const { whitelist, blacklist } = getLists(config);
   const { depth } = getDiscoveryConfig(config);
 
   // Single-project mode: if cwd itself contains .workflow/
   const selfWorkflow = path.join(absoluteCwd, '.workflow');
-  if (isWorkflowDirectory(selfWorkflow)) {
+  if (isWorkflowDirectory(selfWorkflow, onError, { scope: 'workspace', project: path.basename(absoluteCwd) })) {
     return [{ name: path.basename(absoluteCwd), path: absoluteCwd }];
   }
 
@@ -85,7 +96,7 @@ export function discoverProjects(cwd) {
       .filter(dirent => dirent.isDirectory())
       .map(dirent => dirent.name);
   } catch (err) {
-    // If cwd can't be read, return empty
+    onError?.({ scope: 'workspace', project: path.basename(absoluteCwd), path: absoluteCwd, error: err });
     return [];
   }
 
@@ -97,18 +108,18 @@ export function discoverProjects(cwd) {
       // We only implement depth=1 as specified in the plan
     }
 
-    const fullPath = path.join(absoluteCwd, entry);
-    const workflowDir = path.join(fullPath, '.workflow');
-
-    if (!isWorkflowDirectory(workflowDir)) {
-      continue;
-    }
-
-    // Apply whitelist/blacklist filtering
+    // Apply whitelist/blacklist before probing a project directory so excluded
+    // projects cannot make a scoped discovery look incomplete.
     if (whitelist.length > 0 && !whitelist.includes(entry)) {
       continue;
     }
     if (blacklist.length > 0 && blacklist.includes(entry)) {
+      continue;
+    }
+
+    const fullPath = path.join(absoluteCwd, entry);
+    const workflowDir = path.join(fullPath, '.workflow');
+    if (!isWorkflowDirectory(workflowDir, onError, { scope: 'project', project: entry, project_path: fullPath })) {
       continue;
     }
 

@@ -25,7 +25,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { get_model_stats, unban_model, get_model_stats_tool, unban_model_tool } from '../../src/tools/agent-runs.mjs';
+import {
+  get_agent_run_stats, get_agent_run_stats_tool,
+  get_model_stats, unban_model, get_model_stats_tool, unban_model_tool,
+} from '../../src/tools/agent-runs.mjs';
 import * as agentRunsLib from 'workflow-ai/lib/agent-runs.mjs';
 
 // Запрет «модель недоступна» считает workflow-ai (unavailableBans), которого нет в пакете

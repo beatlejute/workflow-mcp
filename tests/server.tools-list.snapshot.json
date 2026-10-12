@@ -5,6 +5,7 @@
   "create_coach_ticket",
   "create_ticket",
   "cross_project_search",
+  "get_agent_run_stats",
   "get_cycle_time",
   "get_human_context",
   "get_model_stats",
