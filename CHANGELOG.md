@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Update `workflow-ai` dependency to `^1.26.7` for the Requesty and Groq free-model pools, the current kilo model-list adapter, and the GLM vendor-alias fix in model score matching.
+
 ### Added
 
 - **`get_model_stats` и `unban_model` — модели агентов по журналу запусков проекта** (`.workflow/metrics/agent-runs.jsonl`, workflow-ai 1.14.0, PLAN-003 workflowAi). `get_model_stats(project, model?, ticket_type?)` — запуски исполнителя по модели и типу тикета: число по градациям, доля пройденного контроля артефактов, доля принятых на ревью, действующие постоянные и временные запреты с доказательствами. `unban_model(project, model, ticket_type?, reason)` — снятие постоянного запрета пары (с `ticket_type`) или временного запрета модели (без него) событием `unban`; запрета нет — `NO_BAN`. Таблицу и запреты вычисляет модуль `workflow-ai/lib/agent-runs.mjs` — те же, по которым раннер отсеивает модели. Запрет, оставшийся после записи снятия, — отказ `UNBAN_NOT_APPLIED`, а не ответ «снято».
