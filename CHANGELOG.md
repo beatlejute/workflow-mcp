@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Update `workflow-ai` dependency to `^1.26.7` for the Requesty and Groq free-model pools, the current kilo model-list adapter, and the GLM vendor-alias fix in model score matching.
+- Update `workflow-ai` dependency to `^1.26.8` for the ticket-floor and review-judge selection fixes (owner decision 2026-10-12, Sol-reviewed) on top of the 1.26.7 pools and GLM vendor-alias fix.
 
 ### Added
 
