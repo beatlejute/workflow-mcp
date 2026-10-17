@@ -63,10 +63,10 @@ function run(model, ticketType, overrides = {}) {
   };
 }
 
-// Неудача: контроль артефактов failed с причинами.
+// Неудача модели — пустой запуск: модель ничего не изменила. Провал контроля артефактов
+// в неудачу не годится: это исход проверки работы, а не модели, и запрета он не даёт.
 function failed(model, ticketType) {
-  const r = run(model, ticketType);
-  return [r, { type: 'verify', ts: minutesAgo(29), ticket: r.ticket, ticket_type: ticketType, status: 'failed', fail_reasons: ['missing_files'] }];
+  return [run(model, ticketType, { changed_files: 0 })];
 }
 
 // Успех: контроль all_green.
@@ -118,7 +118,7 @@ describe('get_model_stats', () => {
     const stats = await get_model_stats({ project: root });
 
     expect(stats.journal).toBe('.workflow/metrics/agent-runs.jsonl');
-    expect(stats.events).toBe(15);
+    expect(stats.events).toBe(12);
     expect(stats.executor_runs).toBe(8);
     expect(stats.rows.map((r) => [r.model, r.ticket_type, r.runs])).toEqual([
       ['model-a', 'docs', 2],
@@ -136,7 +136,7 @@ describe('get_model_stats', () => {
     expect(aDocs.review_accept_rate).toBe(0);
 
     const aImpl = stats.rows[1];
-    expect(aImpl.grades.artifacts_failed).toBe(3);
+    expect(aImpl.grades.empty).toBe(3);
     expect(aImpl.bans.map((b) => [b.kind, b.rule])).toEqual([['permanent', 1]]);
 
     expect(stats.rows[4].grades.empty).toBe(1);

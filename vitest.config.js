@@ -36,5 +36,24 @@ export default defineConfig({
       '**/node_modules/**',
       '**/dist/**',
     ],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'default',
+          sequence: { groupOrder: 0 },
+          exclude: ['tests/process/process-start.test.mjs', 'tests/process/process-start-cache.test.mjs', 'tests/tools/stop-pipeline.test.mjs', 'tests/tools/pid-reuse-guard.test.mjs'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'process-start-os',
+          sequence: { groupOrder: 1 },
+          include: ['tests/process/process-start.test.mjs', 'tests/process/process-start-cache.test.mjs', 'tests/tools/stop-pipeline.test.mjs', 'tests/tools/pid-reuse-guard.test.mjs'],
+          fileParallelism: false,
+        },
+      },
+    ],
   },
 });

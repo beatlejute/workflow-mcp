@@ -32,6 +32,13 @@ describe('Security: Config Validation Tests', () => {
       fs.mkdirSync(logsDir, { recursive: true });
     }
 
+    // Project marker: discovery counts cwd as a project only by a project-like
+    // .workflow (tickets/config/plans) — logs alone are not enough
+    const ticketsDir = path.join(workflowDir, 'tickets');
+    if (!fs.existsSync(ticketsDir)) {
+      fs.mkdirSync(ticketsDir, { recursive: true });
+    }
+
     process.chdir(testProjectDir);
   });
 

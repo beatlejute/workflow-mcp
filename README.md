@@ -153,11 +153,11 @@ const log = await client.callTool('get_pipeline_log', {
 
 Метку `started_by_id` пишет раннер workflow-ai с версии 1.7.0. Раннер 1.6.x её не пишет, и запуск помечается `INSTANCE_UNKNOWN`: доказательства владения нет, поэтому в списке он `foreign`. `start_pipeline` предупреждает об этом сразу: `warning: 'RUNNER_WITHOUT_INSTANCE_ID'`.
 
-Если ОС не отдала время старта, проверка пропускается. Ответ ОС помнится минуту, но только для чтения состояния — перед сигналом он запрашивается заново.
+Если ОС не отдала время старта, состояние можно показать как неподтверждённое. Для управления процессом это отказ `PROCESS_IDENTITY_UNKNOWN`: сигнал не отправляется. Ответ ОС помнится минуту для чтения состояния, но перед сигналом запрашивается заново.
 
-Обойти проверку владения можно `force: true` у `stop_pipeline` или переменной `WORKFLOW_MCP_FORCE_FOREIGN=1`. Ни то ни другое не снимает `STALE_PIPELINE_LOCK`: номер из lock'а принадлежит постороннему процессу, и сигнал ушёл бы ему. Это верно для всех четырёх операций и для эскалации внутри grace-окна `abort_pipeline`. Такой lock удаляют руками — сервер его не трогает ни в `stop_pipeline`, ни в `start_pipeline`, чтобы ошибка проверки не подняла второй пайплайн поверх живого.
+Обойти проверку владения можно `force: true` у `stop_pipeline` или переменной `WORKFLOW_MCP_FORCE_FOREIGN=1`, но только когда время старта подтверждает соответствие процесса lock'у. Ни то ни другое не снимает `STALE_PIPELINE_LOCK` и `PROCESS_IDENTITY_UNKNOWN`. Это верно для всех четырёх операций и для эскалации внутри grace-окна `abort_pipeline`. Такой lock удаляют руками — сервер его не трогает ни в `stop_pipeline`, ни в `start_pipeline`, чтобы ошибка проверки не подняла второй пайплайн поверх живого.
 
-Отказ проверки у `pause_pipeline` и `resume_pipeline` приходит кодом `OWNERSHIP_VALIDATION_FAILED`. Если владение потеряно за grace-окно `abort_pipeline` — `OWNERSHIP_LOST`.
+Отказ проверки владения у `pause_pipeline` и `resume_pipeline` приходит кодом `OWNERSHIP_VALIDATION_FAILED`; если идентичность процесса неизвестна — `PROCESS_IDENTITY_UNKNOWN`. Если владение потеряно за grace-окно `abort_pipeline`, ответ содержит `OWNERSHIP_LOST`; если повторная проверка идентичности не удалась — `PROCESS_IDENTITY_UNKNOWN`.
 
 **Цена проверки.** Проверка «процесс жив» — `tasklist` на Windows (около 110 мс на номер, ответ помнится секунду), `kill(pid, 0)` на POSIX. Обход проектов синхронный: пока он идёт, сервер не отвечает клиенту.
 
@@ -297,7 +297,7 @@ const log = await client.callTool('get_pipeline_log', {
 | `WORKFLOW_AI_BIN` | путь к `bin/workflow.mjs` раннера в обход установленного пакета |
 | `WORKFLOW_STATE_DIR` | каталог состояния; перекрывает `state.dir` и забирает всё состояние сервера |
 | `WORKFLOW_STATE_MODE` | `writable` или `read-only` для каталога из `WORKFLOW_STATE_DIR` |
-| `WORKFLOW_MCP_FORCE_FOREIGN` | `1` — управлять чужим пайплайном (кроме `STALE_PIPELINE_LOCK`) |
+| `WORKFLOW_MCP_FORCE_FOREIGN` | `1` — управлять чужим пайплайном (кроме `STALE_PIPELINE_LOCK` и `PROCESS_IDENTITY_UNKNOWN`) |
 | `WORKFLOW_MCP_FORCE_POLLING` | `1` — наблюдатели за файлами опрашивают вместо `fs.watch` |
 | `GIT_TIMEOUT` | таймаут git-команд, мс, по умолчанию 30000 |
 | `WORKFLOW_AI_RESOLVE_PATH` | база поиска пакета workflow-ai; для тестов |

@@ -14,6 +14,7 @@ import { spawn } from 'child_process';
 import {
   processStartedAt,
   processStartedAtCached,
+  setProcessStartReaderForTests,
   pidCouldBeFromRun,
   clearProcessStartCache,
   cacheEntryUsable
@@ -40,6 +41,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  setProcessStartReaderForTests(null);
   if (victim) {
     try { victim.kill(); } catch { /* уже мёртв */ }
     victim = null;
@@ -88,24 +90,39 @@ describe('processStartedAtCached', () => {
   });
 
   it('запись протухает через минуту и ответ переспрашивается', async () => {
-    // Срок жизни проверяется через сам `processStartedAtCached`, а не только
-    // через правило: подменяются часы, а опрос ОС остаётся настоящим.
-    victim = await spawnVictim();
+    const pid = 999999999;
+    const startedAt = new Date();
+    const reader = vi.fn(() => startedAt);
+    setProcessStartReaderForTests(reader);
 
-    expect(processStartedAtCached(victim.pid)).toBeInstanceOf(Date);
-
-    victim.kill();
-    await waitForExit(victim);
+    expect(processStartedAtCached(pid)).toBe(startedAt);
+    expect(reader).toHaveBeenCalledTimes(1);
 
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       vi.setSystemTime(new Date(Date.now() + 61_000));
-      expect(processStartedAtCached(victim.pid)).toBeNull();
+      expect(processStartedAtCached(pid)).toBe(startedAt);
+      expect(reader).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
+      setProcessStartReaderForTests(null);
     }
   });
 
+  it('проверяет получение времени старта у ОС для живого процесса', async () => {
+    victim = await spawnVictim();
+
+    expect(processStartedAt(victim.pid)).toBeInstanceOf(Date);
+  });
+
+  it('после смерти живого процесса ОС не находит его', async () => {
+    victim = await spawnVictim();
+
+    victim.kill();
+    await waitForExit(victim);
+
+    expect(processStartedAt(victim.pid)).toBeNull();
+  });
   it('память об одном pid не отвечает за другой', async () => {
     const DEAD_PID = 999999999;
     expect(processStartedAtCached(DEAD_PID)).toBeNull();
@@ -117,10 +134,10 @@ describe('processStartedAtCached', () => {
 
 describe('срок жизни записи', () => {
   // Два вида ответа живут по-разному: известное время старта — минуту, отказ
-  // опроса — пять секунд. `null` означает «процесса нет или не спросить» и
-  // ведёт к fail-open, поэтому застревать в нём на минуту опаснее, чем
-  // переспросить. На живых процессах это не проверить: мёртвый pid так и
-  // останется мёртвым, сколько его ни спрашивай.
+  // опроса — пять секунд. `null` означает «процесса нет или не спросить»;
+  // короткий срок не позволяет read-only снимкам долго держать неизвестность.
+  // На живых процессах это не проверить: мёртвый pid так и останется мёртвым,
+  // сколько его ни спрашивай.
   const now = 1_000_000;
 
   it('известное время старта живёт минуту', () => {
@@ -165,10 +182,11 @@ describe('pidCouldBeFromRun', () => {
   });
 
   it('запас на округление задаётся тем же объектом опций', () => {
-    const startedAt = processStartedAt(process.pid);
+    const startedAt = new Date();
+    setProcessStartReaderForTests(() => startedAt);
     const tooEarly = new Date(startedAt.getTime() - 60_000).toISOString();
 
-    expect(pidCouldBeFromRun(process.pid, tooEarly, { toleranceMs: 5000 })).toBe(false);
-    expect(pidCouldBeFromRun(process.pid, tooEarly, { toleranceMs: 120_000 })).toBe(true);
+    expect(pidCouldBeFromRun(999999999, tooEarly, { toleranceMs: 5000 })).toBe(false);
+    expect(pidCouldBeFromRun(999999999, tooEarly, { toleranceMs: 120_000 })).toBe(true);
   });
 });

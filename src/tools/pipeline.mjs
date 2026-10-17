@@ -4,7 +4,7 @@ import { spawn } from 'child_process';
 import { readPipelineLock, validateRunOwnership } from '../process/run-lock.mjs';
 import { writeAbortState, clearAbortState, isAbortInProgress } from '../process/abort-state.mjs';
 import { writeKillOutcome, clearKillOutcome } from '../process/kill-outcome.mjs';
-import { pidCouldBeFromRun, processStartedAtCached } from '../process/process-start.mjs';
+import { checkProcessIdentity, pidCouldBeFromRun, processStartedAtCached } from '../process/process-start.mjs';
 import { isProcessAlive, forgetProcessAlive } from '../health/pid-check.mjs';
 import { kill, pause, resume, abort } from '../process/control.mjs';
 import { notify_workflow_pipeline_state } from '../resources/index.mjs';
@@ -97,31 +97,32 @@ function ownershipRefusal(validation, code, hint) {
 }
 
 /**
- * Отказ, если номер из lock'а занят уже не раннером.
+ * Отказ, если личность процесса по lock'у нельзя подтвердить.
  *
  * Проверка идёт до сверки владения и отдельно от неё, на всех путях, откуда
- * следом уходит сигнал. Причин две.
+ * следом уходит сигнал. Она различает переиспользованный pid и недоступность
+ * данных ОС; оба исхода запрещают сигнал, а неизвестность не означает совпадение.
  *
- * Первая: внутри `validateRunOwnership` признаки чужого запуска проверяются
- * раньше времени старта — и правильно, для живого чужого раннера совет
- * «удалите lock» был бы вредным. Значит у чужого lock'а причина отказа всегда
- * про чужого, и решение, принятое по одной причине, о переиспользовании
- * номера ничего не знает.
- *
- * Вторая: аварийный ключ `WORKFLOW_MCP_FORCE_FOREIGN=1` обрывает проверку
- * владения в самом начале. Он снимает вопрос «чей это пайплайн» — но не
- * вопрос «есть ли он вообще». Ни он, ни `force: true` не должны приводить к
- * `taskkill /F /T` по постороннему дереву.
+ * Проверка не зависит от результата проверки владения: ни `force: true`, ни
+ * `WORKFLOW_MCP_FORCE_FOREIGN=1` не снимают требование подтвердить личность.
  *
  * @param {number} pid
  * @param {{started_at: string|null}|null} lock
  * @returns {{ok: false, code: string, reason: string, hint: string}|null} отказ либо null
  */
-function refuseIfPidReused(pid, lock) {
-  if (pidCouldBeFromRun(pid, lock?.started_at ?? null, { fresh: true })) {
-    return null;
+function refuseIfIdentityUnconfirmed(pid, lock) {
+  const identity = checkProcessIdentity(pid, lock?.started_at ?? null, { fresh: true });
+  if (identity.status === 'MATCH') return null;
+  if (identity.status === 'PID_REUSED') {
+    return ownershipRefusal({ reason: 'PID_REUSED' }, 'FOREIGN_PIPELINE', '');
   }
-  return ownershipRefusal({ reason: 'PID_REUSED' }, 'FOREIGN_PIPELINE', '');
+  return {
+    ok: false,
+    code: 'PROCESS_IDENTITY_UNKNOWN',
+    reason: 'IDENTITY_UNKNOWN',
+    pid,
+    hint: 'The operating system could not confirm this process is the recorded runner; no signal was sent. Retry when process identity can be checked.'
+  };
 }
 
 /**
@@ -609,8 +610,8 @@ export async function pausePipelineImpl(project) {
   // Сначала — не занят ли номер посторонним процессом: приостановить чужой
   // процесс так же скверно, как убить. Заодно отказ говорит правду («удалите
   // протухший lock»), а не «пайплайн чужой».
-  const pauseReused = refuseIfPidReused(pid, runner.lock);
-  if (pauseReused) return pauseReused;
+  const pauseIdentityRefusal = refuseIfIdentityUnconfirmed(pid, runner.lock);
+  if (pauseIdentityRefusal) return pauseIdentityRefusal;
 
   // Сверка владения по lock'у. Время старта уже проверено выше.
   const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds());
@@ -709,9 +710,9 @@ export const pause_pipeline = {
     const pid = runner.pid;
 
     // Снять паузу с постороннего процесса так же нехорошо, как приостановить:
-    // проверка переиспользования идёт первой и здесь.
-    const resumeReused = refuseIfPidReused(pid, runner.lock);
-    if (resumeReused) return resumeReused;
+    // подтверждение личности процесса идёт первым.
+    const resumeIdentityRefusal = refuseIfIdentityUnconfirmed(pid, runner.lock);
+    if (resumeIdentityRefusal) return resumeIdentityRefusal;
 
     // Сверка владения по lock'у. Время старта уже проверено выше.
     const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds());
@@ -802,20 +803,14 @@ export const resume_pipeline = {
     }
     const pid = runner.pid;
 
-    // Переиспользованный номер проверяется отдельно и раньше владения.
+    // Личность процесса проверяется отдельно и раньше владения.
     //
-    // `force` снимает вопрос о том, чей это пайплайн, но не вопрос о том, есть
-    // ли он вообще: при `PID_REUSED` номер из lock'а принадлежит постороннему
-    // процессу, и убийство «с force» — это `taskkill /F /T` по чужому дереву.
+    // `force` снимает вопрос о том, чей это пайплайн, но не вопрос о том,
+    // подтверждён ли процесс как записанный в lock'е раннер. Неизвестность
+    // личности не должна приводить к сигналу вслепую.
     //
-    // Сверять это внутри `validateRunOwnership` было недостаточно: признаки
-    // чужого запуска там проверяются раньше времени старта (и правильно — для
-    // живого чужого раннера совет «удалите lock» был бы вредным), поэтому у
-    // чужого lock'а причина отказа всегда `STARTED_BY_MISMATCH`, а не
-    // `PID_REUSED`. Именно в этом случае и зовут `force` — и защита не
-    // срабатывала ровно там, где нужна.
-    const reused = refuseIfPidReused(pid, runner.lock);
-    if (reused) return reused;
+    const identityRefusal = refuseIfIdentityUnconfirmed(pid, runner.lock);
+    if (identityRefusal) return identityRefusal;
 
     // Владение. Время старта уже проверено выше — второй опрос ОС не нужен.
     const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds());
@@ -910,8 +905,8 @@ export async function abortPipelineImpl(project, options = {}) {
   }
   const pid = runner.pid;
 
-  const abortReused = refuseIfPidReused(pid, runner.lock);
-  if (abortReused) return abortReused;
+  const abortIdentityRefusal = refuseIfIdentityUnconfirmed(pid, runner.lock);
+  if (abortIdentityRefusal) return abortIdentityRefusal;
 
   // Сверка владения по lock'у. Время старта уже проверено выше.
   const validation = validateRunOwnership(runner.lock, pid, acceptedInstanceIds());
@@ -968,8 +963,9 @@ export async function abortPipelineImpl(project, options = {}) {
         // Проверка переиспользования отдельно и здесь: за grace-окно раннер
         // мог умереть, а номер — достаться другому процессу. Аварийный ключ
         // этот вопрос не снимает.
-        if (!pidCouldBeFromRun(pid, liveLock.started_at, { fresh: true })) {
-          return { escalate: false, reason: 'PID_REUSED' };
+        const identity = checkProcessIdentity(pid, liveLock.started_at, { fresh: true });
+        if (identity.status !== 'MATCH') {
+          return { escalate: false, reason: identity.status };
         }
         const ownership = validateRunOwnership(liveLock, pid, acceptedInstanceIds());
         return ownership.valid

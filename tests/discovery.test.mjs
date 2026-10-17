@@ -20,6 +20,13 @@ function createWorkflowDir(basePath, projectName) {
   fs.mkdirSync(workflowPath, { recursive: true });
 }
 
+// Helper to create a .workflow directory that looks like a project's one
+// (`.workflow/tickets` и т. п. — признак, по которому cwd считается проектом)
+function createProjectWorkflowDir(basePath, projectName) {
+  createWorkflowDir(basePath, projectName);
+  fs.mkdirSync(path.join(basePath, projectName, '.workflow', 'tickets'), { recursive: true });
+}
+
   // Helper to create .workflow-mcp.yaml
   function createConfig(basePath, config) {
     const configPath = path.join(basePath, '.workflow-mcp.yaml');
@@ -104,9 +111,8 @@ describe('discoverProjects', () => {
     expect(projects.map(p => p.name).sort()).toEqual(['projectA', 'projectC']);
   });
 
-  it('single-project mode: cwd itself contains .workflow', () => {
-    const workflowDir = path.join(testDir, '.workflow');
-    fs.mkdirSync(workflowDir, { recursive: true });
+  it('single-project mode: cwd itself contains a project .workflow', () => {
+    fs.mkdirSync(path.join(testDir, '.workflow', 'tickets'), { recursive: true });
 
     const projects = discoverProjects(testDir);
     expect(projects).toHaveLength(1);
@@ -114,14 +120,37 @@ describe('discoverProjects', () => {
     expect(projects[0].path).toBe(path.resolve(testDir));
   });
   it('single-project mode takes priority over other projects', () => {
-    const workflowDir = path.join(testDir, '.workflow');
-    fs.mkdirSync(workflowDir, { recursive: true });
+    fs.mkdirSync(path.join(testDir, '.workflow', 'config'), { recursive: true });
     createWorkflowDir(testDir, 'projectA');
     createWorkflowDir(testDir, 'projectB');
 
     const projects = discoverProjects(testDir);
     expect(projects).toHaveLength(1);
     expect(projects[0].name).toBe(path.basename(testDir));
+  });
+
+  it('empty .workflow in cwd does not collapse the workspace into one project', () => {
+    // Схлопывание снимается: подкаталоги с .workflow по-прежнему обходятся
+    fs.mkdirSync(path.join(testDir, '.workflow'), { recursive: true });
+    createWorkflowDir(testDir, 'projectA');
+    createWorkflowDir(testDir, 'projectB');
+
+    const projects = discoverProjects(testDir);
+    expect(projects.map(p => p.name).sort()).toEqual(['projectA', 'projectB']);
+  });
+
+  it('.workflow holding only rails state is not a project', () => {
+    // Состояние рельсов: state/, logs/, approvals/ — но не проектная .workflow
+    const workflowDir = path.join(testDir, '.workflow');
+    fs.mkdirSync(path.join(workflowDir, 'state', 'rails'), { recursive: true });
+    fs.mkdirSync(path.join(workflowDir, 'logs'), { recursive: true });
+    fs.mkdirSync(path.join(workflowDir, 'approvals'), { recursive: true });
+    fs.writeFileSync(path.join(workflowDir, 'logs', 'rails-denials.jsonl'), '', 'utf-8');
+    createProjectWorkflowDir(testDir, 'projectA');
+
+    const projects = discoverProjects(testDir);
+    expect(projects).toHaveLength(1);
+    expect(projects[0].name).toBe('projectA');
   });
 
   it('returns empty array for non-existent cwd', () => {

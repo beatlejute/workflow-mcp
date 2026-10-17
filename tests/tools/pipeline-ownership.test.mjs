@@ -31,8 +31,18 @@ import {
   abortPipelineImpl
 } from '../../src/tools/pipeline.mjs';
 import { mcpInstanceId } from '../../src/lib/project-root.mjs';
+import { setProcessStartReaderForTests } from '../../src/process/process-start.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.dirname(path.dirname(__dirname));
+
+async function withConfirmedProcessIdentity(action) {
+  setProcessStartReaderForTests(() => new Date(0));
+  try {
+    return await action();
+  } finally {
+    setProcessStartReaderForTests(null);
+  }
+}
 
 // Entry-стадия manual-gate паркует раннер в опросе: процесс живёт, и маркер
 // можно проверить на идущем пайплайне.
@@ -176,7 +186,7 @@ describe('владение пайплайном, запущенным через
     // Тот же способ запуска и та же машина, но другая рабочая область.
     makeRun('projB', { lock: { started_by_id: 'workflow-mcp@deadbeefdead' } });
 
-    const stopped = await stop_pipeline.execute({ project: 'projB' });
+    const stopped = await withConfirmedProcessIdentity(() => stop_pipeline.execute({ project: 'projB' }));
     expect(stopped.ok).toBe(false);
     expect(stopped.code).toBe('FOREIGN_PIPELINE');
     expect(stopped.reason).toBe('INSTANCE_MISMATCH');
@@ -186,7 +196,7 @@ describe('владение пайплайном, запущенным через
     // Отличается от чужой метки: владение неизвестно, а не отдано другому.
     makeRun('projH', { lock: { started_by_id: null } });
 
-    const stopped = await stop_pipeline.execute({ project: 'projH' });
+    const stopped = await withConfirmedProcessIdentity(() => stop_pipeline.execute({ project: 'projH' }));
     expect(stopped.ok).toBe(false);
     expect(stopped.code).toBe('FOREIGN_PIPELINE');
     expect(stopped.reason).toBe('INSTANCE_UNKNOWN');
@@ -195,7 +205,7 @@ describe('владение пайплайном, запущенным через
   it('запущенный из CLI своим не становится', async () => {
     makeRun('projD', { lock: { started_by: 'cli' } });
 
-    const stopped = await stop_pipeline.execute({ project: 'projD' });
+    const stopped = await withConfirmedProcessIdentity(() => stop_pipeline.execute({ project: 'projD' }));
     expect(stopped.ok).toBe(false);
     expect(stopped.code).toBe('FOREIGN_PIPELINE');
     expect(stopped.reason).toBe('STARTED_BY_MISMATCH');

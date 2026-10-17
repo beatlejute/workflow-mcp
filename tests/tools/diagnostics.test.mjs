@@ -28,6 +28,9 @@ describe('list_ghost_executions', () => {
     // Create .workflow directory structure
     fs.mkdirSync(path.join(projectPath, '.workflow'), { recursive: true });
     fs.mkdirSync(logsDir, { recursive: true });
+    // Project marker: discovery counts cwd as a project only by a project-like
+    // .workflow (tickets/config/plans) — logs alone are not enough
+    fs.mkdirSync(path.join(projectPath, '.workflow', 'tickets'), { recursive: true });
 
     // Create a basic MCP config file (.workflow-mcp.yaml at project root)
     fs.writeFileSync(path.join(projectPath, '.workflow-mcp.yaml'), 'health:\n  ghost_execution_log_marker: "ghost-execution"\n');

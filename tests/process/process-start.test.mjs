@@ -7,10 +7,16 @@
  * хуже остающегося риска переиспользования pid.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { spawn } from 'child_process';
 
-import { processStartedAt, pidCouldBeFromRun } from '../../src/process/process-start.mjs';
+import { processStartedAt, pidCouldBeFromRun, setProcessStartReaderForTests } from '../../src/process/process-start.mjs';
+
+const FIXED_START = new Date('2025-01-01T00:00:00.000Z');
+
+afterEach(() => {
+  setProcessStartReaderForTests(null);
+});
 
 /** Заведомо свободный номер: столько процессов в системе не бывает. */
 const DEAD_PID = 999999999;
@@ -38,31 +44,33 @@ describe('processStartedAt', () => {
 
 describe('pidCouldBeFromRun', () => {
   it('процесс, стартовавший до записи lock, считается тем самым', () => {
-    // Свой процесс стартовал раньше, чем «сейчас».
-    expect(pidCouldBeFromRun(process.pid, new Date().toISOString())).toBe(true);
+    setProcessStartReaderForTests(() => FIXED_START);
+    expect(pidCouldBeFromRun(12345, '2025-01-01T00:00:01.000Z')).toBe(true);
   });
 
   it('процесс, стартовавший заметно позже lock, считается чужим', () => {
-    expect(pidCouldBeFromRun(process.pid, '2020-01-01T00:00:00.000Z')).toBe(false);
+    setProcessStartReaderForTests(() => FIXED_START);
+    expect(pidCouldBeFromRun(12345, '2020-01-01T00:00:00.000Z')).toBe(false);
   });
 
   it('допуск покрывает округление до секунды, но не больше', () => {
-    const startedAt = processStartedAt(process.pid);
-    expect(startedAt).toBeInstanceOf(Date);
+    const startedAt = FIXED_START;
+    setProcessStartReaderForTests(() => startedAt);
 
     // lock якобы записан за 4 секунды ДО старта процесса — внутри допуска.
     const almost = new Date(startedAt.getTime() - 4000).toISOString();
-    expect(pidCouldBeFromRun(process.pid, almost)).toBe(true);
+    expect(pidCouldBeFromRun(12345, almost)).toBe(true);
 
     // За 10 секунд до старта — уже вне допуска.
     const tooEarly = new Date(startedAt.getTime() - 10000).toISOString();
-    expect(pidCouldBeFromRun(process.pid, tooEarly)).toBe(false);
+    expect(pidCouldBeFromRun(12345, tooEarly)).toBe(false);
   });
 
   it('без времени записи lock проверка пропускается', () => {
-    expect(pidCouldBeFromRun(process.pid, null)).toBe(true);
-    expect(pidCouldBeFromRun(process.pid, undefined)).toBe(true);
-    expect(pidCouldBeFromRun(process.pid, 'не дата')).toBe(true);
+    setProcessStartReaderForTests(() => FIXED_START);
+    expect(pidCouldBeFromRun(12345, null)).toBe(true);
+    expect(pidCouldBeFromRun(12345, undefined)).toBe(true);
+    expect(pidCouldBeFromRun(12345, 'не дата')).toBe(true);
   });
 
   it('если время старта узнать нельзя, процесс считается подходящим', () => {

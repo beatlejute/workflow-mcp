@@ -23,6 +23,7 @@ import { mcpInstanceId } from '../../src/lib/project-root.mjs';
 import { isAbortInProgress } from '../../src/process/abort-state.mjs';
 import { readKillOutcome } from '../../src/process/kill-outcome.mjs';
 import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
+import { setProcessStartReaderForTests } from '../../src/process/process-start.mjs';
 
 let workspace;
 let projectRoot;
@@ -78,9 +79,12 @@ beforeEach(async () => {
   prevMcpCwd = process.env.MCP_CWD;
   process.env.MCP_CWD = workspace;
   projectRoot = await makeRunningProject();
+  const startedAt = new Date();
+  setProcessStartReaderForTests(() => startedAt);
 });
 
 afterEach(() => {
+  setProcessStartReaderForTests(null);
   vi.restoreAllMocks();
   if (victim) {
     try {

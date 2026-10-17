@@ -22,7 +22,8 @@ describe('Tools: list_reports and get_report', () => {
     }
     fs.mkdirSync(testProjectDir, { recursive: true });
 
-    // Create .workflow/reports directory
+    // Create project marker and reports directory
+    fs.mkdirSync(path.join(testProjectDir, '.workflow', 'tickets'), { recursive: true });
     reportsDir = path.join(testProjectDir, '.workflow', 'reports');
     fs.mkdirSync(reportsDir, { recursive: true });
 
@@ -207,11 +208,84 @@ Fourth report body`;
       expect(data.body.includes('---')).toBe(false); // Body should not contain frontmatter delimiters
     });
 
-    it('should return error for non-existent report', async () => {
+    it('should return REPORT_NOT_FOUND for a valid missing report ID', async () => {
       await expect(get_report.execute({
         project: testProjectDir,
-        report_id: 'NONEXISTENT'
-      })).rejects.toThrow('Report not found');
+        report_id: 'Missing-Report-999'
+      })).rejects.toMatchObject({ code: 'REPORT_NOT_FOUND' });
+    });
+
+    it('should get reports with lowercase and mixed-case IDs returned by list_reports', async () => {
+      const fixtures = [
+        { id: 'lowercase-report-005', title: 'Lowercase report' },
+        { id: 'RePoRt-Mixed-006', title: 'Mixed-case report' }
+      ];
+
+      for (const fixture of fixtures) {
+        fs.writeFileSync(
+          path.join(reportsDir, `${fixture.id}.md`),
+          `---\nid: ${fixture.id}\ntitle: ${fixture.title}\n---\n${fixture.title} body`,
+          'utf8'
+        );
+      }
+
+      try {
+        const listed = await list_reports.execute({ project: testProjectDir });
+        const listedFixtures = listed.filter(report => fixtures.some(fixture => fixture.id === report.id));
+        expect(listedFixtures.map(report => report.id)).toEqual(fixtures.map(fixture => fixture.id));
+
+        for (const fixture of fixtures) {
+          const result = await get_report.execute({ project: testProjectDir, report_id: fixture.id });
+          expect(result.frontmatter.id).toBe(fixture.id);
+          expect(result.frontmatter.title).toBe(fixture.title);
+        }
+
+        const mixedCase = fixtures[1].id;
+        const wrongCase = mixedCase.toLowerCase();
+        if (!fs.existsSync(path.join(reportsDir, `${wrongCase}.md`))) {
+          await expect(get_report.execute({ project: testProjectDir, report_id: wrongCase }))
+            .rejects.toMatchObject({ code: 'REPORT_NOT_FOUND' });
+        }
+      } finally {
+        for (const fixture of fixtures) {
+          fs.unlinkSync(path.join(reportsDir, `${fixture.id}.md`));
+        }
+      }
+    });
+
+    it('should reject empty, non-ASCII-alphanumeric, and path-like report IDs', async () => {
+      const invalidIds = [
+        '',
+        '.',
+        '..',
+        '../../etc/passwd',
+        '..\\REPORT-001',
+        '/etc/passwd',
+        'C:\\Windows\\win.ini',
+        'report/001',
+        'report\\001',
+        'report 001',
+        'report%20001',
+        'report%2F001',
+        'report\u0000001',
+        'report_001'
+      ];
+
+      for (const invalidId of invalidIds) {
+        await expect(get_report.execute({
+          project: testProjectDir,
+          report_id: invalidId
+        })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+      }
+    });
+
+    it('should keep uppercase report IDs working', async () => {
+      const result = await get_report.execute({
+        project: testProjectDir,
+        report_id: 'REPORT-001'
+      });
+
+      expect(result.frontmatter.id).toBe('REPORT-001');
     });
 
     it('should reject path traversal attack: ../../etc/passwd', async () => {

@@ -14,6 +14,8 @@ import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import process from 'process';
 import { abortPipelineImpl } from '../../src/tools/pipeline.mjs';
+import * as resources from '../../src/resources/index.mjs';
+import { setProcessStartReaderForTests } from '../../src/process/process-start.mjs';
 import { writeRunnerLock, writeBrokenLock } from '../helpers/pipeline-lock.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -27,8 +29,11 @@ describe('abort_pipeline tool', () => {
   let logsDir;
   let originalCwd;
   let originalMcpCwd;
+  let notificationHandler;
 
   beforeEach(() => {
+    notificationHandler = vi.fn();
+    resources.setPipelineStateNotificationHandler(notificationHandler);
     // Save original working directory
     originalCwd = process.cwd();
 
@@ -42,6 +47,7 @@ describe('abort_pipeline tool', () => {
     // Create directory structure
     fs.mkdirSync(logsDir, { recursive: true });
     fs.mkdirSync(stateDir, { recursive: true });
+    fs.mkdirSync(path.join(workflowDir, 'tickets'), { recursive: true });
 
     // Change to test directory so resolveProjectRoot works correctly
     process.chdir(projectPath);
@@ -54,6 +60,8 @@ describe('abort_pipeline tool', () => {
   });
 
   afterEach(() => {
+    resources.setPipelineStateNotificationHandler(null);
+    setProcessStartReaderForTests(null);
     // Restore original working directory
     process.chdir(originalCwd);
     if (originalMcpCwd === undefined) delete process.env.MCP_CWD;
@@ -69,6 +77,15 @@ describe('abort_pipeline tool', () => {
     }
   });
 
+
+  async function withConfirmedProcessIdentity(action) {
+    setProcessStartReaderForTests(() => new Date(0));
+    try {
+      return await action();
+    } finally {
+      setProcessStartReaderForTests(null);
+    }
+  }
 
   // Helper: положить lock раннера
   function createRunnerPids(pid) {
@@ -241,7 +258,7 @@ describe('abort_pipeline tool', () => {
       // Lock помечен другим экземпляром MCP.
       writeRunnerLock(projectPath, 99999, { started_by_id: 'workflow-mcp@foreign12345' });
 
-      const result = await abortPipelineImpl('.');
+      const result = await withConfirmedProcessIdentity(() => abortPipelineImpl('.'));
 
       expect(result.ok).toBe(false);
       expect(result.code).toBe('FOREIGN_PIPELINE');
@@ -252,7 +269,7 @@ describe('abort_pipeline tool', () => {
     it('should reject abort of a CLI-started pipeline', async () => {
       writeRunnerLock(projectPath, 12345, { started_by: 'cli', started_by_id: null });
 
-      const result = await abortPipelineImpl('.');
+      const result = await withConfirmedProcessIdentity(() => abortPipelineImpl('.'));
 
       expect(result.ok).toBe(false);
       expect(result.code).toBe('FOREIGN_PIPELINE');
@@ -320,18 +337,33 @@ describe('abort_pipeline tool', () => {
 
   describe('TC-008: Notification calls', () => {
     it('abort should not throw on notification failures', async () => {
-      // Create a dummy PID that doesn't exist but passes validation
-      const dummyPid = 99999;
-      createRunnerPids(dummyPid);
+      const proc = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {
+        detached: process.platform !== 'win32',
+        stdio: 'ignore'
+      });
+      proc.unref();
+      const childPid = proc.pid;
+      createRunnerPids(childPid);
+      notificationHandler.mockImplementation(() => {
+        throw new Error('notification failed');
+      });
 
-      // Run abort — should handle any notification errors gracefully
-      // The abort will fail with NO_SUCH_PROCESS (expected since PID doesn't exist)
-      // but should not throw from notification code
-      const result = await abortPipelineImpl('.', { grace_sec: 0 });
+      try {
+        const result = await withConfirmedProcessIdentity(() => abortPipelineImpl('.', { grace_sec: 0 }));
+        await new Promise((resolve) => setTimeout(resolve, 250));
 
-      // We expect NO_SUCH_PROCESS (POSIX) or EXTERNAL_COMMAND_FAILED (Windows) because PID doesn't exist
-      // Could also get FOREIGN_PIPELINE if marker validation fails
-      expect(['NO_SUCH_PROCESS', 'EXTERNAL_COMMAND_FAILED', 'FOREIGN_PIPELINE']).toContain(result.code);
+        expect(result.ok).toBe(true);
+        expect(result.state).toBe('aborted');
+        expect(notificationHandler).toHaveBeenCalled();
+      } finally {
+        if (proc.exitCode === null && proc.signalCode === null) {
+          if (process.platform === 'win32') {
+            proc.kill();
+          } else {
+            try { process.kill(childPid, 'SIGKILL'); } catch {}
+          }
+        }
+      }
     });
   });
 

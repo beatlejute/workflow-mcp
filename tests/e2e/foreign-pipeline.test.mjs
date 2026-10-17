@@ -13,6 +13,7 @@ import process from 'process';
 import { fileURLToPath } from 'url';
 import { writeRunnerLock, runnerLockPath } from '../helpers/pipeline-lock.mjs';
 import { readPipelineLock } from '../../src/process/run-lock.mjs';
+import { setProcessStartReaderForTests } from '../../src/process/process-start.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,6 +47,7 @@ describe('E2E: foreign-pipeline protection', () => {
     // Create directory structure
     fs.mkdirSync(logsDir, { recursive: true });
     fs.mkdirSync(stateDir, { recursive: true });
+    fs.mkdirSync(path.join(workflowDir, 'tickets'), { recursive: true });
 
     // Create minimal workflow config
     const configDir = path.join(workflowDir, 'configs');
@@ -54,7 +56,17 @@ describe('E2E: foreign-pipeline protection', () => {
     process.chdir(projectPath);
   });
 
+  async function withConfirmedProcessIdentity(action) {
+    setProcessStartReaderForTests(() => new Date(0));
+    try {
+      return await action();
+    } finally {
+      setProcessStartReaderForTests(null);
+    }
+  }
+
   afterEach(() => {
+    setProcessStartReaderForTests(null);
     // Restore environment
     process.env = { ...originalEnv };
     process.chdir(originalCwd);
@@ -240,19 +252,25 @@ describe('E2E: foreign-pipeline protection', () => {
       // Lock того же вида, но с меткой другого экземпляра MCP.
       writeRunnerLock(projectPath, pid, { started_by_id: 'workflow-mcp@differenti' });
 
-      const { stopPipelineImpl } = await import('../../src/tools/pipeline.mjs');
-
-      const result = await stopPipelineImpl('.');
-
-      expect(result.ok).toBe(false);
-      expect(result.code).toBe('FOREIGN_PIPELINE');
-      expect(result.reason).toBe('INSTANCE_MISMATCH');
-
-      // Clean up
       try {
-        process.kill(-pid, 'SIGKILL');
-      } catch {
-        // Already dead
+        const { stopPipelineImpl } = await import('../../src/tools/pipeline.mjs');
+        const result = await withConfirmedProcessIdentity(() => stopPipelineImpl('.'));
+
+        expect(result.ok).toBe(false);
+        expect(result.code).toBe('FOREIGN_PIPELINE');
+        expect(result.reason).toBe('INSTANCE_MISMATCH');
+      } finally {
+        if (proc.exitCode === null && proc.signalCode === null) {
+          if (process.platform === 'win32') {
+            proc.kill();
+          } else {
+            try {
+              process.kill(pid, 'SIGKILL');
+            } catch {
+              // Already dead
+            }
+          }
+        }
       }
     });
   });

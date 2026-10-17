@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { setProcessStartReaderForTests } from '../../src/process/process-start.mjs';
 
 /** Что вернёт подменённый `control.mjs` на ближайший вызов. */
 let pauseAnswer;
@@ -51,6 +52,7 @@ function writeLock(pid) {
 }
 
 beforeEach(() => {
+  setProcessStartReaderForTests(() => new Date(Date.now() - 60_000));
   pauseAnswer = { ok: true, pid: RUNNER_PID, state: 'paused' };
   resumeAnswer = { ok: true, pid: RUNNER_PID, state: 'running' };
   workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'refusal-pid-')));
@@ -67,6 +69,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setProcessStartReaderForTests(null);
   if (savedCwd === undefined) delete process.env.MCP_CWD;
   else process.env.MCP_CWD = savedCwd;
   fs.rmSync(workspace, { recursive: true, force: true });

@@ -55,6 +55,7 @@ beforeEach(async () => {
   projectRoot = path.join(workspace, 'proj');
   fs.mkdirSync(path.join(projectRoot, '.workflow', 'logs'), { recursive: true });
   fs.mkdirSync(path.join(projectRoot, '.workflow', 'state'), { recursive: true });
+  fs.mkdirSync(path.join(projectRoot, '.workflow', 'tickets'), { recursive: true });
   savedCwd = process.env.MCP_CWD;
   savedKey = process.env.WORKFLOW_MCP_FORCE_FOREIGN;
   process.env.MCP_CWD = workspace;

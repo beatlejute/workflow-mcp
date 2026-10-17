@@ -32,14 +32,20 @@ import { execFileSync } from 'child_process';
  * сигнальные пути зовут с `fresh: true` и всегда спрашивают ОС заново.
  *
  * Неудачный опрос (`null`) помнится отдельно и заметно меньше: он означает
- * «процесса нет или не спросить» и ведёт к fail-open, так что застревать в
- * этом ответе на минуту опаснее, чем переспросить.
+ * «процесса нет или не спросить» и при управлении процессом ведёт к отказу.
  *
  * @type {Map<number, {at: number, value: Date|null}>}
  */
 const startCache = new Map();
 const START_CACHE_TTL_MS = 60_000;
 const UNKNOWN_CACHE_TTL_MS = 5_000;
+let processStartReader = processStartedAt;
+
+/** Подменить опрос ОС в детерминированных тестах. */
+export function setProcessStartReaderForTests(reader) {
+  processStartReader = reader ?? processStartedAt;
+  startCache.clear();
+}
 
 /** Забыть опрошенное. Нужно тестам: иначе pid из прошлого теста считается известным. */
 export function clearProcessStartCache() {
@@ -78,7 +84,12 @@ export function processStartedAtCached(pid, { fresh = false } = {}) {
   if (!fresh && cacheEntryUsable(hit)) {
     return hit.value;
   }
-  const value = processStartedAt(pid);
+  let value = null;
+  try {
+    value = processStartReader(pid);
+  } catch {
+    // Неудачный опрос не подтверждает личность процесса.
+  }
   startCache.set(pid, { at: Date.now(), value });
   return value;
 }
@@ -92,10 +103,12 @@ export function processStartedAt(pid) {
     return null;
   }
 
+  const started = Date.now();
+  const command = process.platform === 'win32' ? 'powershell.exe' : 'ps';
   try {
-    if (process.platform === 'win32') {
-      const out = execFileSync(
-        'powershell.exe',
+    const out = process.platform === 'win32'
+      ? execFileSync(
+        command,
         [
           '-NoProfile',
           '-NonInteractive',
@@ -103,36 +116,60 @@ export function processStartedAt(pid) {
           `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`
         ],
         { encoding: 'utf8', timeout: 5000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
-      ).trim();
-      const parsed = new Date(out);
-      return Number.isNaN(parsed.getTime()) ? null : parsed;
-    }
-
-    // POSIX: `ps -o lstart=` отдаёт локальное время в формате вроде
-    // «Mon Sep 19 18:04:11 2026».
-    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
-      encoding: 'utf8',
-      timeout: 5000,
-      stdio: ['ignore', 'pipe', 'ignore']
-    }).trim();
-    if (!out) {
+      ).trim()
+      // POSIX: `ps -o lstart=` отдаёт локальное время в формате вроде
+      // «Mon Sep 19 18:04:11 2026».
+      : execFileSync(command, ['-o', 'lstart=', '-p', String(pid)], {
+        encoding: 'utf8',
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim();
+    const parsed = new Date(out);
+    if (!out || Number.isNaN(parsed.getTime())) {
+      reportProcessStartQuery({ pid, durationMs: Date.now() - started, reason: 'unparseable' });
       return null;
     }
-    const parsed = new Date(out);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  } catch {
-    // Процесса нет, прав не хватает, утилита недоступна — проверку пропускаем.
+    return parsed;
+  } catch (error) {
+    reportProcessStartQuery({
+      pid,
+      durationMs: Date.now() - started,
+      code: error?.code,
+      errno: error?.errno,
+      status: error?.status,
+      signal: error?.signal,
+    });
+    // Ошибка опроса не позволяет подтвердить личность процесса.
     return null;
   }
 }
 
+function diagnosticValue(value) {
+  return typeof value === 'string' || typeof value === 'number' ? value : undefined;
+}
+
+function reportProcessStartQuery({ pid, durationMs, reason, code, errno, status, signal }) {
+  try {
+    process.stderr.write(`${JSON.stringify({
+      event: 'process_start_query_failed',
+      pid: diagnosticValue(pid),
+      durationMs: diagnosticValue(durationMs),
+      reason,
+      code: diagnosticValue(code),
+      errno: diagnosticValue(errno),
+      status: diagnosticValue(status),
+      signal: diagnosticValue(signal),
+    })}\n`);
+  } catch {
+    // Недоступный поток диагностики не превращает неизвестную личность в совпадение.
+  }
+}
+
 /**
- * Мог ли процесс с этим pid быть тем самым раннером, что записал lock.
- *
- * Возвращает `true`, если узнать время старта не удалось: запрет управления
- * своим же пайплайном из-за недоступной системной утилиты хуже, чем
- * остающийся риск переиспользования pid. Про это сказано в README, в блоке
- * «Владение процессом».
+ * Проверяет личность процесса по времени старта. Неизвестность отделена от
+ * совпадения, чтобы пути управления могли отказать без отправки сигнала.
+ * Read-only снимки могут использовать `pidCouldBeFromRun`, где неизвестность
+ * отображается как возможное совпадение.
  *
  * @param {number} pid
  * @param {string|null} lockWrittenAt ISO-время записи lock'а
@@ -143,19 +180,22 @@ export function processStartedAt(pid) {
  * @param {number} [options.toleranceMs] запас на округление: `ps` отдаёт время с
  *   точностью до секунды. Шире делать незачем: это ровно окно, в котором
  *   переиспользованный pid пройдёт проверку
- * @returns {boolean}
+ * @returns {{status: 'MATCH'|'PID_REUSED'|'IDENTITY_UNKNOWN'}}
  */
-export function pidCouldBeFromRun(pid, lockWrittenAt, { fresh = false, toleranceMs = 5000 } = {}) {
-  if (!lockWrittenAt) {
-    return true;
-  }
-  const lockTime = new Date(lockWrittenAt).getTime();
-  if (Number.isNaN(lockTime)) {
-    return true;
+export function checkProcessIdentity(pid, lockWrittenAt, { fresh = false, toleranceMs = 5000 } = {}) {
+  if (!lockWrittenAt || Number.isNaN(new Date(lockWrittenAt).getTime())) {
+    return { status: 'IDENTITY_UNKNOWN' };
   }
   const startedAt = processStartedAtCached(pid, { fresh });
-  if (!startedAt) {
-    return true;
+  if (!(startedAt instanceof Date) || Number.isNaN(startedAt.getTime())) {
+    return { status: 'IDENTITY_UNKNOWN' };
   }
-  return startedAt.getTime() <= lockTime + toleranceMs;
+  return startedAt.getTime() <= new Date(lockWrittenAt).getTime() + toleranceMs
+    ? { status: 'MATCH' }
+    : { status: 'PID_REUSED' };
+}
+
+/** Read-only compatibility helper: unknown identity may be displayed as possible. */
+export function pidCouldBeFromRun(pid, lockWrittenAt, options = {}) {
+  return checkProcessIdentity(pid, lockWrittenAt, options).status !== 'PID_REUSED';
 }

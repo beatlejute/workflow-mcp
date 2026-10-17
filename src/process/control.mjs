@@ -294,6 +294,15 @@ export async function abort(pid, options = {}) {
           + 'Remove .workflow/logs/.pipeline.lock; do not retry with force — that would kill the unrelated process.'
       };
     }
+    if (verdict.reason === 'IDENTITY_UNKNOWN') {
+      return {
+        ok: false,
+        code: 'PROCESS_IDENTITY_UNKNOWN',
+        pid,
+        reason: verdict.reason,
+        hint: 'The operating system could not confirm this process is the recorded runner; no further signal was sent.'
+      };
+    }
     return {
       ok: false,
       code: 'OWNERSHIP_LOST',

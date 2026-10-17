@@ -7,21 +7,23 @@
  * переиспользованном номере приходит `escalated: false`, тогда как ответ был
  * `OWNERSHIP_LOST`.
  *
- * Здесь `abort` настоящий, сигнал уходит живому постороннему процессу (он его
- * переживает: мягкий `taskkill` без `/F` консольному процессу ничего не делает,
- * `SIGINT` node-процессу без обработчика — тоже не мгновенная смерть, поэтому
- * проверяется только ответ).
+ * Большинство случаев проверяет настоящий `abort` на отдельном дочернем
+ * процессе. Для `IDENTITY_UNKNOWN` транспорт подменён, чтобы проверить POSIX и
+ * Windows без ожидания запуска процесса и без отправки реальных сигналов.
+ * Процессный контроль здесь изолирован от pipeline state.
  *
  * Разбор отказа самой утилиты — в `abort-force-path.test.mjs`: там подменяется
  * запуск, потому что исход `taskkill` зависит от локали системы и прав.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { spawn } from 'child_process';
+import process from 'node:process';
 
-import { abort } from '../../src/process/control.mjs';
+import { abort, setExternalRunnerForTests } from '../../src/process/control.mjs';
 
 let victim = null;
+let signalSpy = null;
 
 async function spawnVictim() {
   // Процесс с обработчиком сигналов: мягкую остановку переживает, и ответ
@@ -36,6 +38,9 @@ async function spawnVictim() {
 }
 
 afterEach(() => {
+  signalSpy?.mockRestore();
+  signalSpy = null;
+  setExternalRunnerForTests(null);
   if (victim) {
     try { victim.kill('SIGKILL'); } catch { /* уже мёртв */ }
     victim = null;
@@ -56,6 +61,33 @@ describe('вердикт can_escalate превращается в ответ', (
     expect(result.reason).toBe('PID_REUSED');
     expect(result.hint).toMatch(/\.pipeline\.lock/);
     expect(result.hint).toMatch(/do not retry with force/);
+  });
+
+  it('IDENTITY_UNKNOWN блокирует эскалацию после мягкого сигнала', async () => {
+    const pid = 987654321;
+    signalSpy = vi.spyOn(process, 'kill').mockImplementation(() => {});
+    const externalCalls = [];
+    setExternalRunnerForTests(async (command, args) => {
+      externalCalls.push({ command, args });
+      return { ok: true };
+    });
+
+    const result = await abort(pid, {
+      grace_sec: 0,
+      can_escalate: () => ({ escalate: false, reason: 'IDENTITY_UNKNOWN' })
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe('PROCESS_IDENTITY_UNKNOWN');
+    expect(result.reason).toBe('IDENTITY_UNKNOWN');
+    if (process.platform === 'win32') {
+      expect(externalCalls).toEqual([{ command: 'taskkill', args: ['/PID', String(pid)] }]);
+      expect(signalSpy).not.toHaveBeenCalled();
+    } else {
+      expect(signalSpy).toHaveBeenCalledTimes(1);
+      expect(signalSpy).toHaveBeenCalledWith(pid, 'SIGINT');
+      expect(externalCalls).toEqual([]);
+    }
   });
 
   it('RUNNER_GONE — штатный исход, а не отказ', { timeout: 30000 }, async () => {

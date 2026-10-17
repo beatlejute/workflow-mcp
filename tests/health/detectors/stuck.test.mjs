@@ -517,15 +517,18 @@ describe('detectStuck (tests/health/detectors/stuck.test.mjs)', () => {
       const logPath = path.join(logsDir, 'pipeline_test-run-1.log');
       fs.writeFileSync(logPath, logContent, 'utf8');
 
-      // Set mtime to just under threshold (14.9 seconds < 15 second threshold)
-      const mtimeMs = Date.now() - 14900;
-      fs.utimesSync(logPath, mtimeMs / 1000, mtimeMs / 1000);
-
-      // Mock PIDs check
+      const now = Date.now();
+      fs.utimesSync(logPath, (now - 15000) / 1000, (now - 15000) / 1000);
+      const exactNow = fs.statSync(logPath).mtimeMs + 15000;
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(exactNow);
       vi.spyOn(pidCheck, 'isProcessAlive').mockReturnValue(true);
 
-      const result = detectStuck(projectPath, { stuck_headroom_sec: 5 });
-      expect(result).toBeNull();
+      try {
+        const result = detectStuck(projectPath, { stuck_headroom_sec: 5 });
+        expect(result).toBeNull();
+      } finally {
+        clock.mockRestore();
+      }
     });
 
     it('should return alert when log age is slightly more than threshold', () => {

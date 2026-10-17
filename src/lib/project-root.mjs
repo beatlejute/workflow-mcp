@@ -16,6 +16,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
+import { isProjectWorkflow } from './project-workflow.mjs';
 
 /**
  * Корень рабочей области сервера.
@@ -103,8 +104,13 @@ export function acceptedInstanceIds(cwd = mcpCwd()) {
  * @throws {Error & {code: 'INVALID_PROJECT'}} Если по пути нет `.workflow/`
  */
 export function resolveProjectRoot(project, { cwd = mcpCwd() } = {}) {
-  const resolved = path.resolve(cwd, project);
-  if (!fs.existsSync(path.join(resolved, '.workflow'))) {
+  const cwdRoot = path.resolve(cwd);
+  const resolved = path.resolve(cwdRoot, project);
+  const isCwdRoot = process.platform === 'win32'
+    ? resolved.toLowerCase() === cwdRoot.toLowerCase()
+    : resolved === cwdRoot;
+  const workflowDir = path.join(resolved, '.workflow');
+  if (!fs.existsSync(workflowDir) || (isCwdRoot && !isProjectWorkflow(workflowDir))) {
     const err = new Error(`Project not found or not a workflow project: ${project}`);
     err.code = 'INVALID_PROJECT';
     throw err;

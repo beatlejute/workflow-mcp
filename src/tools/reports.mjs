@@ -71,7 +71,7 @@ async function listReportsImpl({ project, since, limit = 50 }) {
  * get_report — возвращает {frontmatter, body, path}
  * @param {Object} params - Параметры
  * @param {string} params.project - Путь к проекту
- * @param {string} params.report_id - ID отчёта (валидируется regex ^[A-Z0-9-]+$)
+ * @param {string} params.report_id - ID отчёта (валидируется regex ^[A-Za-z0-9-]+$)
  * @returns {Promise<{frontmatter: Object, body: string, path: string}>}
  * @throws {Error} При невалидном report_id или отсутствии файла
  */
@@ -79,10 +79,10 @@ async function getReportImpl({ project, report_id }) {
   const projectRoot = resolveProjectRoot(project);
 
   // Path traversal защита: валидация report_id
-  if (!/^[A-Z0-9-]+$/.test(report_id)) {
+  if (!/^[A-Za-z0-9-]+$/.test(report_id)) {
     // Прежняя метка INVALID_FRONTMATTER вводила в заблуждение: фронтматтер
     // здесь ни при чём, отклоняется аргумент.
-    const err = new Error(`Invalid report_id: ${report_id}. Allowed characters: A-Z 0-9 -`);
+    const err = new Error(`Invalid report_id: ${report_id}. Allowed characters: A-Z a-z 0-9 -`);
     err.code = 'INVALID_ARGUMENT';
     throw err;
   }

@@ -14,6 +14,7 @@ import process from 'process';
 import { pausePipelineImpl, resumePipelineImpl } from '../../src/tools/pipeline.mjs';
 import * as resources from '../../src/resources/index.mjs';
 import { writeRunnerLock } from '../helpers/pipeline-lock.mjs';
+import { setProcessStartReaderForTests } from '../../src/process/process-start.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,6 +43,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
     // Create directory structure
     fs.mkdirSync(logsDir, { recursive: true });
     fs.mkdirSync(stateDir, { recursive: true });
+    fs.mkdirSync(path.join(workflowDir, 'tickets'), { recursive: true });
 
     // Change to test directory so resolveProjectRoot works correctly
     process.chdir(projectPath);
@@ -72,9 +74,19 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       // Ignore cleanup errors
     }
 
-    // Restore notification handler
+    // Restore notification handler and process identity reader
     resources.setPipelineStateNotificationHandler(null);
+    setProcessStartReaderForTests(null);
   });
+
+  async function withConfirmedProcessIdentity(action) {
+    setProcessStartReaderForTests(() => new Date(0));
+    try {
+      return await action();
+    } finally {
+      setProcessStartReaderForTests(null);
+    }
+  }
 
   describe('TC-001: pause → resume cycle on live spawned process', () => {
     it.skipIf(process.platform === 'win32')('should pause and resume a running process on POSIX', async () => {
@@ -133,7 +145,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       // Lock без метки экземпляра — так пишет раннер до workflow-ai 1.7.0.
       writeRunnerLock(projectPath, dummyPid, { started_by_id: null });
 
-      const result = await pausePipelineImpl('.');
+      const result = await withConfirmedProcessIdentity(() => pausePipelineImpl('.'));
 
       expect(result.ok).toBe(false);
       expect(result.code).toBe('OWNERSHIP_VALIDATION_FAILED');
@@ -147,7 +159,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
 
       writeRunnerLock(projectPath, dummyPid, { started_by_id: 'workflow-mcp@foreign123456' });
 
-      const result = await pausePipelineImpl('.');
+      const result = await withConfirmedProcessIdentity(() => pausePipelineImpl('.'));
 
       expect(result.ok).toBe(false);
       expect(result.code).toBe('OWNERSHIP_VALIDATION_FAILED');
@@ -163,7 +175,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       writeRunnerLock(projectPath, dummyPid);
 
       // Try to resume WITHOUT pausing first (no pause state file)
-      const result = await resumePipelineImpl('.');
+      const result = await withConfirmedProcessIdentity(() => resumePipelineImpl('.'));
 
       expect(result.ok).toBe(false);
       expect(result.code).toBe('NOT_PAUSED');
@@ -186,7 +198,7 @@ describe('pause_pipeline and resume_pipeline tools', () => {
       }), 'utf-8');
 
       // Try to resume — should fail because PID mismatch
-      const result = await resumePipelineImpl('.');
+      const result = await withConfirmedProcessIdentity(() => resumePipelineImpl('.'));
 
       expect(result.ok).toBe(false);
       expect(result.code).toBe('NOT_PAUSED');

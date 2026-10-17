@@ -43,6 +43,7 @@ describe('E2E: pause→approve→resume flow', () => {
     fs.mkdirSync(logsDir, { recursive: true });
     fs.mkdirSync(approvalsDir, { recursive: true });
     fs.mkdirSync(stateDir, { recursive: true });
+    fs.mkdirSync(path.join(workflowDir, 'tickets'), { recursive: true });
 
     // Create minimal workflow config
     const configDir = path.join(workflowDir, 'configs');

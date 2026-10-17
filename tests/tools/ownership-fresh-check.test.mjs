@@ -19,8 +19,13 @@ import os from 'os';
 import path from 'path';
 
 const calls = [];
+const identityCalls = [];
 
 vi.mock('../../src/process/process-start.mjs', () => ({
+  checkProcessIdentity: (pid, lockWrittenAt, options = {}) => {
+    identityCalls.push({ pid, lockWrittenAt, options });
+    return { status: 'MATCH' };
+  },
   pidCouldBeFromRun: (pid, lockWrittenAt, options = {}) => {
     calls.push({ pid, lockWrittenAt, fresh: options.fresh === true });
     return true;
@@ -68,6 +73,7 @@ function writeLock(pid) {
 
 beforeEach(() => {
   calls.length = 0;
+  identityCalls.length = 0;
   escalationDecision = null;
   workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fresh-check-')));
   projectRoot = path.join(workspace, 'proj');
@@ -87,14 +93,18 @@ afterEach(() => {
   fs.rmSync(workspace, { recursive: true, force: true });
 });
 
+function expectFreshIdentityChecks(minimumCalls = 1) {
+  expect(identityCalls.length).toBeGreaterThanOrEqual(minimumCalls);
+  expect(identityCalls.every((call) => call.options.fresh === true)).toBe(true);
+}
+
 describe('пути с сигналом', () => {
   it('stop_pipeline спрашивает ОС заново', async () => {
     writeLock(999999999);
 
     await stopPipelineImpl('proj');
 
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((c) => c.fresh)).toBe(true);
+    expectFreshIdentityChecks();
   });
 
   it('pause_pipeline спрашивает ОС заново', async () => {
@@ -102,8 +112,7 @@ describe('пути с сигналом', () => {
 
     await pausePipelineImpl('proj');
 
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((c) => c.fresh)).toBe(true);
+    expectFreshIdentityChecks();
   });
 
   it('abort_pipeline спрашивает ОС заново', async () => {
@@ -111,8 +120,7 @@ describe('пути с сигналом', () => {
 
     await abortPipelineImpl('proj', { grace_sec: 0 });
 
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((c) => c.fresh)).toBe(true);
+    expectFreshIdentityChecks();
   });
 
   it('решение об эскалации внутри grace-окна — тоже по свежему опросу', async () => {
@@ -120,13 +128,11 @@ describe('пути с сигналом', () => {
     // памяти до grace-окна, к моменту эскалации устаревает ровно настолько,
     // чтобы пропустить переиспользованный номер.
     writeLock(999999999);
-    calls.length = 0;
 
     await abortPipelineImpl('proj', { grace_sec: 0 });
 
     expect(escalationDecision).toEqual({ escalate: true });
-    expect(calls.length).toBeGreaterThan(1);
-    expect(calls.every((c) => c.fresh)).toBe(true);
+    expectFreshIdentityChecks(2);
   });
 
   it('resume_pipeline спрашивает ОС заново', async () => {
@@ -138,8 +144,7 @@ describe('пути с сигналом', () => {
 
     await resumePipelineImpl('proj');
 
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((c) => c.fresh)).toBe(true);
+    expectFreshIdentityChecks();
   });
 });
 
@@ -153,5 +158,6 @@ describe('чтение состояния', () => {
 
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.some((c) => c.fresh)).toBe(false);
+    expect(identityCalls).toHaveLength(0);
   });
 });

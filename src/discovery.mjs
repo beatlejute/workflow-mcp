@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
-
+import { isProjectWorkflow } from './lib/project-workflow.mjs';
 
 /**
  * Read and parse .workflow-mcp.yaml configuration file
@@ -83,8 +83,12 @@ export function discoverProjects(cwd, { onError = null } = {}) {
   const { depth } = getDiscoveryConfig(config);
 
   // Single-project mode: if cwd itself contains .workflow/
+  // Режим одного проекта включается только по проектной `.workflow/`: каталог,
+  // заведённый под состояние рельсов, иначе схлопывал рабочую область до
+  // одного cwd, и лежащие в ней проекты пропадали из обхода.
   const selfWorkflow = path.join(absoluteCwd, '.workflow');
-  if (isWorkflowDirectory(selfWorkflow, onError, { scope: 'workspace', project: path.basename(absoluteCwd) })) {
+  if (isWorkflowDirectory(selfWorkflow, onError, { scope: 'workspace', project: path.basename(absoluteCwd) })
+      && isProjectWorkflow(selfWorkflow)) {
     return [{ name: path.basename(absoluteCwd), path: absoluteCwd }];
   }
 

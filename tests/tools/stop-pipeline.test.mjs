@@ -3,7 +3,7 @@
  * Tests POSIX process kill via process group, Windows taskkill mock, marker validation, and force override
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -13,6 +13,8 @@ import process from 'process';
 import { stopPipelineImpl } from '../../src/tools/pipeline.mjs';
 import { writeRunnerLock, writeBrokenLock } from '../helpers/pipeline-lock.mjs';
 import { clearProcessAliveCache } from '../../src/health/pid-check.mjs';
+import { setProcessStartReaderForTests } from '../../src/process/process-start.mjs';
+import { setExternalRunnerForTests } from '../../src/process/control.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,6 +32,7 @@ describe('stop_pipeline tool', () => {
     // Память живости общая на весь процесс, а Windows охотно переиспользует
     // номера: ответ про жертву прошлого теста иначе достаётся следующей.
     clearProcessAliveCache();
+    setProcessStartReaderForTests(null);
     // Save original working directory
     originalCwd = process.cwd();
 
@@ -43,6 +46,7 @@ describe('stop_pipeline tool', () => {
     // Create directory structure
     fs.mkdirSync(logsDir, { recursive: true });
     fs.mkdirSync(stateDir, { recursive: true });
+    fs.mkdirSync(path.join(workflowDir, 'tickets'), { recursive: true });
 
     // Change to test directory so resolveProjectRoot works correctly
     process.chdir(projectPath);
@@ -55,6 +59,9 @@ describe('stop_pipeline tool', () => {
   });
 
   afterEach(() => {
+    setProcessStartReaderForTests(null);
+    setExternalRunnerForTests(null);
+    vi.restoreAllMocks();
     // Restore original working directory
     process.chdir(originalCwd);
     if (originalMcpCwd === undefined) delete process.env.MCP_CWD;
@@ -181,20 +188,32 @@ describe('stop_pipeline tool', () => {
 
   describe('TC-003: Windows mock test — taskkill /F /T is invoked', () => {
     it('should use taskkill on Windows or SIGKILL on POSIX', async () => {
-      const dummyPid = 99999; // Non-existent PID for safe testing
+      const dummyPid = 99999;
       writeRunnerLock(projectPath, dummyPid);
+      setProcessStartReaderForTests(() => new Date(0));
+      const processKillSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+        const error = new Error('No such process');
+        error.code = 'ESRCH';
+        throw error;
+      });
+      const externalCalls = [];
+      setExternalRunnerForTests(async (command, args) => {
+        externalCalls.push({ command, args });
+        return { ok: false, code: 'EXTERNAL_COMMAND_FAILED', exitCode: 128 };
+      });
 
-
-      // Call stop_pipeline with non-existent PID
-      // On Windows, it will try to call taskkill, which will fail gracefully
-      // On POSIX, it will try SIGKILL, which will also fail with NO_SUCH_PROCESS
       const result = await stopPipelineImpl('.');
 
-      // Verify that an error occurred (expected for non-existent PID)
       expect(result.ok).toBe(false);
-      // Both Windows (taskkill error) and POSIX (SIGKILL) should fail similarly
-      // Can also get FOREIGN_PIPELINE if marker validation fails for some reason
-      expect(['NO_SUCH_PROCESS', 'EXTERNAL_COMMAND_FAILED', 'UNKNOWN_ERROR', 'FOREIGN_PIPELINE']).toContain(result.code);
+      expect(result.code).toBe('NO_SUCH_PROCESS');
+      if (process.platform === 'win32') {
+        expect(externalCalls).toEqual([{ command: 'taskkill', args: ['/F', '/T', '/PID', String(dummyPid)] }]);
+        expect(processKillSpy).not.toHaveBeenCalled();
+      } else {
+        expect(processKillSpy).toHaveBeenCalledTimes(1);
+        expect(processKillSpy).toHaveBeenCalledWith(-dummyPid, 'SIGKILL');
+        expect(externalCalls).toEqual([]);
+      }
     });
   });
 
@@ -204,6 +223,7 @@ describe('stop_pipeline tool', () => {
 
       // Lock помечен другим экземпляром MCP — запуск чужой.
       writeRunnerLock(projectPath, dummyPid, { started_by_id: 'workflow-mcp@foreign12345' });
+      setProcessStartReaderForTests(() => new Date(0));
 
       // Call stop_pipeline without force
       const result = await stopPipelineImpl('.');
@@ -319,7 +339,7 @@ describe('stop_pipeline tool', () => {
 
         const result = await stopPipelineImpl('.', { force: true });
 
-        expect(result.ok).toBe(true);
+        expect(result.ok, JSON.stringify(result)).toBe(true);
         expect(result.state).toBe('killed');
         killed = true;
       } finally {
