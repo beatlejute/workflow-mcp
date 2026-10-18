@@ -335,7 +335,7 @@ const DOD_HEADING_LINES = new RegExp(DOD_HEADING.source, 'gm');
  */
 export const TICKET_TRANSITIONS = {
   backlog: ['ready', 'blocked', 'done'],
-  ready: ['in-progress', 'review', 'backlog'],
+  ready: ['in-progress', 'review', 'backlog', 'blocked'],
   'in-progress': ['done', 'blocked', 'review'],
   blocked: ['ready'],
   review: ['done', 'ready', 'in-progress', 'blocked'],
@@ -756,7 +756,7 @@ export const resolve_human_ticket_tool = {
   name: 'resolve_human_ticket',
   description: 'Resolve a HUMAN ticket: fill its result section, tick its DoD items, and move the ticket to the next status. '
     + 'Without dod_confirmed, moving to review or done ticks every DoD item. '
-    + 'Pass dod_confirmed to tick only what the human actually confirmed: then review or done is refused (DOD_NOT_CONFIRMED) while an item is neither ticked nor listed, so for work not finished or not checked use another next_status that the current status allows (the error lists them: from ready only backlog, blocked is not reachable) and say what is left in result_body. '
+    + 'Pass dod_confirmed to tick only what the human actually confirmed: then review or done is refused (DOD_NOT_CONFIRMED) while an item is neither ticked nor listed, so for work not finished or not checked use another next_status that the current status allows (the error lists them) and say what is left in result_body. '
     + 'A product-code change found while working a human ticket goes into a separate agent ticket (create_ticket), not into this one: keep only the human result here.',
   inputSchema: z.object({
     project: z.string().describe('Project path or name'),

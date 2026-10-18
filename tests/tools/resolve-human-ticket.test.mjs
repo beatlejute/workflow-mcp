@@ -551,9 +551,8 @@ priority: 1
           expect(fs.existsSync(ticketFile('review', 'HUMAN-D9'))).toBe(true);
         });
 
-        // Тикет человека ждёт в ready, а по таблице переходов workflow-ai из ready можно только
-        // в in-progress, review и backlog: «сдайте в blocked» вело бы в отказ move_ticket, а
-        // in-progress пайплайн считает работой агента (pick-next-task не различает типы тикетов).
+        // Тикет человека ждёт в ready. in-progress пайплайн считает работой агента
+        // (pick-next-task не различает типы тикетов).
         it('offers only statuses reachable from the current one, never in-progress', async () => {
           createTemplateTicket('ready', 'HUMAN-P1');
           createTemplateTicket('in-progress', 'HUMAN-P2');
@@ -562,23 +561,36 @@ priority: 1
 
           const hint = async (id) => (await resolveTo(id, { dod_confirmed: [1] }).catch((e) => e)).message;
 
-          expect(await hint('HUMAN-P1')).toMatch(/another next_status reachable from ready \(backlog\) and say what is left/);
+          expect(await hint('HUMAN-P1')).toMatch(/another next_status reachable from ready \(backlog, blocked\) and say what is left/);
           expect(await hint('HUMAN-P2')).toMatch(/another next_status reachable from in-progress \(blocked\) and say what is left/);
           expect(await hint('HUMAN-P3')).toMatch(/another next_status reachable from review \(ready, blocked\) and say what is left/);
           expect(await hint('HUMAN-P4')).toMatch(/another next_status reachable from backlog \(ready, blocked\) and say what is left/);
         });
 
-        it('a partial hand-over from ready, the way the hint says, lands in backlog with the confirmed item ticked', async () => {
+        it('allows a partial hand-over from ready to blocked with only confirmed DoD items ticked', async () => {
           createTemplateTicket('ready', 'HUMAN-P5');
 
-          const result = await resolveTo('HUMAN-P5', { dod_confirmed: [1], next_status: 'backlog' });
+          const result = await resolveTo('HUMAN-P5', { dod_confirmed: [1], next_status: 'blocked' });
 
-          expect(result.new_status).toBe('backlog');
+          expect(result.new_status).toBe('blocked');
           expect(result.dod_unticked).toEqual(['Записана версия браузера']);
-          const dod = dodOf(ticketFile('backlog', 'HUMAN-P5'));
+          const dod = dodOf(ticketFile('blocked', 'HUMAN-P5'));
           expect(dod).toContain('- [x] В RESULT.md записан результат');
           expect(dod).toContain('- [ ] Записана версия браузера');
           expect(fs.existsSync(ticketFile('ready', 'HUMAN-P5'))).toBe(false);
+        });
+
+        it('allows a partial hand-over from ready to backlog with the confirmed item ticked', async () => {
+          createTemplateTicket('ready', 'HUMAN-P5B');
+
+          const result = await resolveTo('HUMAN-P5B', { dod_confirmed: [1], next_status: 'backlog' });
+
+          expect(result.new_status).toBe('backlog');
+          expect(result.dod_unticked).toEqual(['Записана версия браузера']);
+          const dod = dodOf(ticketFile('backlog', 'HUMAN-P5B'));
+          expect(dod).toContain('- [x] В RESULT.md записан результат');
+          expect(dod).toContain('- [ ] Записана версия браузера');
+          expect(fs.existsSync(ticketFile('ready', 'HUMAN-P5B'))).toBe(false);
         });
 
         it('refuses a transition the board does not allow before taking the lock, and lists the allowed ones', async () => {
@@ -586,7 +598,7 @@ priority: 1
           const file = ticketFile('ready', 'HUMAN-P6');
           const before = fs.readFileSync(file, 'utf8');
           const calls = [
-            ['blocked', () => resolveToBlocked('HUMAN-P6', { dod_confirmed: [1] })],
+            ['archive', () => resolve_human_ticket({ project: 'test-project', ticket_id: 'HUMAN-P6', decision: 'ok', result_body: 'Готово.', next_status: 'archive' })],
             // done — статус по умолчанию; из ready в него тоже нельзя
             ['done', () => resolve_human_ticket({ project: 'test-project', ticket_id: 'HUMAN-P6', decision: 'ok', result_body: 'Готово.' })]
           ];
@@ -597,7 +609,7 @@ priority: 1
               const error = await call().catch((e) => e);
               expect(error.code).toBe('INVALID_TRANSITION');
               expect(error.message).toBe(
-                `Invalid transition for HUMAN-P6: ready → ${target}. From ready the ticket can move to: in-progress, review, backlog `
+                `Invalid transition for HUMAN-P6: ready → ${target}. From ready the ticket can move to: in-progress, review, backlog, blocked `
                 + '(not in-progress: the pipeline takes a human ticket there for agent work)'
               );
             }
@@ -1136,9 +1148,7 @@ completed_at: ""
 
     it('says which statuses a partial hand-over can use, and what counts as a DoD item', () => {
       const { description, inputSchema } = resolve_human_ticket_tool;
-      // «blocked» как пример вёл из ready в недопустимый переход.
-      expect(description).toMatch(/another next_status that the current status allows[\s\S]*from ready only backlog, blocked is not reachable/);
-      expect(description).not.toMatch(/e\.g\. blocked/);
+      expect(description).toMatch(/another next_status that the current status allows[\s\S]*the error lists them/);
       expect(inputSchema.shape.dod_confirmed.description).toMatch(/checkbox lines of that section \("- \[ \]", "\* \[ \]", "\+ \[ \]", "1\. \[ \]"\); a \[ \] inside an item's text is not an item/);
     });
   });
